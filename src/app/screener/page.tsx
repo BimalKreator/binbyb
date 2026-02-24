@@ -9,6 +9,7 @@ import { Search, X } from "lucide-react";
 type RankedToken = {
   symbol: string;
   intervalHours?: number;
+  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' | 'Loading'
   netPct: number;
   nextFundingTime?: number;
   markPrice?: number;
@@ -243,14 +244,14 @@ export default function ScreenerPage() {
                             {formatCountdownHms(countdownMs)}
                           </span>
                           <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
-                            {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
+                            {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
                           </span>
                         </>
                       ) : row.nextFundingTime != null ? (
                         <>
                           <span className="block font-medium tabular-nums leading-tight">—</span>
                           <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
-                            {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
+                            {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
                           </span>
                         </>
                       ) : (

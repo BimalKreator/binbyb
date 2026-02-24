@@ -14,6 +14,7 @@ const INTERVAL_PRIORITY = { 1: 0, 2: 1, 4: 2, 8: 3 }; // lower = higher priority
 const binanceData = {};
 const bybitData = {};
 const intervalHoursCache = {};
+const intervalDisplayCache = {}; // '1h' | '2h' | '4h' | '8h' | 'Loading'
 const lastFundingTimeCache = { binance: {}, bybit: {} };
 const maxLeverageCache = {};
 let rankedTokens = [];
@@ -22,7 +23,7 @@ let cachedUserMinSpread = 0;
 
 /**
  * Interval (hours) = Math.round((NextFundingTime - LastFundingTime) / 3600000).
- * Buckets into 1h, 2h, 4h, 8h so 1h and 2h tokens are included.
+ * Buckets into 1, 2, 4, 8 for robust string labels.
  */
 function intervalMsToHours(intervalMs) {
   if (intervalMs == null || intervalMs <= 0) return null;
@@ -31,6 +32,17 @@ function intervalMsToHours(intervalMs) {
   if (rawHours <= 2) return 2;
   if (rawHours <= 4) return 4;
   return 8;
+}
+
+/** Resolve numeric interval to display string. NaN/undefined → 'Loading'. */
+function intervalHoursToLabel(hours) {
+  if (hours == null || (typeof hours === "number" && Number.isNaN(hours))) return "Loading";
+  const h = Number(hours);
+  if (h === 1) return "1h";
+  if (h === 2) return "2h";
+  if (h === 4) return "4h";
+  if (h === 8) return "8h";
+  return "Loading";
 }
 
 async function getLastFundingTimeBinance(symbol) {
@@ -161,26 +173,34 @@ async function runScreener() {
       const nextBin = bin?.nextFundingTime ?? null;
       const nextByb = byb?.nextFundingTime ?? null;
 
-      // Continuously calculate interval for both: Interval = NextFundingTime - LastFundingTime → 1h/2h/4h/8h
+      // Resolve intervals to strings '1h', '2h', '4h', '8h', or 'Loading' (no raw math comparison)
       let binanceIntervalHours = null;
       let bybitIntervalHours = null;
       try {
         if (nextBin != null) binanceIntervalHours = await computeIntervalHours(symbol, nextBin, "binance");
         if (nextByb != null) bybitIntervalHours = await computeIntervalHours(symbol, nextByb, "bybit");
       } catch (_) {
-        // keep null
+        // keep null → will become 'Loading'
       }
 
-      // Strict match: only include token when BinanceInterval === BybitInterval
-      if (
-        binanceIntervalHours == null ||
-        bybitIntervalHours == null ||
-        binanceIntervalHours !== bybitIntervalHours
-      ) {
-        continue;
+      const binanceIntervalString = intervalHoursToLabel(binanceIntervalHours);
+      const bybitIntervalString = intervalHoursToLabel(bybitIntervalHours);
+
+      // Include token: either interval is Loading (don't drop), or both strings match
+      const eitherLoading = binanceIntervalString === "Loading" || bybitIntervalString === "Loading";
+      const bothMatch = binanceIntervalString === bybitIntervalString;
+      if (!eitherLoading && !bothMatch) {
+        continue; // only drop when both resolved and different
       }
 
-      intervalHoursCache[symbol] = binanceIntervalHours;
+      const intervalDisplay = eitherLoading ? "Loading" : binanceIntervalString;
+      const intervalHours = binanceIntervalString !== "Loading" && bybitIntervalString !== "Loading"
+        ? binanceIntervalHours
+        : null;
+
+      intervalHoursCache[symbol] = intervalHours;
+      intervalDisplayCache[symbol] = intervalDisplay;
+
       const fundingBinance = bin?.fundingRate ?? 0;
       const fundingBybit = byb?.fundingRate ?? 0;
       const nextFundingTime = nextBin ?? nextByb;
@@ -206,7 +226,8 @@ async function runScreener() {
         fundingBinance: bin?.fundingRate ?? 0,
         fundingBybit: byb?.fundingRate ?? 0,
         nextFundingTime,
-        intervalHours: binanceIntervalHours,
+        intervalHours: intervalHours ?? undefined,
+        intervalDisplay,
         grossPct,
         netPct,
         spreadPctAbs,
@@ -260,6 +281,7 @@ function stop() {
   bybitManager.setOnFundingUpdate(null);
   rankedTokens = [];
   volatilityMeter = { level: "Low", count: 0 };
+  Object.keys(intervalDisplayCache).forEach((k) => delete intervalDisplayCache[k]);
   console.log("[Screener] Stopped.");
 }
 
@@ -277,40 +299,41 @@ function getMaxLeverage(symbol) {
 
 /**
  * Build ranked tokens synchronously from current in-memory data (no await).
- * Only includes symbols that have matching Binance/Bybit interval (from cache).
+ * Includes ALL matched symbols; interval from cache or 'Loading' (never drop for missing interval).
  */
 function buildRankedTokensFromCurrentData() {
   const binanceKeys = Object.keys(binanceData);
   const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
   const symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
-  const tokens = symbols
-    .filter((symbol) => intervalHoursCache[symbol] != null)
-    .map((symbol) => {
-      const bin = binanceData[symbol];
-      const byb = bybitData[symbol];
-      const fundingBinance = bin?.fundingRate ?? 0;
-      const fundingBybit = byb?.fundingRate ?? 0;
-      const nextFundingTime = bin?.nextFundingTime ?? byb?.nextFundingTime ?? null;
-      const { grossPct, netPct, spreadPctAbs, gross, net } = computeSpread(
-        fundingBinance,
-        fundingBybit,
-        cachedUserMinSpread
-      );
-      return {
-        symbol,
-        fundingBinance,
-        fundingBybit,
-        nextFundingTime,
-        intervalHours: intervalHoursCache[symbol],
-        grossPct,
-        netPct,
-        spreadPctAbs,
-        gross,
-        net,
-        maxLeverage: maxLeverageCache[symbol] ?? null,
-        markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
-      };
-    });
+  const tokens = symbols.map((symbol) => {
+    const bin = binanceData[symbol];
+    const byb = bybitData[symbol];
+    const fundingBinance = bin?.fundingRate ?? 0;
+    const fundingBybit = byb?.fundingRate ?? 0;
+    const nextFundingTime = bin?.nextFundingTime ?? byb?.nextFundingTime ?? null;
+    const { grossPct, netPct, spreadPctAbs, gross, net } = computeSpread(
+      fundingBinance,
+      fundingBybit,
+      cachedUserMinSpread
+    );
+    const intervalHours = intervalHoursCache[symbol] ?? null;
+    const intervalDisplay = intervalDisplayCache[symbol] ?? "Loading";
+    return {
+      symbol,
+      fundingBinance,
+      fundingBybit,
+      nextFundingTime,
+      intervalHours: intervalHours ?? undefined,
+      intervalDisplay,
+      grossPct,
+      netPct,
+      spreadPctAbs,
+      gross,
+      net,
+      maxLeverage: maxLeverageCache[symbol] ?? null,
+      markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
+    };
+  });
   return sortByPriorityAndSpread(tokens);
 }
 

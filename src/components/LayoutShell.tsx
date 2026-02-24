@@ -16,7 +16,9 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <Header />
-      <main className="safe-area-inset pb-[calc(env(safe-area-inset-bottom)+4.5rem)] pt-[140px] min-h-[100dvh] md:pb-6">
+      {/* Spacer matches fixed header height so main content starts below it (no reliance on padding). */}
+      <div className="h-[100px] shrink-0" aria-hidden="true" />
+      <main className="safe-area-inset pb-[calc(env(safe-area-inset-bottom)+4.5rem)] min-h-[100dvh] md:pb-6">
         {children}
       </main>
       <BottomNav />
