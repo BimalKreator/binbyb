@@ -2,8 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
-import { Header } from "@/components/Header";
-import { BottomNav } from "@/components/BottomNav";
+import { LayoutShell } from "@/components/LayoutShell";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -37,11 +36,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-[100dvh] antialiased">
-        <Header />
-        <main className="safe-area-inset pb-[calc(env(safe-area-inset-bottom)+4.5rem)] pt-14 min-h-[100dvh] md:pb-6">
-          {children}
-        </main>
-        <BottomNav />
+        <LayoutShell>{children}</LayoutShell>
         <Toaster
           position="top-center"
           toastOptions={{

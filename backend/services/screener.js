@@ -165,6 +165,7 @@ async function runScreener() {
 
       const maxLeverage = await fetchAndCacheMaxLeverage(symbol);
 
+      const markPrice = bin?.markPrice ?? byb?.markPrice ?? null;
       tokens.push({
         symbol,
         fundingBinance: bin?.fundingRate,
@@ -176,6 +177,7 @@ async function runScreener() {
         gross,
         net,
         maxLeverage,
+        markPrice,
       });
     }
 
