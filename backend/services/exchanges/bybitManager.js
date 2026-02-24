@@ -9,6 +9,11 @@ const REST_BASE = "https://api.bybit.com";
 
 const DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
 
+let onFundingUpdate = null;
+function setOnFundingUpdate(fn) {
+  onFundingUpdate = fn;
+}
+
 let publicWs = null;
 let privateWs = null;
 let privateCredentials = null;
@@ -42,6 +47,15 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           if (eventTime) logLatency("bybit", msg.topic, eventTime, { symbol: d.symbol });
 
           if (msg.topic.startsWith("tickers.")) {
+            if (onFundingUpdate && d.symbol) {
+              onFundingUpdate({
+                symbol: d.symbol,
+                fundingRate: parseFloat(d.fundingRate || 0),
+                nextFundingTime: d.nextFundingTime ? Number(d.nextFundingTime) : null,
+                markPrice: parseFloat(d.markPrice || d.lastPrice || 0),
+                eventTime: d.timestamp ? Number(d.timestamp) : msg.ts,
+              });
+            }
             console.log("[Bybit] Ticker/Mark/Funding", {
               symbol: d.symbol,
               lastPrice: d.lastPrice,
@@ -220,9 +234,37 @@ function start(credentials, options = {}) {
   openPrivateStream(credentials);
 }
 
+/**
+ * Fetch last funding time (ms) for interval calculation. Public endpoint.
+ */
+async function getLastFundingTime(symbol) {
+  const { data } = await axios.get(`${REST_BASE}/v5/market/funding/history`, {
+    params: { category: "linear", symbol: symbol.toUpperCase(), limit: 1 },
+  });
+  const list = data?.result?.list;
+  const item = list && list.length ? list[0] : null;
+  return item && item.fundingRateTimestamp ? Number(item.fundingRateTimestamp) : null;
+}
+
+/**
+ * Fetch max leverage for symbol. Public endpoint.
+ */
+async function getMaxLeverage(symbol) {
+  const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, {
+    params: { category: "linear", symbol: symbol.toUpperCase() },
+  });
+  const list = data?.result?.list;
+  const instrument = list && list.length ? list[0] : null;
+  const lev = instrument?.leverageFilter?.maxLeverage;
+  return lev != null ? Number(lev) : null;
+}
+
 module.exports = {
   start,
   stop,
   placeIOCLimitOrder,
   getCredentials: () => privateCredentials,
+  setOnFundingUpdate,
+  getLastFundingTime,
+  getMaxLeverage,
 };

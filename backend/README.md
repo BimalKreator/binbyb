@@ -60,3 +60,15 @@ Custom connectors (no CCXT) in `services/exchanges/`:
 - **apiKeys.js** – Loads and decrypts API keys from the `APIKey` model for use by the managers.
 
 Exchange managers start automatically when the server starts (after MongoDB connects). They read API keys from the database; if none are configured, only public streams run. IOC limit order helpers: `binanceManager.placeIOCLimitOrder(credentials, symbol, side, quantity, price)` and `bybitManager.placeIOCLimitOrder(credentials, symbol, side, qty, price)`.
+
+## Screener (The Brain)
+
+`services/screener.js` runs on every funding WebSocket update from Binance and Bybit:
+
+- **Funding interval:** `Interval = NextFundingTime - LastFundingTime` (REST for last time), converted to 1h / 2h / 4h / 8h.
+- **Spread:** Gross = Funding_Binance − Funding_Bybit; Net = Gross − UserMinSpread% (from **Setting** model `userMinSpread`).
+- **Volatility meter:** Count of tokens with Net Spread &gt; 0.5%; levels: 0–2 Low, 3–5 Med, 5+ High.
+- **Ranking:** Tokens sorted by interval priority (1h/2h first) then by highest net spread.
+- **Max leverage:** Min(Binance max leverage, Bybit max leverage) per symbol, fetched via REST and cached.
+
+Protected API: `GET /api/screener` returns `rankedTokens`, `volatilityMeter`, and symbol lists (requires `Authorization: Bearer <token>`).

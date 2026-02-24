@@ -7,6 +7,7 @@ const settingSchema = new mongoose.Schema(
     stopLoss: { type: Number, default: 0 },
     takeProfit: { type: Number, default: 0 },
     autoTrade: { type: Boolean, default: false },
+    userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
   },
   { timestamps: true }
 );

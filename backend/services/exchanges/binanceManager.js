@@ -8,6 +8,11 @@ const REST_BASE = "https://fapi.binance.com";
 
 const DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
 
+let onFundingUpdate = null;
+function setOnFundingUpdate(fn) {
+  onFundingUpdate = fn;
+}
+
 let publicWs = null;
 let privateWs = null;
 let listenKey = null;
@@ -46,6 +51,15 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       if (payload.e === "markPriceUpdate") {
         // Mark price + funding rate
         const { s, p, r, T, E } = payload;
+        if (onFundingUpdate && s) {
+          onFundingUpdate({
+            symbol: s,
+            fundingRate: parseFloat(r),
+            nextFundingTime: T,
+            markPrice: parseFloat(p),
+            eventTime: E,
+          });
+        }
         console.log("[Binance] MarkPrice", { symbol: s, markPrice: p, fundingRate: r, nextFunding: T });
       } else if (payload.e === "24hrTicker") {
         const { s, c, p, P, E } = payload;
@@ -217,9 +231,36 @@ async function start(credentials, options = {}) {
   await startPrivateStream(credentials);
 }
 
+/**
+ * Fetch last funding time (ms) for interval calculation. Public endpoint.
+ */
+async function getLastFundingTime(symbol) {
+  const { data } = await axios.get(`${REST_BASE}/fapi/v1/fundingRate`, {
+    params: { symbol: symbol.toUpperCase(), limit: 1 },
+  });
+  const item = Array.isArray(data) && data.length ? data[0] : null;
+  return item ? item.fundingTime : null;
+}
+
+/**
+ * Fetch max leverage for symbol. Public endpoint.
+ */
+async function getMaxLeverage(symbol) {
+  const { data } = await axios.get(`${REST_BASE}/fapi/v1/leverageBracket`, {
+    params: { symbol: symbol.toUpperCase() },
+  });
+  const brackets = data && data[0] && data[0].brackets;
+  if (!brackets || !brackets.length) return null;
+  const maxLev = Math.max(...brackets.map((b) => b.initialLeverage));
+  return maxLev;
+}
+
 module.exports = {
   start,
   stop,
   placeIOCLimitOrder,
   getCredentials: () => privateCredentials,
+  setOnFundingUpdate,
+  getLastFundingTime,
+  getMaxLeverage,
 };
