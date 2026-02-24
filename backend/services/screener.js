@@ -71,17 +71,29 @@ async function getLastFundingTimeBybit(symbol) {
 /**
  * Compute interval when a WebSocket message has nextFundingTime.
  * Interval = NextFundingTime - LastFundingTime (ms) → strictly '1h'|'2h'|'4h'|'8h'.
- * If lastFundingTime is unknown, fetch via REST; if still unknown, derive 8h so we never stay on Loading.
+ * If lastFundingTime is undefined or (Next - Last) is NaN, fetch from exchange REST (Binance fundingInfo) or default 8h.
  */
 async function computeIntervalHours(symbol, nextFundingTime, source) {
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
-  let last =
+  const last =
     source === "binance"
       ? await getLastFundingTimeBinance(symbol)
       : await getLastFundingTimeBybit(symbol);
-  if (last == null) return 8; // REST failed or not yet loaded: use 8h (typical perpetual)
-  const intervalMs = nextFundingTime - last;
-  return intervalMsToHours(intervalMs); // always returns 1, 2, 4, or 8
+  if (last != null && Number.isFinite(last)) {
+    const intervalMs = nextFundingTime - last;
+    const hours = intervalMsToHours(intervalMs);
+    if (hours != null) return hours;
+  }
+  // Fallback: LastFundingTime unknown or intervalMs resulted in NaN – fetch from REST or default 8h
+  if (source === "binance") {
+    try {
+      const fromApi = await binanceManager.getFundingIntervalHours(symbol);
+      if (fromApi != null) return fromApi;
+    } catch (_) {
+      // ignore
+    }
+  }
+  return 8; // standard for Binance/Bybit perpetuals; never leave as Loading
 }
 
 async function fetchAndCacheMaxLeverage(symbol) {

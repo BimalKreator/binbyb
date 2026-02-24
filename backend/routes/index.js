@@ -5,6 +5,7 @@ const apiKeysRoutes = require("./apiKeys");
 const settingsRoutes = require("./settings");
 const fundLogsRoutes = require("./fundLogs");
 const ordersRoutes = require("./orders");
+const tradeRoutes = require("./trade");
 
 const router = express.Router();
 
@@ -14,5 +15,6 @@ router.use("/api-keys", apiKeysRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/fund-logs", fundLogsRoutes);
 router.use("/orders", ordersRoutes);
+router.use("/trade", tradeRoutes);
 
 module.exports = router;

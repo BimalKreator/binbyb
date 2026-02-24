@@ -264,6 +264,36 @@ async function getPerpetualSymbols() {
     .map((s) => s.symbol);
 }
 
+/** Cache for funding interval hours by symbol (from REST fundingInfo). */
+let fundingIntervalCache = {};
+
+/**
+ * Fetch funding interval hours from REST GET /fapi/v1/fundingInfo. Public endpoint.
+ * Returns 1, 2, 4, or 8; null if not found or API error.
+ */
+async function getFundingIntervalHours(symbol) {
+  if (fundingIntervalCache[symbol] != null) return fundingIntervalCache[symbol];
+  try {
+    const { data } = await axios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
+    const list = Array.isArray(data) ? data : [];
+    const item = list.find((s) => (s.symbol || "").toUpperCase() === String(symbol).toUpperCase());
+    const hours = item?.fundingIntervalHours;
+    const h = hours != null ? Number(hours) : null;
+    if (h === 1 || h === 2 || h === 4 || h === 8) {
+      fundingIntervalCache[symbol] = h;
+      return h;
+    }
+    if (Number.isFinite(h) && h > 0) {
+      const bucket = h <= 1 ? 1 : h <= 2 ? 2 : h <= 4 ? 4 : 8;
+      fundingIntervalCache[symbol] = bucket;
+      return bucket;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
 module.exports = {
   start,
   stop,
@@ -273,4 +303,5 @@ module.exports = {
   getLastFundingTime,
   getMaxLeverage,
   getPerpetualSymbols,
+  getFundingIntervalHours,
 };

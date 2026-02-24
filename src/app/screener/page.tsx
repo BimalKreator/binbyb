@@ -62,8 +62,6 @@ export default function ScreenerPage() {
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
-  const [exchange, setExchange] = useState<"binance" | "bybit">("binance");
-  const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [submitting, setSubmitting] = useState(false);
   const [now, setNow] = useState(Date.now());
 
@@ -127,16 +125,21 @@ export default function ScreenerPage() {
       toast.error(`Max leverage for ${popupToken.symbol} is ${maxLev}x.`);
       return;
     }
+    const binFunding = Number(popupToken.fundingBinance);
+    const bybFunding = Number(popupToken.fundingBybit);
+    const binanceSide = !Number.isNaN(binFunding) && !Number.isNaN(bybFunding) && binFunding > bybFunding ? "SELL" : "BUY";
+    const bybitSide = !Number.isNaN(binFunding) && !Number.isNaN(bybFunding) && bybFunding > binFunding ? "Sell" : "Buy";
     setSubmitting(true);
     try {
-      await api.post("/orders", {
-        exchange,
+      await api.post("/trade/arbitrage", {
         symbol: popupToken.symbol,
-        side,
         quantity: qtyNum,
-        price: markPrice,
+        leverage: levNum,
+        binanceSide,
+        bybitSide,
+        markPrice,
       });
-      toast.success("Order submitted.");
+      toast.success("Arbitrage orders submitted.");
       setPopupToken(null);
       setQuantity("");
       setLeverage("");
@@ -265,7 +268,6 @@ export default function ScreenerPage() {
                           setPopupToken(row);
                           setQuantity("");
                           setLeverage(row.maxLeverage?.toString() ?? "10");
-                          setSide("BUY");
                         }}
                         className="h-7 px-2 rounded-lg text-[10px] sm:text-xs font-medium text-white"
                         style={{ backgroundColor: "var(--primary)" }}
@@ -313,28 +315,21 @@ export default function ScreenerPage() {
                   ? Number(popupToken.markPrice).toFixed(2)
                   : "Loading..."}
               </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSide("BUY")}
-                  className={`flex-1 h-10 rounded-lg text-sm font-medium ${
-                    side === "BUY" ? "text-white" : "text-slate-400 bg-slate-700/50"
-                  }`}
-                  style={side === "BUY" ? { backgroundColor: "var(--profit)" } : undefined}
-                >
-                  Long
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSide("SELL")}
-                  className={`flex-1 h-10 rounded-lg text-sm font-medium ${
-                    side === "SELL" ? "text-white" : "text-slate-400 bg-slate-700/50"
-                  }`}
-                  style={side === "SELL" ? { backgroundColor: "var(--loss)" } : undefined}
-                >
-                  Short
-                </button>
-              </div>
+              {(() => {
+                const bin = Number(popupToken.fundingBinance);
+                const byb = Number(popupToken.fundingBybit);
+                const actionText =
+                  !Number.isNaN(bin) && !Number.isNaN(byb) && bin > byb
+                    ? "Short Binance & Long Bybit"
+                    : !Number.isNaN(bin) && !Number.isNaN(byb) && byb > bin
+                      ? "Long Binance & Short Bybit"
+                      : "Long Binance & Short Bybit";
+                return (
+                  <p className="text-sm font-medium text-foreground rounded-lg bg-slate-800/70 px-3 py-2">
+                    {actionText}
+                  </p>
+                );
+              })()}
               <label className="block">
                 <span className="text-sm text-slate-400 mb-1 block">Quantity</span>
                 <input
@@ -362,17 +357,6 @@ export default function ScreenerPage() {
                   <p className="text-xs text-slate-500 mt-1">Max: {popupToken.maxLeverage}x</p>
                 )}
               </label>
-              <label className="block">
-                <span className="text-sm text-slate-400 mb-1 block">Exchange</span>
-                <select
-                  value={exchange}
-                  onChange={(e) => setExchange(e.target.value as "binance" | "bybit")}
-                  className="w-full h-10 rounded-lg border border-slate-600 bg-slate-800/50 px-3 text-foreground focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
-                >
-                  <option value="binance">Binance</option>
-                  <option value="bybit">Bybit</option>
-                </select>
-              </label>
               {/* Margin calculation: Margin = (Price × Quantity) / Leverage */}
               <div className="rounded-lg bg-slate-800/70 p-3">
                 <p className="text-xs text-slate-400 mb-1">
@@ -394,7 +378,7 @@ export default function ScreenerPage() {
                 className="w-full h-11 rounded-lg font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ backgroundColor: "var(--primary)" }}
               >
-                {submitting ? "Submitting..." : "Submit IOC Order"}
+                {submitting ? "Submitting..." : "Submit arbitrage orders"}
               </button>
             </div>
           </div>
