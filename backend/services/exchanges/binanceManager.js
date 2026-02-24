@@ -23,13 +23,13 @@ function signQueryString(queryString, apiSecret) {
   return CryptoJS.HmacSHA256(queryString, apiSecret).toString(CryptoJS.enc.Hex);
 }
 
+const MAX_STREAMS_PER_CONNECTION = 1024;
+
 function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
 
-  const streams = [
-    ...symbols.map((s) => `${s.toLowerCase()}@markPrice@1s`),
-    ...symbols.map((s) => `${s.toLowerCase()}@ticker`),
-  ];
+  const list = symbols.slice(0, MAX_STREAMS_PER_CONNECTION);
+  const streams = list.map((s) => `${s.toLowerCase()}@markPrice@1s`);
   const url = `${PUBLIC_WS_BASE}/stream?streams=${streams.join("/")}`;
 
   publicWs = new WebSocket(url);
@@ -61,9 +61,6 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           });
         }
         console.log("[Binance] MarkPrice", { symbol: s, markPrice: p, fundingRate: r, nextFunding: T });
-      } else if (payload.e === "24hrTicker") {
-        const { s, c, p, P, E } = payload;
-        console.log("[Binance] Ticker", { symbol: s, last: c, change: p, changePercent: P });
       }
     } catch (e) {
       console.error("[Binance] Public message parse error", e.message);
@@ -255,6 +252,18 @@ async function getMaxLeverage(symbol) {
   return maxLev;
 }
 
+/**
+ * Fetch all USDT-margined perpetual symbols from Exchange Info. Public endpoint.
+ * @returns {Promise<string[]>} e.g. ["BTCUSDT", "ETHUSDT", ...]
+ */
+async function getPerpetualSymbols() {
+  const { data } = await axios.get(`${REST_BASE}/fapi/v1/exchangeInfo`);
+  const symbols = (data && data.symbols) || [];
+  return symbols
+    .filter((s) => s.contractType === "PERPETUAL" && s.status === "TRADING")
+    .map((s) => s.symbol);
+}
+
 module.exports = {
   start,
   stop,
@@ -263,4 +272,5 @@ module.exports = {
   setOnFundingUpdate,
   getLastFundingTime,
   getMaxLeverage,
+  getPerpetualSymbols,
 };

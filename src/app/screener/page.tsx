@@ -13,9 +13,11 @@ type RankedToken = {
   nextFundingTime?: number;
   markPrice?: number;
   maxLeverage?: number | null;
+  fundingBinance?: number;
+  fundingBybit?: number;
 };
 
-const POLL_MS = 5000;
+const POLL_MS = 1000;
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return "—";
@@ -27,23 +29,12 @@ function formatCountdown(ms: number): string {
   return `${s}s`;
 }
 
-function getFundingStatus(
-  nextFundingTime: number | undefined,
-  intervalHours: number | undefined
-): "Active" | "Next" {
-  if (nextFundingTime == null || intervalHours == null) return "Next";
-  const now = Date.now();
-  const intervalMs = intervalHours * 60 * 60 * 1000;
-  const lastFundingTime = nextFundingTime - intervalMs;
-  if (now >= lastFundingTime && now < nextFundingTime) return "Active";
-  return "Next";
-}
-
 export default function ScreenerPage() {
   const [data, setData] = useState<{ rankedTokens: RankedToken[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [intervalFilter, setIntervalFilter] = useState<number | null>(null);
+  const [minSpreadPct, setMinSpreadPct] = useState<string>("");
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -85,8 +76,10 @@ export default function ScreenerPage() {
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((t) => t.symbol.toLowerCase().includes(q));
     if (intervalFilter != null) list = list.filter((t) => t.intervalHours === intervalFilter);
+    const minSpread = parseFloat(minSpreadPct);
+    if (!Number.isNaN(minSpread)) list = list.filter((t) => t.netPct >= minSpread);
     return list;
-  }, [data?.rankedTokens, search, intervalFilter]);
+  }, [data?.rankedTokens, search, intervalFilter, minSpreadPct]);
 
   const markPrice = popupToken?.markPrice ?? 0;
   const qtyNum = parseFloat(quantity) || 0;
@@ -131,8 +124,8 @@ export default function ScreenerPage() {
       <h2 className="text-lg font-semibold text-foreground mb-3">Screener</h2>
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:flex-wrap">
+        <div className="relative flex-1 min-w-[140px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input
             type="text"
@@ -142,6 +135,17 @@ export default function ScreenerPage() {
             className="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
           />
         </div>
+        <label className="flex items-center gap-2 shrink-0">
+          <span className="text-slate-400 text-sm whitespace-nowrap">Min Spread %</span>
+          <input
+            type="number"
+            step="any"
+            value={minSpreadPct}
+            onChange={(e) => setMinSpreadPct(e.target.value)}
+            placeholder="—"
+            className="w-20 h-10 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
+          />
+        </label>
         <select
           value={intervalFilter ?? ""}
           onChange={(e) => setIntervalFilter(e.target.value === "" ? null : Number(e.target.value))}
@@ -167,21 +171,31 @@ export default function ScreenerPage() {
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/50">
                 <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Token</th>
-                <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Interval</th>
-                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Spread</th>
-                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Next funding</th>
-                <th className="text-center py-2.5 px-2 text-slate-400 font-medium">Status</th>
+                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Funding</th>
+                <th className="text-center py-2.5 px-2 text-slate-400 font-medium">Direction</th>
+                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Net Spread</th>
+                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Countdown</th>
                 <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((row) => {
-                const status = getFundingStatus(row.nextFundingTime, row.intervalHours);
+                const bin = row.fundingBinance ?? 0;
+                const byb = row.fundingBybit ?? 0;
+                const longExchange = bin <= byb ? "Binance" : "Bybit";
+                const shortExchange = bin > byb ? "Binance" : "Bybit";
+                const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
                 return (
                   <tr key={row.symbol} className="border-b border-slate-700/50">
                     <td className="py-2.5 px-3 font-medium text-foreground">{row.symbol}</td>
-                    <td className="py-2.5 px-3 text-slate-300">
-                      {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
+                    <td className="py-2.5 px-2 text-slate-300 text-xs">
+                      <span className="block">Binance {(bin * 100).toFixed(4)}%</span>
+                      <span className="block">Bybit {(byb * 100).toFixed(4)}%</span>
+                    </td>
+                    <td className="py-2.5 px-2 text-center text-xs">
+                      <span className="text-[var(--profit)]">Long {longExchange}</span>
+                      <span className="text-slate-500"> / </span>
+                      <span className="text-[var(--loss)]">Short {shortExchange}</span>
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <span
@@ -194,20 +208,18 @@ export default function ScreenerPage() {
                       </span>
                     </td>
                     <td className="py-2.5 px-2 text-slate-300 text-xs whitespace-nowrap">
-                      {row.nextFundingTime != null
-                        ? formatCountdown(row.nextFundingTime - now)
-                        : "—"}
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                          status === "Active"
-                            ? "bg-[var(--profit)]/20 text-[var(--profit)]"
-                            : "bg-orange-500/20 text-orange-400"
-                        }`}
-                      >
-                        {status}
-                      </span>
+                      {countdownMs != null ? (
+                        <>
+                          <span className="block font-medium tabular-nums">
+                            {formatCountdown(countdownMs)}
+                          </span>
+                          <span className="block text-[10px] text-slate-500 mt-0.5">
+                            {row.intervalHours != null ? `${row.intervalHours}h` : ""}
+                          </span>
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <button
@@ -221,7 +233,7 @@ export default function ScreenerPage() {
                         className="h-8 px-3 rounded-lg text-xs font-medium text-white"
                         style={{ backgroundColor: "var(--primary)" }}
                       >
-                        Manual Trade
+                        Trade
                       </button>
                     </td>
                   </tr>

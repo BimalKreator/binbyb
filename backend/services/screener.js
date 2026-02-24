@@ -1,6 +1,8 @@
 /**
  * The Brain: funding interval, spread calculation, volatility meter,
  * ranking, and max leverage. Updates on every WebSocket funding message.
+ * Tracks all symbols that exist on both Binance and Bybit (set at startup via
+ * exchange Exchange Info / instruments-info; screener calculates for the full list).
  */
 
 const Setting = require("../models/Setting");

@@ -259,6 +259,28 @@ async function getMaxLeverage(symbol) {
   return lev != null ? Number(lev) : null;
 }
 
+/**
+ * Fetch all linear perpetual symbols from Instruments Info. Public endpoint. Uses pagination.
+ * @returns {Promise<string[]>} e.g. ["BTCUSDT", "ETHUSDT", ...]
+ */
+async function getPerpetualSymbols() {
+  const all = [];
+  let cursor;
+  do {
+    const params = { category: "linear", limit: 500 };
+    if (cursor) params.cursor = cursor;
+    const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, { params });
+    const list = data?.result?.list || [];
+    for (const item of list) {
+      if (item.symbol && item.status === "Trading") {
+        all.push(item.symbol);
+      }
+    }
+    cursor = data?.result?.nextPageCursor || null;
+  } while (cursor);
+  return all;
+}
+
 module.exports = {
   start,
   stop,
@@ -267,4 +289,5 @@ module.exports = {
   setOnFundingUpdate,
   getLastFundingTime,
   getMaxLeverage,
+  getPerpetualSymbols,
 };
