@@ -21,15 +21,15 @@ let volatilityMeter = { level: "Low", count: 0 };
 let cachedUserMinSpread = 0;
 
 /**
- * Interval (hours) = (NextFundingTime - LastFundingTime) in hours.
- * Converts to standard bucket: 1h, 2h, 4h, 8h.
+ * Interval (hours) = Math.round((NextFundingTime - LastFundingTime) / 3600000).
+ * Buckets into 1h, 2h, 4h, 8h so 1h and 2h tokens are included.
  */
 function intervalMsToHours(intervalMs) {
   if (intervalMs == null || intervalMs <= 0) return null;
-  const hours = intervalMs / (3600 * 1000);
-  if (hours <= 1.5) return 1;
-  if (hours <= 3) return 2;
-  if (hours <= 6) return 4;
+  const rawHours = Math.round(intervalMs / 3600000);
+  if (rawHours <= 1) return 1;
+  if (rawHours <= 2) return 2;
+  if (rawHours <= 4) return 4;
   return 8;
 }
 
@@ -56,8 +56,8 @@ async function getLastFundingTimeBybit(symbol) {
 }
 
 /**
- * Compute funding interval in hours using Interval = NextFundingTime - LastFundingTime.
- * Uses Binance next funding time and last funding time (from REST or cache).
+ * Compute funding interval in hours: Interval = NextFundingTime - LastFundingTime.
+ * If LastFundingTime is unreliable (null), fallback to 8h (24/3 funding rate frequency).
  */
 async function computeIntervalHours(symbol, nextFundingTime, source) {
   if (nextFundingTime == null) return null;
@@ -65,7 +65,7 @@ async function computeIntervalHours(symbol, nextFundingTime, source) {
     source === "binance"
       ? await getLastFundingTimeBinance(symbol)
       : await getLastFundingTimeBybit(symbol);
-  if (last == null) return null;
+  if (last == null) return 8; // fallback: 8h = 24 / 3 (typical perpetual funding frequency)
   const intervalMs = nextFundingTime - last;
   return intervalMsToHours(intervalMs);
 }
@@ -87,20 +87,21 @@ async function fetchAndCacheMaxLeverage(symbol) {
 }
 
 /**
- * Gross spread: S_gross = Funding_Binance - Funding_Bybit (decimal).
- * Net spread: S_net = S_gross - UserMinSpread% (userMinSpread in percent, e.g. 0.1 = 0.1%).
- * Handles NaN/undefined gracefully so nothing is filtered out.
+ * Spread = Math.abs(Funding_Binance - Funding_Bybit). Used for sorting (highest first).
+ * Net spread: S_net = signed gross - UserMinSpread% for display.
  */
 function computeSpread(fundingBinance, fundingBybit, userMinSpreadPct) {
   const bin = Number(fundingBinance);
   const byb = Number(fundingBybit);
-  const gross = (Number.isNaN(bin) ? 0 : bin) - (Number.isNaN(byb) ? 0 : byb);
+  const grossSigned = (Number.isNaN(bin) ? 0 : bin) - (Number.isNaN(byb) ? 0 : byb);
+  const spreadAbs = Math.abs(grossSigned);
   const userMinSpreadDecimal = (Number(userMinSpreadPct) || 0) / 100;
-  const net = gross - userMinSpreadDecimal;
+  const net = grossSigned - userMinSpreadDecimal;
   return {
-    grossPct: Number.isFinite(gross * 100) ? gross * 100 : 0,
+    grossPct: Number.isFinite(grossSigned * 100) ? grossSigned * 100 : 0,
     netPct: Number.isFinite(net * 100) ? net * 100 : 0,
-    gross,
+    spreadPctAbs: Number.isFinite(spreadAbs * 100) ? spreadAbs * 100 : 0,
+    gross: grossSigned,
     net,
   };
 }
@@ -119,14 +120,14 @@ function updateVolatilityMeter(tokensWithNetSpread) {
 }
 
 /**
- * Sort: first by interval priority (1h/2h first), then by highest net spread.
+ * Sort: 1st priority 1h, 2nd 2h, 3rd 4h, 4th 8h. Within each interval, highest spread first.
  */
 function sortByPriorityAndSpread(tokens) {
   return [...tokens].sort((a, b) => {
     const pa = INTERVAL_PRIORITY[a.intervalHours] ?? 99;
     const pb = INTERVAL_PRIORITY[b.intervalHours] ?? 99;
     if (pa !== pb) return pa - pb;
-    return (b.netPct ?? 0) - (a.netPct ?? 0);
+    return (b.spreadPctAbs ?? 0) - (a.spreadPctAbs ?? 0);
   });
 }
 
@@ -184,7 +185,7 @@ async function runScreener() {
       const fundingBybit = byb?.fundingRate ?? 0;
       const nextFundingTime = nextBin ?? nextByb;
 
-      const { grossPct, netPct, gross, net } = computeSpread(
+      const { grossPct, netPct, spreadPctAbs, gross, net } = computeSpread(
         fundingBinance,
         fundingBybit,
         userMinSpread
@@ -208,6 +209,7 @@ async function runScreener() {
         intervalHours: binanceIntervalHours,
         grossPct,
         netPct,
+        spreadPctAbs,
         gross,
         net,
         maxLeverage,
@@ -289,7 +291,7 @@ function buildRankedTokensFromCurrentData() {
       const fundingBinance = bin?.fundingRate ?? 0;
       const fundingBybit = byb?.fundingRate ?? 0;
       const nextFundingTime = bin?.nextFundingTime ?? byb?.nextFundingTime ?? null;
-      const { grossPct, netPct, gross, net } = computeSpread(
+      const { grossPct, netPct, spreadPctAbs, gross, net } = computeSpread(
         fundingBinance,
         fundingBybit,
         cachedUserMinSpread
@@ -302,6 +304,7 @@ function buildRankedTokensFromCurrentData() {
         intervalHours: intervalHoursCache[symbol],
         grossPct,
         netPct,
+        spreadPctAbs,
         gross,
         net,
         maxLeverage: maxLeverageCache[symbol] ?? null,

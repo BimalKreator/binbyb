@@ -16,7 +16,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <Header />
-      <main className="safe-area-inset pb-[calc(env(safe-area-inset-bottom)+4.5rem)] pt-[130px] min-h-[100dvh] md:pb-6">
+      <main className="safe-area-inset pb-[calc(env(safe-area-inset-bottom)+4.5rem)] pt-[140px] min-h-[100dvh] md:pb-6">
         {children}
       </main>
       <BottomNav />

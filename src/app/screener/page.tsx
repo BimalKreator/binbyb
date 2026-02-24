@@ -196,15 +196,15 @@ export default function ScreenerPage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-slate-500 py-8">No tokens match the filters or data is not ready yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-4 sm:mx-0">
-          <table className="w-full text-sm min-w-[320px]">
+        <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0">
+          <table className="w-full text-xs min-w-0">
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/50">
-                <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Token</th>
-                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Funding</th>
-                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Spread</th>
-                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Countdown</th>
-                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Action</th>
+                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-16 sm:w-auto">Token</th>
+                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
+                <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
+                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
+                <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -218,16 +218,16 @@ export default function ScreenerPage() {
                 const hasNetPct = !Number.isNaN(netPctNum);
                 return (
                   <tr key={row.symbol} className="border-b border-slate-700/50">
-                    <td className="py-2.5 px-3 font-medium text-foreground">{row.symbol}</td>
-                    <td className="py-2.5 px-2 text-slate-300 text-xs">
-                      <span className="block">
+                    <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate" title={row.symbol}>{row.symbol}</td>
+                    <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
+                      <span className="block leading-tight">
                         {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
                       </span>
-                      <span className="block">
+                      <span className="block leading-tight">
                         {formatFundingWithDirection(row.fundingBybit, "Bybit", bybitIsLong)}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-right">
+                    <td className="py-1 px-2 text-right">
                       <span
                         className={
                           hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
@@ -236,20 +236,20 @@ export default function ScreenerPage() {
                         {formatNetPct(row.netPct)}
                       </span>
                     </td>
-                    <td className="py-2.5 px-2 text-slate-300 text-xs whitespace-nowrap">
+                    <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
                       {countdownMs != null && countdownMs > 0 ? (
                         <>
-                          <span className="block font-medium tabular-nums">
+                          <span className="block font-medium tabular-nums leading-tight">
                             {formatCountdownHms(countdownMs)}
                           </span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5">
+                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
                             {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
                           </span>
                         </>
                       ) : row.nextFundingTime != null ? (
                         <>
-                          <span className="block font-medium tabular-nums">—</span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5">
+                          <span className="block font-medium tabular-nums leading-tight">—</span>
+                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
                             {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
                           </span>
                         </>
@@ -257,7 +257,7 @@ export default function ScreenerPage() {
                         "Loading..."
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right">
+                    <td className="py-1 px-2 text-right">
                       <button
                         type="button"
                         onClick={() => {
@@ -266,7 +266,7 @@ export default function ScreenerPage() {
                           setLeverage(row.maxLeverage?.toString() ?? "10");
                           setSide("BUY");
                         }}
-                        className="h-8 px-3 rounded-lg text-xs font-medium text-white"
+                        className="h-7 px-2 rounded-lg text-[10px] sm:text-xs font-medium text-white"
                         style={{ backgroundColor: "var(--primary)" }}
                       >
                         Trade
