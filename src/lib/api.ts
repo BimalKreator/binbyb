@@ -1,9 +1,7 @@
 import axios, { type AxiosError } from "axios";
 
-const baseURL =
-  typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+const apiOrigin = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const baseURL = `${apiOrigin.replace(/\/$/, "")}/api`;
 
 export const api = axios.create({
   baseURL,

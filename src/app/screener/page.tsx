@@ -17,6 +17,16 @@ type RankedToken = {
 
 const POLL_MS = 5000;
 
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "—";
+  const s = Math.floor((ms / 1000) % 60);
+  const m = Math.floor((ms / 60000) % 60);
+  const h = Math.floor(ms / 3600000);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 function getFundingStatus(
   nextFundingTime: number | undefined,
   intervalHours: number | undefined
@@ -40,6 +50,12 @@ export default function ScreenerPage() {
   const [exchange, setExchange] = useState<"binance" | "bybit">("binance");
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [submitting, setSubmitting] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,7 +168,8 @@ export default function ScreenerPage() {
               <tr className="border-b border-slate-700 bg-slate-800/50">
                 <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Token</th>
                 <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Interval</th>
-                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Net Spread</th>
+                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Spread</th>
+                <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Next funding</th>
                 <th className="text-center py-2.5 px-2 text-slate-400 font-medium">Status</th>
                 <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Action</th>
               </tr>
@@ -175,6 +192,11 @@ export default function ScreenerPage() {
                         {row.netPct >= 0 ? "+" : ""}
                         {row.netPct.toFixed(4)}%
                       </span>
+                    </td>
+                    <td className="py-2.5 px-2 text-slate-300 text-xs whitespace-nowrap">
+                      {row.nextFundingTime != null
+                        ? formatCountdown(row.nextFundingTime - now)
+                        : "—"}
                     </td>
                     <td className="py-2.5 px-2 text-center">
                       <span
@@ -300,15 +322,17 @@ export default function ScreenerPage() {
                   <option value="bybit">Bybit</option>
                 </select>
               </label>
-              {/* Margin preview */}
+              {/* Margin calculation: Margin = (Price × Quantity) / Leverage */}
               <div className="rounded-lg bg-slate-800/70 p-3">
-                <p className="text-xs text-slate-400 mb-1">Margin requirement (preview)</p>
+                <p className="text-xs text-slate-400 mb-1">
+                  Margin = (Price × Quantity) / Leverage
+                </p>
                 <p className="text-lg font-medium text-foreground">
                   {marginReq > 0 ? `${marginReq.toFixed(2)} USDT` : "—"}
                 </p>
                 {notional > 0 && (
                   <p className="text-xs text-slate-500 mt-1">
-                    Notional: {notional.toFixed(2)} USDT
+                    Price × Quantity = {notional.toFixed(2)} USDT
                   </p>
                 )}
               </div>

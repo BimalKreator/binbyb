@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { Settings } from "lucide-react";
 
@@ -17,10 +18,16 @@ export function Header() {
           </span>
         </div>
 
-        {/* Title center */}
-        <h1 className="absolute left-1/2 -translate-x-1/2 text-base font-semibold tracking-wide text-foreground md:text-lg">
-          BINBYB
-        </h1>
+        {/* Logo center */}
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center h-8">
+          <Image
+            src="/logo.png"
+            alt="BINBYB"
+            width={120}
+            height={32}
+            className="h-8 w-auto object-contain"
+          />
+        </div>
 
         {/* Settings right */}
         <Link

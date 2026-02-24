@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import api, { setStoredToken } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
@@ -47,7 +48,16 @@ export default function LoginPage() {
   return (
     <div className="min-h-[100dvh] w-full flex flex-col items-center justify-center px-4 safe-area-inset">
       <div className="w-full max-w-[22rem]">
-        <h1 className="text-xl font-semibold text-foreground text-center mb-6">BINBYB</h1>
+        <div className="flex justify-center mb-6">
+          <Image
+            src="/logo.png"
+            alt="BINBYB"
+            width={240}
+            height={75}
+            className="w-[240px] h-auto object-contain"
+            priority
+          />
+        </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5">
             <span className="text-sm text-slate-400">Email</span>
