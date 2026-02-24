@@ -18,6 +18,7 @@ const lastFundingTimeCache = { binance: {}, bybit: {} };
 const maxLeverageCache = {};
 let rankedTokens = [];
 let volatilityMeter = { level: "Low", count: 0 };
+let cachedUserMinSpread = 0;
 
 /**
  * Interval (hours) = (NextFundingTime - LastFundingTime) in hours.
@@ -88,14 +89,17 @@ async function fetchAndCacheMaxLeverage(symbol) {
 /**
  * Gross spread: S_gross = Funding_Binance - Funding_Bybit (decimal).
  * Net spread: S_net = S_gross - UserMinSpread% (userMinSpread in percent, e.g. 0.1 = 0.1%).
+ * Handles NaN/undefined gracefully so nothing is filtered out.
  */
 function computeSpread(fundingBinance, fundingBybit, userMinSpreadPct) {
-  const gross = fundingBinance - fundingBybit;
-  const userMinSpreadDecimal = (userMinSpreadPct || 0) / 100;
+  const bin = Number(fundingBinance);
+  const byb = Number(fundingBybit);
+  const gross = (Number.isNaN(bin) ? 0 : bin) - (Number.isNaN(byb) ? 0 : byb);
+  const userMinSpreadDecimal = (Number(userMinSpreadPct) || 0) / 100;
   const net = gross - userMinSpreadDecimal;
   return {
-    grossPct: gross * 100,
-    netPct: net * 100,
+    grossPct: Number.isFinite(gross * 100) ? gross * 100 : 0,
+    netPct: Number.isFinite(net * 100) ? net * 100 : 0,
     gross,
     net,
   };
@@ -127,11 +131,12 @@ function sortByPriorityAndSpread(tokens) {
 }
 
 /**
- * Fetch UserMinSpread from Settings (single doc).
+ * Fetch UserMinSpread from Settings (single doc). Returns 0 if NaN/undefined.
  */
 async function getUserMinSpread() {
   const doc = await Setting.findOne().lean();
-  return doc?.userMinSpread ?? 0;
+  const val = doc?.userMinSpread ?? 0;
+  return Number(val) || 0;
 }
 
 let runScreenerDebounce = null;
@@ -143,37 +148,64 @@ async function runScreener() {
   runScreenerDebounce = setTimeout(async () => {
     runScreenerDebounce = null;
     const userMinSpread = await getUserMinSpread();
-    const symbols = Object.keys(binanceData).filter((s) => bybitData[s]);
+    cachedUserMinSpread = userMinSpread;
+    const binanceKeys = Object.keys(binanceData);
+    const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
+    const symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
     const tokens = [];
 
     for (const symbol of symbols) {
       const bin = binanceData[symbol];
       const byb = bybitData[symbol];
-      const nextFundingTime = bin?.nextFundingTime ?? byb?.nextFundingTime;
-      const intervalHours = nextFundingTime
-        ? await computeIntervalHours(
-            symbol,
-            nextFundingTime,
-            bin?.nextFundingTime != null ? "binance" : "bybit"
-          )
-        : intervalHoursCache[symbol] ?? null;
-      if (intervalHours != null) intervalHoursCache[symbol] = intervalHours;
+      const nextBin = bin?.nextFundingTime ?? null;
+      const nextByb = byb?.nextFundingTime ?? null;
+
+      // Continuously calculate interval for both: Interval = NextFundingTime - LastFundingTime → 1h/2h/4h/8h
+      let binanceIntervalHours = null;
+      let bybitIntervalHours = null;
+      try {
+        if (nextBin != null) binanceIntervalHours = await computeIntervalHours(symbol, nextBin, "binance");
+        if (nextByb != null) bybitIntervalHours = await computeIntervalHours(symbol, nextByb, "bybit");
+      } catch (_) {
+        // keep null
+      }
+
+      // Strict match: only include token when BinanceInterval === BybitInterval
+      if (
+        binanceIntervalHours == null ||
+        bybitIntervalHours == null ||
+        binanceIntervalHours !== bybitIntervalHours
+      ) {
+        continue;
+      }
+
+      intervalHoursCache[symbol] = binanceIntervalHours;
+      const fundingBinance = bin?.fundingRate ?? 0;
+      const fundingBybit = byb?.fundingRate ?? 0;
+      const nextFundingTime = nextBin ?? nextByb;
 
       const { grossPct, netPct, gross, net } = computeSpread(
-        bin?.fundingRate ?? 0,
-        byb?.fundingRate ?? 0,
+        fundingBinance,
+        fundingBybit,
         userMinSpread
       );
 
-      const maxLeverage = await fetchAndCacheMaxLeverage(symbol);
+      let maxLeverage = maxLeverageCache[symbol] ?? null;
+      if (maxLeverage == null) {
+        try {
+          maxLeverage = await fetchAndCacheMaxLeverage(symbol);
+        } catch (_) {
+          // keep null
+        }
+      }
 
       const markPrice = bin?.markPrice ?? byb?.markPrice ?? null;
       tokens.push({
         symbol,
-        fundingBinance: bin?.fundingRate,
-        fundingBybit: byb?.fundingRate,
+        fundingBinance: bin?.fundingRate ?? 0,
+        fundingBybit: byb?.fundingRate ?? 0,
         nextFundingTime,
-        intervalHours: intervalHours ?? undefined,
+        intervalHours: binanceIntervalHours,
         grossPct,
         netPct,
         gross,
@@ -190,7 +222,8 @@ async function runScreener() {
 
 function onBinanceFunding(data) {
   if (!data?.symbol) return;
-  binanceData[data.symbol] = {
+  const key = String(data.symbol).toUpperCase();
+  binanceData[key] = {
     fundingRate: data.fundingRate,
     nextFundingTime: data.nextFundingTime,
     markPrice: data.markPrice,
@@ -201,7 +234,8 @@ function onBinanceFunding(data) {
 
 function onBybitFunding(data) {
   if (!data?.symbol) return;
-  bybitData[data.symbol] = {
+  const key = String(data.symbol).toUpperCase();
+  bybitData[key] = {
     fundingRate: data.fundingRate,
     nextFundingTime: data.nextFundingTime,
     markPrice: data.markPrice,
@@ -239,9 +273,51 @@ function getMaxLeverage(symbol) {
   return maxLeverageCache[symbol] ?? null;
 }
 
+/**
+ * Build ranked tokens synchronously from current in-memory data (no await).
+ * Only includes symbols that have matching Binance/Bybit interval (from cache).
+ */
+function buildRankedTokensFromCurrentData() {
+  const binanceKeys = Object.keys(binanceData);
+  const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
+  const symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
+  const tokens = symbols
+    .filter((symbol) => intervalHoursCache[symbol] != null)
+    .map((symbol) => {
+      const bin = binanceData[symbol];
+      const byb = bybitData[symbol];
+      const fundingBinance = bin?.fundingRate ?? 0;
+      const fundingBybit = byb?.fundingRate ?? 0;
+      const nextFundingTime = bin?.nextFundingTime ?? byb?.nextFundingTime ?? null;
+      const { grossPct, netPct, gross, net } = computeSpread(
+        fundingBinance,
+        fundingBybit,
+        cachedUserMinSpread
+      );
+      return {
+        symbol,
+        fundingBinance,
+        fundingBybit,
+        nextFundingTime,
+        intervalHours: intervalHoursCache[symbol],
+        grossPct,
+        netPct,
+        gross,
+        net,
+        maxLeverage: maxLeverageCache[symbol] ?? null,
+        markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
+      };
+    });
+  return sortByPriorityAndSpread(tokens);
+}
+
 function getSnapshot() {
+  let list = getRankedTokens();
+  if (list.length === 0) {
+    list = buildRankedTokensFromCurrentData();
+  }
   return {
-    rankedTokens: getRankedTokens(),
+    rankedTokens: list,
     volatilityMeter: getVolatilityMeter(),
     binanceSymbols: Object.keys(binanceData),
     bybitSymbols: Object.keys(bybitData),

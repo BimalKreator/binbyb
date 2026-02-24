@@ -19,14 +19,37 @@ type RankedToken = {
 
 const POLL_MS = 1000;
 
-function formatCountdown(ms: number): string {
+function formatCountdownHms(ms: number): string {
   if (ms <= 0) return "—";
-  const s = Math.floor((ms / 1000) % 60);
-  const m = Math.floor((ms / 60000) % 60);
-  const h = Math.floor(ms / 3600000);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  const totalSeconds = Math.floor(ms / 1000);
+  const s = totalSeconds % 60;
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const h = Math.floor(totalSeconds / 3600);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatFundingRate(val: number | undefined | null): string {
+  if (val == null || Number.isNaN(Number(val))) return "Loading...";
+  return (Number(val) * 100).toFixed(4) + "%";
+}
+
+/** Funding line with explicit sign and (Long) or (Short). */
+function formatFundingWithDirection(
+  rate: number | undefined | null,
+  label: string,
+  isLong: boolean
+): string {
+  if (rate == null || Number.isNaN(Number(rate))) return `${label}: Loading...`;
+  const n = Number(rate) * 100;
+  const sign = n >= 0 ? "+" : "";
+  const dir = isLong ? " (Long)" : " (Short)";
+  return `${label}: ${sign}${n.toFixed(4)}%${dir}`;
+}
+
+function formatNetPct(val: number | undefined | null): string {
+  if (val == null || Number.isNaN(Number(val))) return "—";
+  const n = Number(val);
+  return (n >= 0 ? "+" : "") + n.toFixed(4) + "%";
 }
 
 export default function ScreenerPage() {
@@ -34,7 +57,7 @@ export default function ScreenerPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [intervalFilter, setIntervalFilter] = useState<number | null>(null);
-  const [minSpreadPct, setMinSpreadPct] = useState<string>("");
+  const [minSpreadPct, setMinSpreadPct] = useState<string>("-100");
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -52,11 +75,16 @@ export default function ScreenerPage() {
     let cancelled = false;
     const fetchData = async () => {
       try {
-        const res = await api.get<{ success: boolean; rankedTokens: RankedToken[] }>("/screener");
-        if (!cancelled && res.data.success && res.data.rankedTokens) {
-          setData({ rankedTokens: res.data.rankedTokens });
+        const res = await api.get<{ success?: boolean; rankedTokens?: RankedToken[] }>("/screener");
+        const payload = res?.data;
+        console.log("API Response:", payload);
+        if (cancelled) return;
+        const list = Array.isArray(payload?.rankedTokens) ? payload.rankedTokens : [];
+        if (payload?.success !== false) {
+          setData({ rankedTokens: list });
         }
       } catch (e) {
+        console.log("[Screener] Fetch error:", e);
         if (!cancelled) toast.error("Failed to load screener data.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -123,9 +151,9 @@ export default function ScreenerPage() {
     <div className="w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-3">Screener</h2>
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:flex-wrap">
-        <div className="relative flex-1 min-w-[140px]">
+      {/* Filters — line 1: full-width search; line 2: Min Spread % and Interval 50/50 */}
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input
             type="text"
@@ -135,28 +163,30 @@ export default function ScreenerPage() {
             className="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
           />
         </div>
-        <label className="flex items-center gap-2 shrink-0">
-          <span className="text-slate-400 text-sm whitespace-nowrap">Min Spread %</span>
-          <input
-            type="number"
-            step="any"
-            value={minSpreadPct}
-            onChange={(e) => setMinSpreadPct(e.target.value)}
-            placeholder="—"
-            className="w-20 h-10 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
-          />
-        </label>
-        <select
-          value={intervalFilter ?? ""}
-          onChange={(e) => setIntervalFilter(e.target.value === "" ? null : Number(e.target.value))}
-          className="h-10 px-3 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
-        >
-          <option value="">All intervals</option>
-          <option value="1">1h</option>
-          <option value="2">2h</option>
-          <option value="4">4h</option>
-          <option value="8">8h</option>
-        </select>
+        <div className="flex w-full gap-2">
+          <label className="flex flex-1 items-center gap-1.5 min-w-0">
+            <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min Spread %</span>
+            <input
+              type="number"
+              step="any"
+              value={minSpreadPct}
+              onChange={(e) => setMinSpreadPct(e.target.value)}
+              placeholder="-100"
+              className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+            />
+          </label>
+          <select
+            value={intervalFilter ?? ""}
+            onChange={(e) => setIntervalFilter(e.target.value === "" ? null : Number(e.target.value))}
+            className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-xs focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+          >
+            <option value="">All intervals</option>
+            <option value="1">1h</option>
+            <option value="2">2h</option>
+            <option value="4">4h</option>
+            <option value="8">8h</option>
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -172,53 +202,59 @@ export default function ScreenerPage() {
               <tr className="border-b border-slate-700 bg-slate-800/50">
                 <th className="text-left py-2.5 px-3 text-slate-400 font-medium">Token</th>
                 <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Funding</th>
-                <th className="text-center py-2.5 px-2 text-slate-400 font-medium">Direction</th>
-                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Net Spread</th>
+                <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Spread</th>
                 <th className="text-left py-2.5 px-2 text-slate-400 font-medium">Countdown</th>
                 <th className="text-right py-2.5 px-3 text-slate-400 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((row) => {
-                const bin = row.fundingBinance ?? 0;
-                const byb = row.fundingBybit ?? 0;
-                const longExchange = bin <= byb ? "Binance" : "Bybit";
-                const shortExchange = bin > byb ? "Binance" : "Bybit";
+                const binNum = Number(row.fundingBinance);
+                const bybNum = Number(row.fundingBybit);
+                const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
+                const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
                 const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
+                const netPctNum = Number(row.netPct);
+                const hasNetPct = !Number.isNaN(netPctNum);
                 return (
                   <tr key={row.symbol} className="border-b border-slate-700/50">
                     <td className="py-2.5 px-3 font-medium text-foreground">{row.symbol}</td>
                     <td className="py-2.5 px-2 text-slate-300 text-xs">
-                      <span className="block">Binance {(bin * 100).toFixed(4)}%</span>
-                      <span className="block">Bybit {(byb * 100).toFixed(4)}%</span>
-                    </td>
-                    <td className="py-2.5 px-2 text-center text-xs">
-                      <span className="text-[var(--profit)]">Long {longExchange}</span>
-                      <span className="text-slate-500"> / </span>
-                      <span className="text-[var(--loss)]">Short {shortExchange}</span>
+                      <span className="block">
+                        {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
+                      </span>
+                      <span className="block">
+                        {formatFundingWithDirection(row.fundingBybit, "Bybit", bybitIsLong)}
+                      </span>
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <span
                         className={
-                          row.netPct >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                          hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
                         }
                       >
-                        {row.netPct >= 0 ? "+" : ""}
-                        {row.netPct.toFixed(4)}%
+                        {formatNetPct(row.netPct)}
                       </span>
                     </td>
                     <td className="py-2.5 px-2 text-slate-300 text-xs whitespace-nowrap">
-                      {countdownMs != null ? (
+                      {countdownMs != null && countdownMs > 0 ? (
                         <>
                           <span className="block font-medium tabular-nums">
-                            {formatCountdown(countdownMs)}
+                            {formatCountdownHms(countdownMs)}
                           </span>
                           <span className="block text-[10px] text-slate-500 mt-0.5">
-                            {row.intervalHours != null ? `${row.intervalHours}h` : ""}
+                            {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
+                          </span>
+                        </>
+                      ) : row.nextFundingTime != null ? (
+                        <>
+                          <span className="block font-medium tabular-nums">—</span>
+                          <span className="block text-[10px] text-slate-500 mt-0.5">
+                            {row.intervalHours != null ? `${row.intervalHours}h` : "—"}
                           </span>
                         </>
                       ) : (
-                        "—"
+                        "Loading..."
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right">
@@ -272,7 +308,9 @@ export default function ScreenerPage() {
             </div>
             <div className="p-4 space-y-4">
               <p className="text-xs text-slate-400">
-                Mark price: {popupToken.markPrice != null ? popupToken.markPrice.toFixed(2) : "—"}
+                Mark price: {popupToken.markPrice != null && !Number.isNaN(Number(popupToken.markPrice))
+                  ? Number(popupToken.markPrice).toFixed(2)
+                  : "Loading..."}
               </p>
               <div className="flex gap-2">
                 <button
