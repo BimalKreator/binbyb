@@ -4,6 +4,7 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 
 const routes = require("./routes");
+const { startExchanges } = require("./services/exchanges");
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/binbyb";
@@ -22,8 +23,9 @@ app.get("/health", (req, res) => {
 
 mongoose
   .connect(MONGODB_URI)
-  .then(() => {
+  .then(async () => {
     console.log("MongoDB connected:", MONGODB_URI);
+    await startExchanges();
     app.listen(PORT, () => {
       console.log("Server running on port", PORT);
     });
