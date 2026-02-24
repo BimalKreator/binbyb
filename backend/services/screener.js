@@ -9,7 +9,8 @@ const Setting = require("../models/Setting");
 const { binanceManager, bybitManager } = require("./exchanges");
 
 const VOLATILITY_THRESHOLD_PCT = 0.5;
-const INTERVAL_PRIORITY = { 1: 0, 2: 1, 4: 2, 8: 3 }; // lower = higher priority
+/** Sort priority by interval string: 1h and 2h first (1), then 4h (2), then 8h (3). Lowest number first. */
+const INTERVAL_PRIORITY_BY_LABEL = { "1h": 1, "2h": 1, "4h": 2, "8h": 3 };
 
 const binanceData = {};
 const bybitData = {};
@@ -22,11 +23,11 @@ let volatilityMeter = { level: "Low", count: 0 };
 let cachedUserMinSpread = 0;
 
 /**
- * Interval (hours) = Math.round((NextFundingTime - LastFundingTime) / 3600000).
- * Buckets into 1, 2, 4, 8 for robust string labels.
+ * Map interval milliseconds strictly to 1, 2, 4, 8 (then to '1h', '2h', '4h', '8h').
+ * When ms is invalid or unknown, return 8 so we never get stuck on Loading.
  */
 function intervalMsToHours(intervalMs) {
-  if (intervalMs == null || intervalMs <= 0) return null;
+  if (intervalMs == null || !Number.isFinite(intervalMs) || intervalMs <= 0) return 8;
   const rawHours = Math.round(intervalMs / 3600000);
   if (rawHours <= 1) return 1;
   if (rawHours <= 2) return 2;
@@ -68,18 +69,19 @@ async function getLastFundingTimeBybit(symbol) {
 }
 
 /**
- * Compute funding interval in hours: Interval = NextFundingTime - LastFundingTime.
- * If LastFundingTime is unreliable (null), fallback to 8h (24/3 funding rate frequency).
+ * Compute interval when a WebSocket message has nextFundingTime.
+ * Interval = NextFundingTime - LastFundingTime (ms) → strictly '1h'|'2h'|'4h'|'8h'.
+ * If lastFundingTime is unknown, fetch via REST; if still unknown, derive 8h so we never stay on Loading.
  */
 async function computeIntervalHours(symbol, nextFundingTime, source) {
-  if (nextFundingTime == null) return null;
-  const last =
+  if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
+  let last =
     source === "binance"
       ? await getLastFundingTimeBinance(symbol)
       : await getLastFundingTimeBybit(symbol);
-  if (last == null) return 8; // fallback: 8h = 24 / 3 (typical perpetual funding frequency)
+  if (last == null) return 8; // REST failed or not yet loaded: use 8h (typical perpetual)
   const intervalMs = nextFundingTime - last;
-  return intervalMsToHours(intervalMs);
+  return intervalMsToHours(intervalMs); // always returns 1, 2, 4, or 8
 }
 
 async function fetchAndCacheMaxLeverage(symbol) {
@@ -132,12 +134,15 @@ function updateVolatilityMeter(tokensWithNetSpread) {
 }
 
 /**
- * Sort: 1st priority 1h, 2nd 2h, 3rd 4h, 4th 8h. Within each interval, highest spread first.
+ * Sort: priority map {'1h':1, '2h':1, '4h':2, '8h':3} (lowest first).
+ * Same priority → by absolute Net Spread descending.
  */
 function sortByPriorityAndSpread(tokens) {
   return [...tokens].sort((a, b) => {
-    const pa = INTERVAL_PRIORITY[a.intervalHours] ?? 99;
-    const pb = INTERVAL_PRIORITY[b.intervalHours] ?? 99;
+    const labelA = a.intervalDisplay ?? (a.intervalHours != null ? `${a.intervalHours}h` : "");
+    const labelB = b.intervalDisplay ?? (b.intervalHours != null ? `${b.intervalHours}h` : "");
+    const pa = INTERVAL_PRIORITY_BY_LABEL[labelA] ?? 99;
+    const pb = INTERVAL_PRIORITY_BY_LABEL[labelB] ?? 99;
     if (pa !== pb) return pa - pb;
     return (b.spreadPctAbs ?? 0) - (a.spreadPctAbs ?? 0);
   });
@@ -360,5 +365,5 @@ module.exports = {
   computeSpread,
   intervalMsToHours,
   VOLATILITY_THRESHOLD_PCT,
-  INTERVAL_PRIORITY,
+  INTERVAL_PRIORITY_BY_LABEL,
 };
