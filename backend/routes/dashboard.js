@@ -134,9 +134,9 @@ router.get("/positions", async (req, res) => {
       positionAmt: 0,
       unrealizedProfit: 0,
       marginUsed: 0,
-      entryPrice: 0,
-      leverage: 0,
-      liquidationPrice: 0,
+      entryPrice: null,
+      leverage: null,
+      liquidationPrice: null,
     };
     const defaultBybitPos = {
       side: "NONE",
@@ -144,9 +144,9 @@ router.get("/positions", async (req, res) => {
       positionAmt: 0,
       unrealizedProfit: 0,
       marginUsed: 0,
-      entryPrice: 0,
-      leverage: 0,
-      liquidationPrice: 0,
+      entryPrice: null,
+      leverage: null,
+      liquidationPrice: null,
     };
 
     const positions = [];
@@ -207,6 +207,7 @@ router.get("/positions", async (req, res) => {
         },
         bybit: {
           side: bybitPos.side,
+          positionSide: bybitPos.positionSide ?? "NONE",
           positionAmt: bybitAmt,
           unrealizedProfit: parseFloat(String(bybitPos.unrealizedProfit ?? 0)) || 0,
           marginUsed: parseFloat(String(bybitPos.marginUsed ?? 0)) || 0,

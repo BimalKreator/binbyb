@@ -922,14 +922,13 @@ async function start(credentials, options = {}) {
       }
       let usdtCoin = null;
 
-      if (list.length > 0) {
-        if (Array.isArray(list[0].coin)) {
-          // UNIFIED account structure
-          usdtCoin = list[0].coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
-        } else {
-          // CONTRACT account structure
-          usdtCoin = list.find((c) => (c.coin || "").toUpperCase() === "USDT");
+      for (const item of list) {
+        if (Array.isArray(item.coin)) {
+          usdtCoin = item.coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
+        } else if ((item.coin || "").toUpperCase() === "USDT") {
+          usdtCoin = item;
         }
+        if (usdtCoin) break;
       }
 
       if (usdtCoin) {

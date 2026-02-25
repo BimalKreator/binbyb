@@ -136,7 +136,7 @@ export default function Home() {
       const list = Array.isArray(raw)
         ? raw.filter(
             (p): p is PositionRow =>
-              p != null && typeof p.symbol === "string" && p.binance != null && p.bybit != null
+              p != null && typeof p.symbol === "string" && (p.binance != null || p.bybit != null)
           )
         : [];
       setPositions(list);
@@ -234,7 +234,7 @@ export default function Home() {
           <h3 className="text-base font-medium text-foreground mb-3">Active Positions</h3>
           {positions.length === 0 ? (
             <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-6 text-center text-slate-400 text-sm">
-              No open pairs. Positions appear when you have the same symbol on both exchanges.
+              No open positions.
             </div>
           ) : (
             <div className="rounded-xl border border-slate-700 bg-slate-800/30 overflow-hidden">
