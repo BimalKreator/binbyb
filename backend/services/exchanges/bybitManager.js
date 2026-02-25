@@ -35,6 +35,8 @@ let tradeWsReconnectTimer = null;
 let privateReconnectAttempts = 0;
 let privateReconnectTimer = null;
 const livePositionsByKey = {};
+/** USDT wallet balance/equity from private WS wallet topic. No REST in getBalance(). */
+let cachedWalletBalance = 0;
 /** Pending WS trade requests: reqId -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let tradeWsConnectPromise = null;
@@ -239,6 +241,8 @@ let publicReconnectTimer = null;
 let publicStopped = false;
 /** Throttle funding emits per symbol; only overwrites keys (no .push), prevents memory growth. */
 const lastFundingEmitBySymbol = {};
+/** markPrice per symbol from public tickers (for getOrderbookPrice without REST). */
+const lastMarkPriceBySymbol = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -299,8 +303,10 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           if (eventTime) logLatency("bybit", msg.topic, eventTime, { symbol: d.symbol });
 
           if (msg.topic.startsWith("tickers.") && d.symbol) {
-            if (!onFundingUpdate) continue;
             const sym = String(d.symbol).toUpperCase();
+            const mp = parseFloat(d.markPrice || d.lastPrice || 0);
+            if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
+            if (!onFundingUpdate) continue;
             const now = Date.now();
             const last = lastFundingEmitBySymbol[sym];
             if (last != null && now - last < FUNDING_THROTTLE_MS) continue;
@@ -309,7 +315,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               symbol: d.symbol,
               fundingRate: parseFloat(d.fundingRate || 0),
               nextFundingTime: d.nextFundingTime ? Number(d.nextFundingTime) : null,
-              markPrice: parseFloat(d.markPrice || d.lastPrice || 0),
+              markPrice: mp,
               eventTime: d.timestamp ? Number(d.timestamp) : msg.ts,
             });
           }
@@ -375,7 +381,12 @@ function openPrivateStream(credentials) {
           if (eventTime) logLatency("bybit", msg.topic, eventTime);
 
           if (msg.topic === "wallet") {
-            // Balance updates: skip per-message logging to avoid spam
+            const coins = d.coin || [];
+            const usdt = coins.find((c) => String(c?.coin ?? "").toUpperCase() === "USDT");
+            if (usdt != null) {
+              const eq = usdt.equity ?? usdt.walletBalance ?? usdt.availableToWithdraw;
+              if (eq != null && String(eq).length > 0) cachedWalletBalance = parseFloat(eq) || 0;
+            }
           } else if (msg.topic === "order") {
             console.log("[Bybit] Order update", {
               symbol: d.symbol,
@@ -490,45 +501,13 @@ async function getSymbolFilters(symbol) {
 }
 
 /**
- * Get USDT wallet balance for UNIFIED account. USER_DATA, signed.
- * Bybit v5 GET: sign string = timestamp + apiKey + recvWindow + queryString (params sorted).
+ * Get USDT wallet balance from WebSocket cache (private wallet topic). No REST calls.
+ * @returns {number} cached balance or 0 if not yet received
  */
-async function getBalance(credentials) {
-  if (!credentials?.apiKey || !credentials?.apiSecret) return 0;
-  try {
-    const timestamp = Date.now();
-    const recvWindow = 5000;
-    const params = { accountType: "UNIFIED", recvWindow, timestamp };
-    const queryString = Object.keys(params)
-      .sort()
-      .map((k) => `${k}=${params[k]}`)
-      .join("&");
-    const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${queryString}`;
-    const signature = signMessage(signStr, credentials.apiSecret);
-    const { data } = await axios.get(
-      `${REST_BASE}/v5/account/wallet-balance?${queryString}&signature=${signature}`,
-      {
-        headers: {
-          "X-BAPI-API-KEY": credentials.apiKey,
-          "X-BAPI-TIMESTAMP": String(timestamp),
-          "X-BAPI-RECV-WINDOW": String(recvWindow),
-          "X-BAPI-SIGN": signature,
-        },
-      }
-    );
-    const list = data?.result?.list || [];
-    for (const acc of list) {
-      const coins = acc.coin || [];
-      const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");
-      if (usdt) {
-        const equity = usdt.equity ?? usdt.walletBalance ?? usdt.availableToWithdraw ?? 0;
-        return parseFloat(equity) || 0;
-      }
-    }
-    return 0;
-  } catch (e) {
-    return 0;
-  }
+function getBalance(credentials) {
+  return typeof cachedWalletBalance === "number" && Number.isFinite(cachedWalletBalance)
+    ? cachedWalletBalance
+    : 0;
 }
 
 /**
@@ -622,15 +601,15 @@ async function getPositionDetails(credentials) {
 }
 
 /**
- * Close position with a market order (reduce-only).
- * @param {object} credentials
- * @param {string} symbol
- * @param {string} side - Buy or Sell (close side: Sell to close long, Buy to close short)
- * @param {number} qty - size to close (positive)
+ * Place a MARKET reduce-only order via Trade WebSocket (order.create). Zero REST.
  */
-async function placeMarketCloseOrder(credentials, symbol, side, qty) {
-  const sym = symbol.toUpperCase();
+async function placeWSMarketOrder(credentials, symbol, side, qty) {
+  const sym = String(symbol).toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
+  if (sideNorm !== "Buy" && sideNorm !== "Sell") {
+    throw new Error("side must be Buy or Sell");
+  }
+  await connectTradeWs(credentials);
   const filters = await getSymbolFilters(sym);
   const qtyStr = filters.stepSize
     ? formatQuantityToStepSize(Math.abs(qty), filters.stepSize)
@@ -638,53 +617,72 @@ async function placeMarketCloseOrder(credentials, symbol, side, qty) {
 
   const timestamp = Date.now();
   const recvWindow = 5000;
-  const body = {
-    category: "linear",
-    symbol: sym,
-    side: sideNorm,
-    orderType: "Market",
-    qty: qtyStr,
-    reduceOnly: true,
-  };
-  const rawBody = JSON.stringify(body);
-  const message = `${timestamp}${credentials.apiKey}${recvWindow}${rawBody}`;
-  const signature = signMessage(message, credentials.apiSecret);
-  const res = await axios.post(`${REST_BASE}/v5/order/create`, body, {
-    headers: {
-      "X-BAPI-API-KEY": credentials.apiKey,
-      "X-BAPI-SIGN": signature,
+  const args = [
+    {
+      category: "linear",
+      symbol: sym,
+      side: sideNorm,
+      orderType: "Market",
+      qty: qtyStr,
+      reduceOnly: true,
+    },
+  ];
+  const rawBody = JSON.stringify(args[0]);
+  const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${rawBody}`;
+  const signature = signMessage(signStr, credentials.apiSecret);
+
+  const reqId = `order_${timestamp}_${Math.random().toString(36).slice(2, 10)}`;
+  const payload = {
+    reqId,
+    header: {
       "X-BAPI-TIMESTAMP": String(timestamp),
       "X-BAPI-RECV-WINDOW": String(recvWindow),
+      "X-BAPI-SIGN": signature,
     },
+    op: "order.create",
+    args,
+  };
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      if (pendingRequests.has(reqId)) {
+        pendingRequests.delete(reqId);
+        reject(new Error("placeWSMarketOrder timeout"));
+      }
+    }, PLACE_WS_ORDER_TIMEOUT_MS);
+    pendingRequests.set(reqId, { resolve, reject, timeoutId });
+    try {
+      tradeWs.send(JSON.stringify(payload));
+    } catch (e) {
+      pendingRequests.delete(reqId);
+      clearTimeout(timeoutId);
+      reject(e);
+    }
   });
-  return res.data;
 }
 
 /**
- * Fetch orderbook depth (limit=5) and return aggressive limit price for IOC.
- * Buy (Long): use 2nd row of asks (index 1). Sell (Short): use 2nd row of bids (index 1).
+ * Close position with a market order via WebSocket only (zero REST). Reduce-only.
  */
-async function getOrderbookPrice(symbol, side) {
-  try {
-    const { data } = await axios.get(`${REST_BASE}/v5/market/orderbook`, {
-      params: { category: "linear", symbol: String(symbol).toUpperCase(), limit: 5 },
-    });
-    const r = data?.result;
-    const asks = r?.a || [];
-    const bids = r?.b || [];
-    const isBuy = String(side).toLowerCase() === "buy";
-    if (isBuy && asks.length > 0) {
-      const row = asks[1] || asks[0];
-      return row && row[0] ? parseFloat(row[0]) : null;
-    }
-    if (!isBuy && bids.length > 0) {
-      const row = bids[1] || bids[0];
-      return row && row[0] ? parseFloat(row[0]) : null;
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
+async function placeMarketCloseOrder(credentials, symbol, side, qty) {
+  return placeWSMarketOrder(credentials, symbol, side, Math.abs(qty));
+}
+
+/** Slippage (0.1%) applied to mark price when no REST orderbook. */
+const ORDERBOOK_SLIPPAGE_PCT = 0.001;
+
+/**
+ * Get limit price for IOC from cached mark price + slippage. No REST orderbook.
+ * Buy: markPrice * (1 + slippage). Sell: markPrice * (1 - slippage).
+ * @returns {number|null} price or null if no mark price yet
+ */
+function getOrderbookPrice(symbol, side) {
+  const sym = String(symbol).toUpperCase();
+  const mark = lastMarkPriceBySymbol[sym];
+  if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
+  const isBuy = String(side).toLowerCase() === "buy";
+  const slip = ORDERBOOK_SLIPPAGE_PCT;
+  return isBuy ? mark * (1 + slip) : mark * (1 - slip);
 }
 
 async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = {}) {
@@ -777,7 +775,9 @@ function stop() {
   }
   privateCredentials = null;
   tradeWsCredentials = null;
+  cachedWalletBalance = 0;
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
+  Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   console.log("[Bybit] Manager stopped");
 }
 
@@ -825,6 +825,45 @@ async function start(credentials, options = {}) {
   openPublicStreams(symbols);
   openPrivateStream(credentials);
   await hydratePositionsFromRest(credentials);
+
+  // One-time REST fetch to seed cachedWalletBalance; WS will keep it updated. No retries.
+  if (credentials?.apiKey && credentials?.apiSecret) {
+    try {
+      const timestamp = Date.now();
+      const recvWindow = 5000;
+      const params = { accountType: "UNIFIED", recvWindow, timestamp };
+      const queryString = Object.keys(params)
+        .sort()
+        .map((k) => `${k}=${params[k]}`)
+        .join("&");
+      const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${queryString}`;
+      const signature = signMessage(signStr, credentials.apiSecret);
+      const { data } = await axios.get(
+        `${REST_BASE}/v5/account/wallet-balance?${queryString}&signature=${signature}`,
+        {
+          headers: {
+            "X-BAPI-API-KEY": credentials.apiKey,
+            "X-BAPI-TIMESTAMP": String(timestamp),
+            "X-BAPI-RECV-WINDOW": String(recvWindow),
+            "X-BAPI-SIGN": signature,
+          },
+        }
+      );
+      const list = data?.result?.list || [];
+      for (const acc of list) {
+        const coins = acc.coin || [];
+        const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");
+        if (usdt) {
+          const eq = usdt.equity ?? usdt.walletBalance ?? usdt.availableToWithdraw ?? 0;
+          cachedWalletBalance = parseFloat(eq) || 0;
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn("[Bybit] One-time balance fetch failed:", e.message, "- WS will set balance on first update");
+      // Leave cachedWalletBalance at 0
+    }
+  }
 }
 
 /**

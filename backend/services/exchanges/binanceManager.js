@@ -72,6 +72,8 @@ let listenKeyKeepaliveTimer = null;
 let privateReconnectAttempts = 0;
 let privateReconnectTimer = null;
 const livePositionsByKey = {};
+/** USDT wallet balance from ACCOUNT_UPDATE (msg.a.B). No REST in getBalance(). */
+let cachedWalletBalance = 0;
 /** Pending WS API requests: id -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let apiWsConnectPromise = null;
@@ -250,6 +252,75 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
   });
 }
 
+/** Slippage (e.g. 0.001 = 0.1%) applied to mark price when no REST orderbook. */
+const ORDERBOOK_SLIPPAGE_PCT = 0.001;
+
+/**
+ * Place a MARKET reduce-only order via WebSocket API (order.place).
+ * Used for position close; no REST fallback to avoid IP ban.
+ */
+async function placeWSMarketOrder(credentials, symbol, side, quantity, opts = {}) {
+  const sym = String(symbol).toUpperCase();
+  const sideNorm = String(side).toUpperCase();
+  if (sideNorm !== "BUY" && sideNorm !== "SELL") {
+    throw new Error("side must be BUY or SELL");
+  }
+  await connectApiWs();
+  const filters = await getSymbolFilters(sym);
+  const qtyStr = filters.stepSize
+    ? formatQuantityToStepSize(quantity, filters.stepSize)
+    : String(quantity);
+
+  let positionSide = opts.positionSide;
+  if (positionSide === undefined) {
+    try {
+      const isHedge = await getPositionMode(credentials);
+      positionSide = isHedge ? (sideNorm === "BUY" ? "LONG" : "SHORT") : "BOTH";
+    } catch (e) {
+      positionSide = "BOTH";
+    }
+  }
+
+  const timestamp = Date.now();
+  const id = `order_${timestamp}_${Math.random().toString(36).slice(2, 10)}`;
+  const params = {
+    apiKey: credentials.apiKey,
+    symbol: sym,
+    side: sideNorm,
+    type: "MARKET",
+    quantity: qtyStr,
+    reduceOnly: "true",
+    timestamp,
+  };
+  if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
+
+  const queryString = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const signature = signQueryString(queryString, credentials.apiSecret);
+  params.signature = signature;
+
+  const payload = { id, method: "order.place", params };
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      if (pendingRequests.has(id)) {
+        pendingRequests.delete(id);
+        reject(new Error("placeWSMarketOrder timeout"));
+      }
+    }, PLACE_WS_ORDER_TIMEOUT_MS);
+    pendingRequests.set(id, { resolve, reject, timeoutId });
+    try {
+      apiWs.send(JSON.stringify(payload));
+    } catch (e) {
+      pendingRequests.delete(id);
+      clearTimeout(timeoutId);
+      reject(e);
+    }
+  });
+}
+
 const MAX_STREAMS_PER_CONNECTION = 1024;
 const FUNDING_THROTTLE_MS = 500;
 const RECONNECT_BASE_MS = 2000;
@@ -261,6 +332,8 @@ let publicReconnectTimer = null;
 let publicStopped = false;
 /** Throttle funding emits per symbol; only overwrites keys (no .push), prevents memory growth. */
 const lastFundingEmitBySymbol = {};
+/** markPrice per symbol from public stream (for getOrderbookPrice without REST). */
+const lastMarkPriceBySymbol = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -324,6 +397,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
       if (payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
+        if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
         if (!onFundingUpdate || !s) return;
         const now = Date.now();
         const last = lastFundingEmitBySymbol[s];
@@ -394,6 +468,15 @@ async function startPrivateStream(credentials) {
         if (Array.isArray(positions)) {
           for (const p of positions) upsertLivePosition(p);
           emitPositionUpdate();
+        }
+        // Wallet balance: msg.a.B = balances array; USDT = walletBalance (wb) or asset (a)
+        const balances = msg?.a?.B;
+        if (Array.isArray(balances)) {
+          const usdt = balances.find((b) => String(b?.a ?? b?.asset ?? "").toUpperCase() === "USDT");
+          if (usdt != null) {
+            const wb = usdt.wb ?? usdt.walletBalance ?? usdt.availableBalance;
+            if (wb != null && String(wb).length > 0) cachedWalletBalance = parseFloat(wb) || 0;
+          }
         }
       } else if (msg.e === "ORDER_TRADE_UPDATE") {
         const o = msg.o || {};
@@ -690,7 +773,9 @@ function stop() {
   listenKey = null;
   privateCredentials = null;
   exchangeInfoFetchPromise = null;
+  cachedWalletBalance = 0;
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
+  Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   console.log("[Binance] Manager stopped");
 }
 
@@ -739,6 +824,31 @@ async function start(credentials, options = {}) {
   openPublicStreams(symbols);
   await startPrivateStream(credentials);
   await hydratePositionsFromRest(credentials);
+
+  // One-time REST fetch to seed cachedWalletBalance; WS will keep it updated. No retries.
+  if (credentials?.apiKey && credentials?.apiSecret) {
+    try {
+      const timestamp = Date.now();
+      const queryString = `timestamp=${timestamp}`;
+      const signature = signQueryString(queryString, credentials.apiSecret);
+      const fullQuery = `${queryString}&signature=${signature}`;
+      const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
+        headers: { "X-MBX-APIKEY": credentials.apiKey },
+      });
+      const total = data?.totalWalletBalance;
+      if (total != null && String(total).length > 0) {
+        cachedWalletBalance = parseFloat(total) || 0;
+      } else {
+        const assets = Array.isArray(data?.assets) ? data.assets : [];
+        const usdt = assets.find((b) => (b.asset || "").toUpperCase() === "USDT");
+        const bal = usdt?.walletBalance ?? usdt?.availableBalance ?? 0;
+        cachedWalletBalance = parseFloat(bal) || 0;
+      }
+    } catch (e) {
+      console.warn("[Binance] One-time balance fetch failed:", e.message, "- WS will set balance on first update");
+      // Leave cachedWalletBalance at 0
+    }
+  }
 }
 
 /**
@@ -842,28 +952,13 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 }
 
 /**
- * Get total USDT wallet balance (including used margin / unrealized PnL). USER_DATA, signed.
- * Uses /fapi/v2/account and totalWalletBalance (or USDT asset walletBalance).
- * @returns {Promise<number>} total wallet balance or 0 on error
+ * Get USDT wallet balance from WebSocket cache (ACCOUNT_UPDATE). No REST calls.
+ * @returns {number} cached balance or 0 if not yet received
  */
-async function getBalance(credentials) {
-  try {
-    const timestamp = Date.now();
-    const queryString = `timestamp=${timestamp}`;
-    const signature = signQueryString(queryString, credentials.apiSecret);
-    const fullQuery = `${queryString}&signature=${signature}`;
-    const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
-      headers: { "X-MBX-APIKEY": credentials.apiKey },
-    });
-    const total = data?.totalWalletBalance;
-    if (total != null && String(total).length > 0) return parseFloat(total) || 0;
-    const assets = Array.isArray(data?.assets) ? data.assets : [];
-    const usdt = assets.find((b) => (b.asset || "").toUpperCase() === "USDT");
-    const bal = usdt?.walletBalance ?? usdt?.availableBalance ?? 0;
-    return parseFloat(bal) || 0;
-  } catch (e) {
-    return 0;
-  }
+function getBalance(credentials) {
+  return typeof cachedWalletBalance === "number" && Number.isFinite(cachedWalletBalance)
+    ? cachedWalletBalance
+    : 0;
 }
 
 /**
@@ -930,79 +1025,27 @@ async function getPositionDetails(credentials) {
 }
 
 /**
- * Close position with a market order (reduce-only).
- * Hedge mode: MUST send positionSide (LONG with side SELL, or SHORT with side BUY). Binance returns 400 if missing.
- * @param {object} credentials
- * @param {string} symbol
- * @param {string} side - BUY or SELL (close side: SELL to close long, BUY to close short)
- * @param {number} quantity - absolute size to close
- * @param {{ positionSide?: string }} [opts] - positionSide from position (LONG | SHORT); required in hedge mode
+ * Close position with a market order via WebSocket only (zero REST). Reduce-only.
+ * Hedge mode: positionSide (LONG/SHORT) is strictly passed.
  */
 async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts = {}) {
-  const sym = symbol.toUpperCase();
-  const sideNorm = side.toUpperCase();
-  const filters = await getSymbolFilters(sym);
-  const qtyStr = filters.stepSize
-    ? formatQuantityToStepSize(Math.abs(quantity), filters.stepSize)
-    : String(Math.abs(quantity));
-
-  let positionSide = opts.positionSide;
-  if (positionSide !== "LONG" && positionSide !== "SHORT") {
-    try {
-      const isHedge = await getPositionMode(credentials);
-      positionSide = isHedge ? (sideNorm === "SELL" ? "LONG" : "SHORT") : "BOTH";
-    } catch (_) {
-      positionSide = sideNorm === "SELL" ? "LONG" : "SHORT";
-    }
-  }
-
-  const timestamp = Date.now();
-  const params = {
-    symbol: sym,
-    side: sideNorm,
-    positionSide,
-    type: "MARKET",
-    quantity: qtyStr,
-    reduceOnly: "true",
-    timestamp,
-  };
-  const queryString = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
-    .join("&");
-  const signature = signQueryString(queryString, credentials.apiSecret);
-  const fullQuery = `${queryString}&signature=${signature}`;
-  const res = await binanceAxios.post(`${REST_BASE}/fapi/v1/order?${fullQuery}`, null, {
-    headers: { "X-MBX-APIKEY": credentials.apiKey },
+  return placeWSMarketOrder(credentials, symbol, side, Math.abs(quantity), {
+    positionSide: opts.positionSide,
   });
-  return res.data;
 }
 
 /**
- * Fetch orderbook depth (limit=5) and return aggressive limit price for IOC.
- * BUY (Long): use 2nd row of asks (index 1). SELL (Short): use 2nd row of bids (index 1).
- * Falls back to 1st row if 2nd is missing. Returns null on error.
+ * Get limit price for IOC from cached mark price + slippage. No REST /depth.
+ * BUY: markPrice * (1 + slippage). SELL: markPrice * (1 - slippage).
+ * @returns {number|null} price or null if no mark price yet
  */
-async function getOrderbookPrice(symbol, side) {
-  try {
-    const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/depth`, {
-      params: { symbol: String(symbol).toUpperCase(), limit: 5 },
-    });
-    const asks = data?.asks || [];
-    const bids = data?.bids || [];
-    const isBuy = String(side).toUpperCase() === "BUY";
-    if (isBuy && asks.length > 0) {
-      const row = asks[1] || asks[0];
-      return row && row[0] ? parseFloat(row[0]) : null;
-    }
-    if (!isBuy && bids.length > 0) {
-      const row = bids[1] || bids[0];
-      return row && row[0] ? parseFloat(row[0]) : null;
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
+function getOrderbookPrice(symbol, side) {
+  const sym = String(symbol).toUpperCase();
+  const mark = lastMarkPriceBySymbol[sym];
+  if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
+  const isBuy = String(side).toUpperCase() === "BUY";
+  const slip = ORDERBOOK_SLIPPAGE_PCT;
+  return isBuy ? mark * (1 + slip) : mark * (1 - slip);
 }
 
 module.exports = {

@@ -51,36 +51,15 @@ router.get("/metrics", async (req, res) => {
     const openingBalance = Number(settings?.openingBalance) || 0;
 
     const keys = await getDecryptedApiKeys();
-    let binanceBalance = 0;
-    let bybitBalance = 0;
-
-    // Fetch Binance balance independently; 418/403 must not crash the route.
-    if (keys?.binance?.apiKey && keys?.binance?.apiSecret) {
-      try {
-        const val = await binanceManager.getBalance(keys.binance);
-        binanceBalance = Number.isFinite(val) ? val : 0;
-      } catch (e) {
-        const status = e.response?.status;
-        const isBan = status === 418 || status === 403;
-        if (isBan) {
-          console.error("[Dashboard/metrics] Binance balance skipped (IP/ban):", status, e.response?.data?.msg ?? e.message);
-        } else {
-          console.warn("[Dashboard/metrics] Binance getBalance failed:", e.message);
-        }
-        binanceBalance = 0;
-      }
-    }
-
-    // Fetch Bybit balance independently.
-    if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
-      try {
-        const val = await bybitManager.getBalance(keys.bybit);
-        bybitBalance = Number.isFinite(val) ? val : 0;
-      } catch (e) {
-        console.warn("[Dashboard/metrics] Bybit getBalance failed:", e.message);
-        bybitBalance = 0;
-      }
-    }
+    // getBalance() is sync and reads from WS cache; no REST, so no 418/403. Safe fallback to 0.
+    const binanceBalance =
+      keys?.binance?.apiKey && keys?.binance?.apiSecret
+        ? (Number(binanceManager.getBalance(keys.binance)) || 0)
+        : 0;
+    const bybitBalance =
+      keys?.bybit?.apiKey && keys?.bybit?.apiSecret
+        ? (Number(bybitManager.getBalance(keys.bybit)) || 0)
+        : 0;
 
     const totalCapital = binanceBalance + bybitBalance;
     const currentBalance = totalCapital;
