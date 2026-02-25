@@ -1,30 +1,70 @@
 const binanceManager = require("./binanceManager");
 const bybitManager = require("./bybitManager");
 const { getDecryptedApiKeys } = require("../apiKeys");
+const vwapService = require("../vwapService");
 
 let started = false;
 
+const SYMBOL_FETCH_RETRIES = 3;
+const SYMBOL_FETCH_RETRY_DELAY_MS = 2000;
+
+/**
+ * Fetch perpetual symbols from one exchange with optional retries.
+ */
+async function fetchSymbolsWithRetry(getSymbolsFn, label) {
+  for (let attempt = 1; attempt <= SYMBOL_FETCH_RETRIES; attempt++) {
+    try {
+      const list = await getSymbolsFn();
+      if (Array.isArray(list) && list.length > 0) {
+        return list;
+      }
+    } catch (e) {
+      console.warn(`[Exchanges] ${label} symbol list attempt ${attempt}/${SYMBOL_FETCH_RETRIES} failed:`, e.message);
+      if (attempt < SYMBOL_FETCH_RETRIES) {
+        await new Promise((r) => setTimeout(r, SYMBOL_FETCH_RETRY_DELAY_MS));
+      } else {
+        throw e;
+      }
+    }
+  }
+  return [];
+}
+
 /**
  * Fetch perpetual symbols from both exchanges and return intersection (symbols on both).
+ * Retries each exchange independently so e.g. IP ban on one doesn't block the other.
  */
 async function getCommonPerpetualSymbols() {
   let binanceList = [];
   let bybitList = [];
   try {
-    [binanceList, bybitList] = await Promise.all([
-      binanceManager.getPerpetualSymbols(),
-      bybitManager.getPerpetualSymbols(),
-    ]);
+    binanceList = await fetchSymbolsWithRetry(
+      () => binanceManager.getPerpetualSymbols(),
+      "Binance"
+    );
   } catch (e) {
-    console.error("[Exchanges] Failed to fetch symbol lists:", e.message);
+    console.error("[Exchanges] Binance symbol list failed after retries:", e.message);
+  }
+  try {
+    bybitList = await fetchSymbolsWithRetry(
+      () => bybitManager.getPerpetualSymbols(),
+      "Bybit"
+    );
+  } catch (e) {
+    console.error("[Exchanges] Bybit symbol list failed after retries:", e.message);
+  }
+
+  if (binanceList.length === 0 && bybitList.length === 0) {
+    console.warn("[Exchanges] No symbols from either exchange; using default BTCUSDT, ETHUSDT");
     return ["BTCUSDT", "ETHUSDT"];
   }
-  const bybitSet = new Set(bybitList.map((s) => s.toUpperCase()));
-  const common = binanceList.filter((s) => bybitSet.has(s.toUpperCase()));
+
+  const bybitSet = new Set(bybitList.map((s) => String(s).toUpperCase()));
+  const common = binanceList.filter((s) => bybitSet.has(String(s).toUpperCase()));
   const sorted = [...new Set(common)].sort();
   const maxSymbols = 500;
   const capped = sorted.length ? sorted.slice(0, maxSymbols) : ["BTCUSDT", "ETHUSDT"];
-  console.log("[Exchanges] Common perpetual symbols:", binanceList.length, "Binance,", bybitList.length, "Bybit,", sorted.length, "common, tracking", capped.length);
+  console.log("[Exchanges] Common perpetual symbols: Binance", binanceList.length, ", Bybit", bybitList.length, ", common", sorted.length, ", tracking", capped.length);
   return capped;
 }
 
@@ -36,12 +76,20 @@ async function startExchanges(options = {}) {
 
   const keys = await getDecryptedApiKeys();
   const symbols = options.symbols || (await getCommonPerpetualSymbols());
+  if (symbols.length === 0) {
+    console.warn("[Exchanges] No symbols to track; start aborted.");
+    return;
+  }
+  vwapService.setKnownSymbols(symbols);
 
-  binanceManager.start(keys.binance || null, { symbols });
-  bybitManager.start(keys.bybit || null, { symbols });
+  await Promise.all([
+    binanceManager.start(keys.binance || null, { symbols }),
+    bybitManager.start(keys.bybit || null, { symbols }),
+  ]);
 
   started = true;
-  console.log("[Exchanges] Binance and Bybit managers started, tracking", symbols.length, "symbols");
+  console.log("[Exchanges] Binance and Bybit managers started, tracking", symbols.length, "symbols (funding streams for all common symbols).");
+  return symbols;
 }
 
 function stopExchanges() {

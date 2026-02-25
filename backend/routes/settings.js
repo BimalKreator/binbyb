@@ -23,9 +23,10 @@ router.get("/", async (req, res) => {
 /** PUT /api/settings - Update global settings */
 router.put("/", async (req, res) => {
   try {
-    const { capitalPercent, maxTrades, stopLoss, takeProfit, autoTrade, userMinSpread } = req.body;
+    const { capitalPercent, leverage, maxTrades, stopLoss, takeProfit, autoTrade, userMinSpread } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
+    if (leverage !== undefined) update.leverage = Math.max(1, Math.min(125, Number(leverage) || 10));
     if (maxTrades !== undefined) update.maxTrades = Number(maxTrades);
     if (stopLoss !== undefined) update.stopLoss = Number(stopLoss);
     if (takeProfit !== undefined) update.takeProfit = Number(takeProfit);

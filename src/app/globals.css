@@ -63,3 +63,17 @@ body {
   padding-top: env(safe-area-inset-top, 0);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
+
+/* Mobile: prevent horizontal scroll on main content */
+main {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Touch targets: minimum 44px for tap areas (iOS/Android) */
+@media (pointer: coarse) {
+  button:not(.no-touch-target) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

@@ -10,6 +10,7 @@ import { Loader } from "@/components/Loader";
 type SettingRecord = {
   _id: string;
   capitalPercent: number;
+  leverage?: number;
   maxTrades: number;
   stopLoss: number;
   takeProfit: number;
@@ -24,6 +25,7 @@ export default function SettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [capitalPercent, setCapitalPercent] = useState(10);
+  const [leverage, setLeverage] = useState(10);
   const [maxTrades, setMaxTrades] = useState(5);
   const [stopLoss, setStopLoss] = useState(0);
   const [takeProfit, setTakeProfit] = useState(0);
@@ -37,6 +39,7 @@ export default function SettingsPage() {
           const s = data.data;
           setSettings(s);
           setCapitalPercent(s.capitalPercent ?? 10);
+          setLeverage(s.leverage ?? 10);
           setMaxTrades(s.maxTrades ?? 5);
           setStopLoss(s.stopLoss ?? 0);
           setTakeProfit(s.takeProfit ?? 0);
@@ -52,6 +55,7 @@ export default function SettingsPage() {
     try {
       const { data } = await api.put<{ success: boolean; data: SettingRecord }>("/settings", {
         capitalPercent,
+        leverage,
         maxTrades,
         stopLoss,
         takeProfit,
@@ -73,7 +77,7 @@ export default function SettingsPage() {
   const sectionClass = "mb-8";
 
   return (
-    <div className="w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
+    <div className="w-full min-w-0 max-w-[100vw] overflow-x-hidden px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-4">Settings</h2>
 
       {/* Trading Settings - synced with Setting model */}
@@ -90,18 +94,35 @@ export default function SettingsPage() {
                 min={0}
                 max={100}
                 value={capitalPercent}
-                onChange={(e) => setCapitalPercent(Number(e.target.value))}
+                onChange={(e) => setCapitalPercent(Number(e.target.value) ?? 10)}
                 className={inputClass}
               />
             </label>
             <label className="block">
+              <span className={labelClass}>Leverage</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={leverage}
+                onChange={(e) => setLeverage(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                className={inputClass}
+                aria-describedby="leverage-hint"
+              />
+              <span id="leverage-hint" className="text-xs text-slate-500 mt-0.5 block">1–20x</span>
+            </label>
+            <label className="block">
               <span className={labelClass}>Max Open Trades</span>
+              <span id="max-trades-hint" className="text-xs text-slate-500 block mb-1">
+                Maximum number of concurrent active arbitrage pairs
+              </span>
               <input
                 type="number"
                 min={0}
                 value={maxTrades}
-                onChange={(e) => setMaxTrades(Number(e.target.value))}
+                onChange={(e) => setMaxTrades(Math.max(0, Number(e.target.value) ?? 0))}
                 className={inputClass}
+                aria-describedby="max-trades-hint"
               />
             </label>
             <div>
@@ -114,7 +135,7 @@ export default function SettingsPage() {
                     min={0}
                     step={0.1}
                     value={stopLoss}
-                    onChange={(e) => setStopLoss(Number(e.target.value))}
+                    onChange={(e) => setStopLoss(Number(e.target.value) ?? 0)}
                     className={inputClass}
                   />
                 </label>
@@ -125,7 +146,7 @@ export default function SettingsPage() {
                     min={0}
                     step={0.1}
                     value={takeProfit}
-                    onChange={(e) => setTakeProfit(Number(e.target.value))}
+                    onChange={(e) => setTakeProfit(Number(e.target.value) ?? 0)}
                     className={inputClass}
                   />
                 </label>
@@ -144,7 +165,7 @@ export default function SettingsPage() {
               type="button"
               onClick={saveSettings}
               disabled={savingSettings}
-              className="h-10 px-4 rounded-lg font-medium text-white disabled:opacity-60"
+              className="min-h-[44px] px-5 py-2.5 rounded-lg font-medium text-white disabled:opacity-60 touch-manipulation"
               style={{ backgroundColor: "var(--primary)" }}
             >
               {savingSettings ? "Saving..." : "Save Settings"}
@@ -160,7 +181,7 @@ export default function SettingsPage() {
             logout();
             router.replace("/login");
           }}
-          className="h-10 px-4 rounded-lg text-sm font-medium text-slate-300 border border-slate-600 hover:bg-slate-700/50"
+          className="min-h-[44px] px-5 py-2.5 rounded-lg text-sm font-medium text-slate-300 border border-slate-600 hover:bg-slate-700/50 touch-manipulation"
         >
           Log out
         </button>

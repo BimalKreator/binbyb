@@ -8,12 +8,11 @@ const systemLogSchema = new mongoose.Schema(
     message: { type: String, required: true },
     source: { type: String, default: "" },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
-    createdAt: { type: Date, default: Date.now, expires: TTL_SECONDS },
   },
   { timestamps: true }
 );
 
-// TTL index: MongoDB automatically deletes documents when createdAt is older than 48h
+// Single TTL index on createdAt (timestamps: true adds createdAt); avoid duplicate index warning
 systemLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: TTL_SECONDS });
 
 module.exports = mongoose.model("SystemLog", systemLogSchema);

@@ -3,16 +3,19 @@ const mongoose = require("mongoose");
 const settingSchema = new mongoose.Schema(
   {
     capitalPercent: { type: Number, default: 10, min: 0, max: 100 },
+    leverage: { type: Number, default: 10, min: 1, max: 125 },
     maxTrades: { type: Number, default: 5, min: 0 },
     stopLoss: { type: Number, default: 0 },
     takeProfit: { type: Number, default: 0 },
+    slPercent: { type: Number, default: 0 },   // combined PnL % to trigger stop (e.g. -2)
+    tpPercent: { type: Number, default: 0 },   // combined PnL % to trigger take profit (e.g. 1)
     autoTrade: { type: Boolean, default: false },
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
+    openingBalance: { type: Number, default: 0 }, // USDT balance at start (for Profit = Current - Opening - Deposits + Withdrawals)
   },
   { timestamps: true }
 );
 
-// Single global settings document
-settingSchema.index({ _id: 1 }, { unique: true });
+// Single global settings document: use findOne() / findOneAndUpdate(); _id already has a unique index by default.
 
 module.exports = mongoose.model("Setting", settingSchema);

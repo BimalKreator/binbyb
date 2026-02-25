@@ -72,7 +72,7 @@ export default function FundsPage() {
   };
 
   return (
-    <div className="w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
+    <div className="flex flex-col flex-1 min-h-0 w-full max-w-[100vw] overflow-y-auto overflow-x-hidden pb-24 px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-2">Fund Management</h2>
       <p className="text-sm text-slate-400 mb-6">
         Record manual deposits and withdrawals. History is loaded from the server.

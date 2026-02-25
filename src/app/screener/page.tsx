@@ -9,8 +9,9 @@ import { Search, X } from "lucide-react";
 type RankedToken = {
   symbol: string;
   intervalHours?: number;
-  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' | 'Loading'
+  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' | 'Loading' (from backend premium index / WS)
   netPct: number;
+  spreadPctAbs?: number; // combined funding spread (used for backend sort: interval then spread desc)
   nextFundingTime?: number;
   markPrice?: number;
   maxLeverage?: number | null;
@@ -76,14 +77,12 @@ export default function ScreenerPage() {
       try {
         const res = await api.get<{ success?: boolean; rankedTokens?: RankedToken[] }>("/screener");
         const payload = res?.data;
-        console.log("API Response:", payload);
         if (cancelled) return;
         const list = Array.isArray(payload?.rankedTokens) ? payload.rankedTokens : [];
         if (payload?.success !== false) {
           setData({ rankedTokens: list });
         }
       } catch (e) {
-        console.log("[Screener] Fetch error:", e);
         if (!cancelled) toast.error("Failed to load screener data.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -97,6 +96,7 @@ export default function ScreenerPage() {
     };
   }, []);
 
+  // Backend returns rankedTokens sorted by interval (1h/2h first, then 4h, 8h) then by combined funding spread (spreadPctAbs) descending. We only filter here, preserving order.
   const filtered = useMemo(() => {
     if (!data?.rankedTokens) return [];
     let list = data.rankedTokens;
@@ -152,7 +152,7 @@ export default function ScreenerPage() {
   };
 
   return (
-    <div className="w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
+    <div className="w-full min-w-0 max-w-[100vw] overflow-x-hidden px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-3">Screener</h2>
 
       {/* Filters — line 1: full-width search; line 2: Min Spread % and Interval 50/50 */}
@@ -200,7 +200,7 @@ export default function ScreenerPage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-slate-500 py-8">No tokens match the filters or data is not ready yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0">
+        <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0 max-w-[100vw]">
           <table className="w-full text-xs min-w-0">
             <thead>
               <tr className="border-b border-slate-700 bg-slate-800/50">
@@ -222,7 +222,7 @@ export default function ScreenerPage() {
                 const hasNetPct = !Number.isNaN(netPctNum);
                 return (
                   <tr key={row.symbol} className="border-b border-slate-700/50">
-                    <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate" title={row.symbol}>{row.symbol}</td>
+                    <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
                     <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
                       <span className="block leading-tight">
                         {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
@@ -246,14 +246,14 @@ export default function ScreenerPage() {
                           <span className="block font-medium tabular-nums leading-tight">
                             {formatCountdownHms(countdownMs)}
                           </span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
+                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
                             {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
                           </span>
                         </>
                       ) : row.nextFundingTime != null ? (
                         <>
                           <span className="block font-medium tabular-nums leading-tight">—</span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight">
+                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
                             {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
                           </span>
                         </>
@@ -269,7 +269,7 @@ export default function ScreenerPage() {
                           setQuantity("");
                           setLeverage(row.maxLeverage?.toString() ?? "10");
                         }}
-                        className="h-7 px-2 rounded-lg text-[10px] sm:text-xs font-medium text-white"
+                        className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center h-9 px-3 rounded-lg text-[10px] sm:text-xs font-medium text-white touch-manipulation"
                         style={{ backgroundColor: "var(--primary)" }}
                       >
                         Trade

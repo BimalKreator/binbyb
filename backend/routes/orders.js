@@ -2,6 +2,7 @@ const express = require("express");
 const { protect } = require("../middleware/auth");
 const { getDecryptedApiKeys } = require("../services/apiKeys");
 const { binanceManager, bybitManager } = require("../services/exchanges");
+const orderCircuitBreaker = require("../services/orderCircuitBreaker");
 
 const router = express.Router();
 
@@ -38,11 +39,20 @@ router.post("/", async (req, res) => {
     if (sideNorm !== "BUY" && sideNorm !== "SELL") {
       return res.status(400).json({ success: false, message: "side must be BUY or SELL." });
     }
+    if (!orderCircuitBreaker.canPlaceOrder()) {
+      return res.status(503).json({
+        success: false,
+        message: "Order rate limit reached; trading paused. Try again later.",
+      });
+    }
+    // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
     if (ex === "binance") {
       const result = await binanceManager.placeIOCLimitOrder(creds, symbol, sideNorm, qty, pr);
+      orderCircuitBreaker.recordOrderPlaced();
       return res.json({ success: true, data: result, exchange: "binance" });
     }
     const result = await bybitManager.placeIOCLimitOrder(creds, symbol, sideNorm === "BUY" ? "Buy" : "Sell", qty, pr);
+    orderCircuitBreaker.recordOrderPlaced();
     return res.json({ success: true, data: result, exchange: "bybit" });
   } catch (e) {
     const msg = e.response?.data?.message || e.message;

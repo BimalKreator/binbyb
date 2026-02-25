@@ -21,6 +21,8 @@ const maxLeverageCache = {};
 let rankedTokens = [];
 let volatilityMeter = { level: "Low", count: 0 };
 let cachedUserMinSpread = 0;
+/** When set, only tokens in this set (symbols on BOTH Binance and Bybit) are included. */
+let trackedCommonSymbols = new Set();
 
 /**
  * Map interval milliseconds strictly to 1, 2, 4, 8 (then to '1h', '2h', '4h', '8h').
@@ -181,7 +183,11 @@ async function runScreener() {
     cachedUserMinSpread = userMinSpread;
     const binanceKeys = Object.keys(binanceData);
     const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
-    const symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
+    // Strict match: only symbols that exist on BOTH exchanges (and in tracked common list if set)
+    let symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
+    if (trackedCommonSymbols.size > 0) {
+      symbols = symbols.filter((s) => trackedCommonSymbols.has(s.toUpperCase()));
+    }
     const tokens = [];
 
     for (const symbol of symbols) {
@@ -285,17 +291,65 @@ function onBybitFunding(data) {
 }
 
 /**
- * Connect to exchange managers so screener updates on every funding message.
+ * Hydrate Binance funding state and interval from /fapi/v1/premiumIndex on startup.
+ * Only updates symbols in the common list (exist on both exchanges). Interval is derived
+ * from (nextFundingTime - now) / 3600000 and mapped to 1h, 2h, 4h, 8h.
+ * @param {string[]} commonSymbols - Symbols that exist on both Binance and Bybit
  */
-function start() {
+async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
+  if (!Array.isArray(commonSymbols) || commonSymbols.length === 0) return;
+  const symbolSet = new Set(commonSymbols.map((s) => String(s).toUpperCase()));
+  try {
+    const list = await binanceManager.getPremiumIndex();
+    const now = Date.now();
+    for (const item of list) {
+      const sym = String(item.symbol || "").toUpperCase();
+      if (!symbolSet.has(sym)) continue;
+      const nextFundingTime = item.nextFundingTime;
+      if (nextFundingTime != null && Number.isFinite(nextFundingTime)) {
+        const hoursUntilNext = (nextFundingTime - now) / 3600000;
+        const intervalHours = binanceManager.intervalHoursFromHoursUntilNext(hoursUntilNext);
+        intervalHoursCache[sym] = intervalHours;
+        intervalDisplayCache[sym] = intervalHoursToLabel(intervalHours);
+      }
+      binanceData[sym] = {
+        fundingRate: item.lastFundingRate ?? 0,
+        nextFundingTime: item.nextFundingTime ?? null,
+        markPrice: item.markPrice ?? 0,
+        eventTime: now,
+      };
+    }
+    console.log("[Screener] Hydrated Binance funding and intervals from premiumIndex for", Object.keys(binanceData).length, "symbols.");
+  } catch (e) {
+    console.warn("[Screener] hydrateBinanceIntervalsFromPremiumIndex failed", e.message);
+  }
+}
+
+/**
+ * Connect to exchange managers so screener updates on every funding message.
+ * @param {string[]} [commonSymbols] - Optional. Symbols that exist on BOTH Binance and Bybit; used to hydrate interval from premium index and enforce strict matching.
+ */
+function start(commonSymbols) {
+  if (Array.isArray(commonSymbols) && commonSymbols.length > 0) {
+    trackedCommonSymbols = new Set(commonSymbols.map((s) => String(s).toUpperCase()));
+  } else {
+    trackedCommonSymbols = new Set();
+  }
   binanceManager.setOnFundingUpdate(onBinanceFunding);
   bybitManager.setOnFundingUpdate(onBybitFunding);
-  console.log("[Screener] Started; subscribed to Binance and Bybit funding streams.");
+  if (Array.isArray(commonSymbols) && commonSymbols.length > 0) {
+    // Delay premiumIndex REST call 2s after start to avoid stacking with exchange startup calls
+    setTimeout(() => {
+      hydrateBinanceIntervalsFromPremiumIndex(commonSymbols).then(() => runScreener());
+    }, 2000);
+  }
+  console.log("[Screener] Started; subscribed to Binance and Bybit funding streams.", commonSymbols?.length ? `Strict match: ${commonSymbols.length} common symbols.` : "");
 }
 
 function stop() {
   binanceManager.setOnFundingUpdate(null);
   bybitManager.setOnFundingUpdate(null);
+  trackedCommonSymbols = new Set();
   rankedTokens = [];
   volatilityMeter = { level: "Low", count: 0 };
   Object.keys(intervalDisplayCache).forEach((k) => delete intervalDisplayCache[k]);
@@ -321,7 +375,10 @@ function getMaxLeverage(symbol) {
 function buildRankedTokensFromCurrentData() {
   const binanceKeys = Object.keys(binanceData);
   const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
-  const symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
+  let symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
+  if (trackedCommonSymbols.size > 0) {
+    symbols = symbols.filter((s) => trackedCommonSymbols.has(s.toUpperCase()));
+  }
   const tokens = symbols.map((symbol) => {
     const bin = binanceData[symbol];
     const byb = bybitData[symbol];

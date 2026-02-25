@@ -2,6 +2,10 @@ const express = require("express");
 const { protect } = require("../middleware/auth");
 const { getDecryptedApiKeys } = require("../services/apiKeys");
 const { binanceManager, bybitManager } = require("../services/exchanges");
+const autoTrader = require("../services/autoTrader");
+const screener = require("../services/screener");
+const TradeLog = require("../models/TradeLog");
+const orderCircuitBreaker = require("../services/orderCircuitBreaker");
 
 const router = express.Router();
 
@@ -56,10 +60,35 @@ router.post("/arbitrage", async (req, res) => {
     }
 
     const bybitSideApi = bybitSideNorm === "buy" ? "Buy" : "Sell";
+    const levInt = Math.max(1, Math.min(125, Math.floor(Number(leverage)) || 1));
 
+    const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
+      binanceManager.getOrderbookPrice(symbol, binanceSideNorm),
+      bybitManager.getOrderbookPrice(symbol, bybitSideApi),
+    ]);
+    const binancePrice = Number.isFinite(binanceOrderbookPrice) && binanceOrderbookPrice > 0
+      ? binanceOrderbookPrice
+      : price;
+    const bybitPrice = Number.isFinite(bybitOrderbookPrice) && bybitOrderbookPrice > 0
+      ? bybitOrderbookPrice
+      : price;
+
+    if (!orderCircuitBreaker.canPlaceOrder()) {
+      return res.status(503).json({
+        success: false,
+        message: "Order rate limit reached; trading paused. Try again later.",
+      });
+    }
+    // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
     const [binanceResult, bybitResult] = await Promise.all([
-      binanceManager.placeIOCLimitOrder(keys.binance, symbol, binanceSideNorm, qty, price),
-      bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, price),
+      binanceManager.placeIOCLimitOrder(keys.binance, symbol, binanceSideNorm, qty, binancePrice, { leverage: levInt }).then((r) => {
+        orderCircuitBreaker.recordOrderPlaced();
+        return r;
+      }),
+      bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice).then((r) => {
+        orderCircuitBreaker.recordOrderPlaced();
+        return r;
+      }),
     ]);
 
     return res.json({
@@ -74,6 +103,131 @@ router.post("/arbitrage", async (req, res) => {
     return res.status(e.response?.status === 400 ? 400 : 500).json({
       success: false,
       message: msg || "Arbitrage order failed.",
+    });
+  }
+});
+
+/**
+ * POST /api/trade/close-all
+ * Body: { symbol }
+ * Closes all open positions for the symbol on both exchanges via Market orders.
+ * Enforces Binance Hedge Mode: LONG -> SELL with positionSide LONG, SHORT -> BUY with positionSide SHORT.
+ */
+router.post("/close-all", async (req, res) => {
+  try {
+    const symbol = req.body?.symbol;
+    const sym = symbol ? String(symbol).toUpperCase() : "";
+    if (!sym) {
+      return res.status(400).json({ success: false, message: "symbol is required." });
+    }
+
+    const keys = await getDecryptedApiKeys();
+    if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) {
+      return res.status(400).json({
+        success: false,
+        message: "API keys for both Binance and Bybit are required.",
+      });
+    }
+
+    let binancePositions = binanceManager.getLivePositions();
+    let bybitPositions = bybitManager.getLivePositions();
+    const binanceForSymbol = (binancePositions || []).filter((p) => String(p?.symbol || "").toUpperCase() === sym);
+    const bybitForSymbol = (bybitPositions || []).filter((p) => String(p?.symbol || "").toUpperCase() === sym);
+
+    if (binanceForSymbol.length === 0 && bybitForSymbol.length === 0) {
+      const [restBinance, restBybit] = await Promise.all([
+        binanceManager.getPositionDetails(keys.binance),
+        bybitManager.getPositionDetails(keys.bybit),
+      ]);
+      binancePositions = (restBinance || []).filter((p) => String(p?.symbol || "").toUpperCase() === sym);
+      bybitPositions = (restBybit || []).filter((p) => String(p?.symbol || "").toUpperCase() === sym);
+    } else {
+      binancePositions = binanceForSymbol;
+      bybitPositions = bybitForSymbol;
+    }
+
+    if (binancePositions.length === 0 && bybitPositions.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No open positions found for symbol " + sym + ".",
+      });
+    }
+
+    const results = { binance: [], bybit: [] };
+
+    for (const pos of binancePositions) {
+      const qty = Math.abs(Number(pos.positionAmt) || 0);
+      if (qty <= 0) continue;
+      if (!orderCircuitBreaker.canPlaceOrder()) {
+        results.binance.push({ positionSide: pos.positionSide, qty, error: "Circuit breaker: trading paused" });
+        continue;
+      }
+      const closeSide = pos.side === "BUY" ? "SELL" : "BUY";
+      const positionSide =
+        pos.positionSide === "LONG" || pos.positionSide === "SHORT"
+          ? pos.positionSide
+          : closeSide === "SELL"
+            ? "LONG"
+            : "SHORT";
+      try {
+        const order = await binanceManager.placeMarketCloseOrder(keys.binance, sym, closeSide, qty, {
+          positionSide,
+        });
+        orderCircuitBreaker.recordOrderPlaced();
+        results.binance.push({ positionSide, qty, order });
+      } catch (e) {
+        console.error("[Trade/close-all] Binance close failed", sym, positionSide, e.message);
+        results.binance.push({ positionSide, qty, error: e.response?.data?.msg || e.message });
+      }
+    }
+
+    for (const pos of bybitPositions) {
+      const qty = Math.abs(Number(pos.positionAmt) || 0);
+      if (qty <= 0) continue;
+      if (!orderCircuitBreaker.canPlaceOrder()) {
+        results.bybit.push({ side: pos.side, qty, error: "Circuit breaker: trading paused" });
+        continue;
+      }
+      const closeSide = String(pos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
+      try {
+        const order = await bybitManager.placeMarketCloseOrder(keys.bybit, sym, closeSide, qty);
+        orderCircuitBreaker.recordOrderPlaced();
+        results.bybit.push({ side: pos.side, qty, order });
+      } catch (e) {
+        console.error("[Trade/close-all] Bybit close failed", sym, e.message);
+        results.bybit.push({ side: pos.side, qty, error: e.response?.data?.retMsg || e.message });
+      }
+    }
+
+    const totalUnrealized =
+      (binancePositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0) +
+      (bybitPositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
+    const snapshot = screener.getSnapshot();
+    const token = (snapshot?.rankedTokens || []).find((t) => String(t?.symbol || "").toUpperCase() === sym);
+    const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
+    const entryPrice = markPrice > 0 ? markPrice : 0;
+    const exitPrice = markPrice > 0 ? markPrice : 0;
+    TradeLog.create({
+      symbol: sym,
+      entryPrice,
+      exitPrice,
+      pnl: totalUnrealized,
+      reason: "Manual",
+      side: (binancePositions?.[0]?.side === "BUY" || bybitPositions?.[0]?.side?.toLowerCase() === "buy") ? "long" : "short",
+      exchange: "binance+bybit",
+    }).catch((e) => console.error("[Trade/close-all] TradeLog create failed", e.message));
+
+    autoTrader.clearEntryFundingDirection(sym);
+    return res.json({
+      success: true,
+      data: { symbol: sym, binance: results.binance, bybit: results.bybit },
+      message: "Close-all orders submitted for " + sym + ".",
+    });
+  } catch (e) {
+    console.error("[Trade/close-all] Error:", e.message || e);
+    return res.status(500).json({
+      success: false,
+      message: e.response?.data?.msg || e.message || "Close-all failed.",
     });
   }
 });
