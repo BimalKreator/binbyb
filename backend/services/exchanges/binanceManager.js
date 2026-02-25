@@ -1055,13 +1055,13 @@ async function getPremiumIndex() {
 
 /**
  * Map (nextFundingTime - now) / 3600000 (hours until next funding) to interval bucket 1, 2, 4, or 8.
- * Used to derive display interval from premium index on startup.
+ * Handles small numbers so 1h and 2h tokens appear instantly (e.g. < 1.5 → 1, < 3 → 2).
  */
 function intervalHoursFromHoursUntilNext(hoursUntilNext) {
   if (hoursUntilNext == null || !Number.isFinite(hoursUntilNext) || hoursUntilNext <= 0) return 8;
-  if (hoursUntilNext <= 1) return 1;
-  if (hoursUntilNext <= 2) return 2;
-  if (hoursUntilNext <= 4) return 4;
+  if (hoursUntilNext < 1.5) return 1;
+  if (hoursUntilNext < 3) return 2;
+  if (hoursUntilNext < 6) return 4;
   return 8;
 }
 

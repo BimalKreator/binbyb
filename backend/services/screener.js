@@ -48,23 +48,18 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Compute interval (1h, 2h, 4h, 8h) from WebSocket-driven cache or nextFundingTime fallback. No REST.
+ * Compute interval (1h, 2h, 4h, 8h) dynamically from cache or nextFundingTime. Never returns Loading.
+ * Uses WebSocket nextFundingTime so interval is available as soon as we have funding data.
  */
-async function computeIntervalHours(symbol, nextFundingTime, source) {
+function computeIntervalHours(symbol, nextFundingTime, source) {
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
   if (source === "binance") {
-    try {
-      const fromCache = binanceManager.getFundingIntervalHours(symbol);
-      if (fromCache != null && fromCache !== 8) return fromCache;
-      const hoursUntilNext = (nextFundingTime - Date.now()) / 3600000;
-      return binanceManager.intervalHoursFromHoursUntilNext(hoursUntilNext);
-    } catch (_) {
-      // fallback from nextFundingTime
-      const hoursUntilNext = (nextFundingTime - Date.now()) / 3600000;
-      return binanceManager.intervalHoursFromHoursUntilNext(hoursUntilNext);
-    }
+    const fromCache = binanceManager.getFundingIntervalHours(symbol);
+    if (fromCache != null && fromCache !== 8) return fromCache;
+    const hoursUntilNext = (nextFundingTime - Date.now()) / 3600000;
+    return binanceManager.intervalHoursFromHoursUntilNext(hoursUntilNext);
   }
-  return 8; // Bybit or fallback: standard interval
+  return 8; // Bybit or fallback
 }
 
 async function fetchAndCacheMaxLeverage(symbol) {
@@ -260,8 +255,8 @@ function onBybitFunding(data) {
 }
 
 /**
- * Hydrate Binance funding state from ONE batch call (getPremiumIndex). Intervals are NOT set here;
- * they are updated dynamically from WebSocket markPriceUpdate in binanceManager.
+ * Hydrate Binance funding state from ONE batch call (getPremiumIndex). Sets initial nextFundingTime
+ * so computeIntervalHours can derive 1h/2h/4h/8h immediately without waiting for WS cache. No Loading.
  * @param {string[]} commonSymbols - Symbols that exist on both Binance and Bybit
  */
 async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
@@ -280,7 +275,7 @@ async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
         eventTime: now,
       };
     }
-    console.log("[Screener] Hydrated Binance funding from premiumIndex for", Object.keys(binanceData).length, "symbols (intervals from WS).");
+    console.log("[Screener] Hydrated Binance funding from premiumIndex for", Object.keys(binanceData).length, "symbols.");
   } catch (e) {
     console.warn("[Screener] hydrateBinanceIntervalsFromPremiumIndex failed", e.message);
   }
