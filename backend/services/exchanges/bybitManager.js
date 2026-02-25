@@ -595,7 +595,10 @@ async function getPositionDetails(credentials, symbol) {
   try {
     const timestamp = Date.now().toString();
     const recvWindow = "5000";
-    const qs = symbol ? `category=linear&symbol=${encodeURIComponent(symbol)}` : "category=linear";
+    let qs = "category=linear&settleCoin=USDT";
+    if (symbol) {
+      qs += `&symbol=${encodeURIComponent(symbol)}`;
+    }
     const signStr = timestamp + credentials.apiKey + recvWindow + qs;
     const signature = signMessage(signStr, credentials.apiSecret);
     const headers = {
@@ -605,6 +608,7 @@ async function getPositionDetails(credentials, symbol) {
       "X-BAPI-SIGN": signature,
     };
     const positionResponse = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
+    console.log(`[Bybit Debug] Position List Raw Response for ${symbol || "ALL"}:`, JSON.stringify(positionResponse.data, null, 2));
     const data = positionResponse.data;
     const list = data?.result?.list || [];
     return list
