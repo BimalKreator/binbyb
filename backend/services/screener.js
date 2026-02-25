@@ -255,11 +255,11 @@ function onBybitFunding(data) {
 }
 
 /**
- * Hydrate Binance funding state from ONE batch call (getPremiumIndex). Sets initial nextFundingTime
- * so computeIntervalHours can derive 1h/2h/4h/8h immediately without waiting for WS cache. No Loading.
+ * Hydrate Binance funding from ONE batch getPremiumIndex. Intervals are computed immediately
+ * from nextFundingTime via intervalHoursFromHoursUntilNext — no position cache, no WS wait.
  * @param {string[]} commonSymbols - Symbols that exist on both Binance and Bybit
  */
-async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
+async function hydrateBinanceDataFromPremiumIndex(commonSymbols) {
   if (!Array.isArray(commonSymbols) || commonSymbols.length === 0) return;
   const symbolSet = new Set(commonSymbols.map((s) => String(s).toUpperCase()));
   try {
@@ -269,8 +269,11 @@ async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
       const sym = String(item.symbol || "").toUpperCase();
       if (!symbolSet.has(sym)) continue;
       const nextFundingTime = item.nextFundingTime ?? null;
-      const intervalHours = nextFundingTime != null && Number.isFinite(nextFundingTime)
-        ? computeIntervalHours(sym, nextFundingTime, "binance")
+      const hours = nextFundingTime != null && Number.isFinite(nextFundingTime)
+        ? (nextFundingTime - now) / 3600000
+        : null;
+      const intervalHours = hours != null && Number.isFinite(hours)
+        ? binanceManager.intervalHoursFromHoursUntilNext(hours)
         : 8;
       intervalHoursCache[sym] = intervalHours;
       intervalDisplayCache[sym] = intervalHoursToLabel(intervalHours);
@@ -282,9 +285,9 @@ async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
         intervalHours,
       };
     }
-    console.log("[Screener] Hydrated Binance funding from premiumIndex for", Object.keys(binanceData).length, "symbols.");
+    console.log("[Screener] Hydrated Binance from premiumIndex for", Object.keys(binanceData).length, "symbols.");
   } catch (e) {
-    console.warn("[Screener] hydrateBinanceIntervalsFromPremiumIndex failed", e.message);
+    console.warn("[Screener] hydrateBinanceDataFromPremiumIndex failed", e.message);
   }
 }
 
@@ -301,9 +304,8 @@ function start(commonSymbols) {
   binanceManager.setOnFundingUpdate(onBinanceFunding);
   bybitManager.setOnFundingUpdate(onBybitFunding);
   if (Array.isArray(commonSymbols) && commonSymbols.length > 0) {
-    // Delay premiumIndex REST call 2s after start to avoid stacking with exchange startup calls
     setTimeout(() => {
-      hydrateBinanceIntervalsFromPremiumIndex(commonSymbols).then(() => runScreener());
+      hydrateBinanceDataFromPremiumIndex(commonSymbols).then(() => runScreener());
     }, 2000);
   }
   console.log("[Screener] Started; subscribed to Binance and Bybit funding streams.", commonSymbols?.length ? `Strict match: ${commonSymbols.length} common symbols.` : "");

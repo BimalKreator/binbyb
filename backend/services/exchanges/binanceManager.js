@@ -1054,14 +1054,14 @@ async function getPremiumIndex() {
 }
 
 /**
- * Map (nextFundingTime - now) / 3600000 (hours until next funding) to interval bucket 1, 2, 4, or 8.
- * Flexible thresholds to handle time drifts between server and Binance.
+ * Pure function: map (nextFundingTime - now) / 3600000 to interval bucket 1, 2, 4, or 8.
+ * Uses 20% margin on each bucket for time drift (1.2, 2.4, 4.8).
  */
 function intervalHoursFromHoursUntilNext(hoursUntilNext) {
   if (hoursUntilNext == null || !Number.isFinite(hoursUntilNext) || hoursUntilNext <= 0) return 8;
-  if (hoursUntilNext <= 1.2) return 1;
-  if (hoursUntilNext <= 2.2) return 2;
-  if (hoursUntilNext <= 4.2) return 4;
+  if (hoursUntilNext <= 1.2) return 1;   // 1h + 20%
+  if (hoursUntilNext <= 2.4) return 2;   // 2h + 20%
+  if (hoursUntilNext <= 4.8) return 4;   // 4h + 20%
   return 8;
 }
 

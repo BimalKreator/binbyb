@@ -5,6 +5,9 @@ axios.interceptors.request.use((request) => {
   console.log(`[REST API TRACKER] ${request.method.toUpperCase()} ${request.baseURL || ""}${request.url}`);
   return request;
 });
+/** Dedicated instance for authenticated private calls only; public market data uses axios. */
+const bybitPrivateAxios = axios.create();
+bybitPrivateAxios.defaults.family = 4;
 const CryptoJS = require("crypto-js");
 const { logLatency } = require("./latencyTracker");
 
@@ -580,7 +583,7 @@ async function getPositionSymbols(credentials) {
       "X-BAPI-RECV-WINDOW": recvWindow,
       "X-BAPI-SIGN": signature,
     };
-    const { data } = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
+    const { data } = await bybitPrivateAxios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
     const list = data?.result?.list || [];
     return list
       .filter((p) => {
@@ -615,7 +618,7 @@ async function getPositionDetails(credentials, symbol) {
       "X-BAPI-RECV-WINDOW": recvWindow,
       "X-BAPI-SIGN": signature,
     };
-    const positionResponse = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
+    const positionResponse = await bybitPrivateAxios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
     const data = positionResponse.data;
     const list = data?.result?.list || [];
     return list
@@ -771,7 +774,7 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
   const signStr = String(timestamp) + credentials.apiKey + String(recvWindow) + rawBody;
   const signature = signMessage(signStr, credentials.apiSecret);
 
-  const res = await axios.post(`${REST_BASE}/v5/order/create`, body, {
+  const res = await bybitPrivateAxios.post(`${REST_BASE}/v5/order/create`, body, {
     headers: {
       "X-BAPI-API-KEY": credentials.apiKey,
       "X-BAPI-SIGN": signature,
@@ -896,7 +899,7 @@ async function start(credentials, options = {}) {
         "X-BAPI-RECV-WINDOW": recvWindow,
         "X-BAPI-SIGN": signatureUnified,
       };
-      let data = (await axios.get(REST_BASE + "/v5/account/wallet-balance?" + qsUnified, { headers: headersUnified })).data;
+      let data = (await bybitPrivateAxios.get(REST_BASE + "/v5/account/wallet-balance?" + qsUnified, { headers: headersUnified })).data;
 
       let list = data?.result?.list || [];
       if (!list.length) {
@@ -909,7 +912,7 @@ async function start(credentials, options = {}) {
           "X-BAPI-RECV-WINDOW": recvWindow,
           "X-BAPI-SIGN": signatureContract,
         };
-        data = (await axios.get(REST_BASE + "/v5/account/wallet-balance?" + qsContract, { headers: headersContract })).data;
+        data = (await bybitPrivateAxios.get(REST_BASE + "/v5/account/wallet-balance?" + qsContract, { headers: headersContract })).data;
         list = data?.result?.list || [];
       }
 
