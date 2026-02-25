@@ -337,62 +337,86 @@ export default function Home() {
                                 {[
                                   { name: "Binance", leg: row.binance },
                                   { name: "Bybit", leg: row.bybit },
-                                ].map(({ name, leg }) => (
-                                  <tr key={name} className="border-b border-slate-700/50 last:border-b-0">
-                                    <td className="py-2 pr-2 text-foreground font-medium">{name}</td>
-                                    <td className="py-2 pr-2">
-                                      <span
-                                        className={
-                                          String(leg.side).toUpperCase() === "BUY" || leg.side === "Buy"
+                                ].map(({ name, leg }) => {
+                                  const safeLeg = leg ?? {
+                                    side: "NONE",
+                                    positionAmt: 0,
+                                    unrealizedProfit: 0,
+                                    marginUsed: 0,
+                                    entryPrice: null,
+                                    leverage: null,
+                                    liquidationPrice: null,
+                                    markPrice: null,
+                                    fundingRate: null,
+                                    fundingRatePct: null,
+                                    nextFundingAmount: 0,
+                                    exchangeFees: 0,
+                                  };
+                                  return (
+                                    <tr key={name} className="border-b border-slate-700/50 last:border-b-0">
+                                      <td className="py-2 pr-2 text-foreground font-medium">{name}</td>
+                                      <td className="py-2 pr-2">
+                                        <span
+                                          className={
+                                            String(safeLeg.side).toUpperCase() === "BUY" || safeLeg.side === "Buy"
+                                              ? "text-[var(--profit)]"
+                                              : String(safeLeg.side).toUpperCase() === "NONE"
+                                                ? "text-slate-500"
+                                                : "text-[var(--loss)]"
+                                          }
+                                        >
+                                          {safeLeg.side ?? "—"}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.entryPrice != null && Number.isFinite(safeLeg.entryPrice)
+                                          ? Number(safeLeg.entryPrice).toFixed(2)
+                                          : "—"}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.positionAmt ?? 0}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.leverage != null && Number.isFinite(safeLeg.leverage)
+                                          ? safeLeg.leverage
+                                          : "—"}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.markPrice != null && Number.isFinite(safeLeg.markPrice)
+                                          ? Number(safeLeg.markPrice).toFixed(2)
+                                          : "—"}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.fundingRatePct != null && Number.isFinite(safeLeg.fundingRatePct)
+                                          ? Number(safeLeg.fundingRatePct).toFixed(4) + "%"
+                                          : "—"}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {safeLeg.liquidationPrice != null && Number.isFinite(safeLeg.liquidationPrice)
+                                          ? Number(safeLeg.liquidationPrice).toFixed(2)
+                                          : "—"}
+                                      </td>
+                                      <td
+                                        className={`py-2 pr-2 text-right font-medium ${
+                                          (safeLeg.unrealizedProfit ?? 0) >= 0
                                             ? "text-[var(--profit)]"
                                             : "text-[var(--loss)]"
-                                        }
+                                        }`}
                                       >
-                                        {leg.side}
-                                      </span>
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.entryPrice != null ? leg.entryPrice.toFixed(2) : "—"}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.positionAmt}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.leverage != null ? leg.leverage : "—"}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.markPrice != null ? leg.markPrice.toFixed(2) : "—"}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.fundingRatePct != null
-                                        ? leg.fundingRatePct.toFixed(4) + "%"
-                                        : "—"}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {leg.liquidationPrice != null
-                                        ? leg.liquidationPrice.toFixed(2)
-                                        : "—"}
-                                    </td>
-                                    <td
-                                      className={`py-2 pr-2 text-right font-medium ${
-                                        (leg.unrealizedProfit ?? 0) >= 0
-                                          ? "text-[var(--profit)]"
-                                          : "text-[var(--loss)]"
-                                      }`}
-                                    >
-                                      {formatUsd(leg.unrealizedProfit ?? 0)}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {formatUsd(leg.nextFundingAmount ?? 0)}
-                                    </td>
-                                    <td className="py-2 pr-2 text-right text-slate-300">
-                                      {formatUsd(leg.marginUsed ?? 0)}
-                                    </td>
-                                    <td className="py-2 text-right text-slate-400">
-                                      {formatUsd(leg.exchangeFees ?? 0)}
-                                    </td>
-                                  </tr>
-                                ))}
+                                        {formatUsd(safeLeg.unrealizedProfit ?? 0)}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {formatUsd(safeLeg.nextFundingAmount ?? 0)}
+                                      </td>
+                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                        {formatUsd(safeLeg.marginUsed ?? 0)}
+                                      </td>
+                                      <td className="py-2 text-right text-slate-400">
+                                        {formatUsd(safeLeg.exchangeFees ?? 0)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
