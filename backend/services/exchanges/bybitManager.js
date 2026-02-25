@@ -920,14 +920,20 @@ async function start(credentials, options = {}) {
         data = await getBalance("CONTRACT");
         list = data?.result?.list || [];
       }
-      for (const acc of list) {
-        const coins = acc.coin || [];
-        const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");
-        if (usdt) {
-          const eq = usdt.equity ?? usdt.walletBalance ?? usdt.availableToWithdraw ?? 0;
-          cachedWalletBalance = parseFloat(eq) || 0;
-          break;
+      let usdtCoin = null;
+
+      if (list.length > 0) {
+        if (Array.isArray(list[0].coin)) {
+          // UNIFIED account structure
+          usdtCoin = list[0].coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
+        } else {
+          // CONTRACT account structure
+          usdtCoin = list.find((c) => (c.coin || "").toUpperCase() === "USDT");
         }
+      }
+
+      if (usdtCoin) {
+        cachedWalletBalance = parseFloat(usdtCoin.equity ?? usdtCoin.walletBalance ?? usdtCoin.availableToWithdraw ?? 0) || 0;
       }
     } catch (e) {
       console.warn("[Bybit] One-time balance hydration failed:", e.message);
