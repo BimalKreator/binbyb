@@ -51,15 +51,13 @@ router.get("/metrics", async (req, res) => {
     const openingBalance = Number(settings?.openingBalance) || 0;
 
     const keys = await getDecryptedApiKeys();
-    // getBalance() is sync and reads from WS cache; no REST, so no 418/403. Safe fallback to 0.
+    // getBalance() is synchronous (reads from WS cache); no await, no REST. Safe fallback to 0.
     const binanceBalance =
       keys?.binance?.apiKey && keys?.binance?.apiSecret
         ? (Number(binanceManager.getBalance(keys.binance)) || 0)
         : 0;
-    const bybitBalance =
-      keys?.bybit?.apiKey && keys?.bybit?.apiSecret
-        ? (Number(bybitManager.getBalance(keys.bybit)) || 0)
-        : 0;
+    const val = bybitManager.getBalance();
+    const bybitBalance = Number.isFinite(val) ? val : 0;
 
     const totalCapital = binanceBalance + bybitBalance;
     const currentBalance = totalCapital;

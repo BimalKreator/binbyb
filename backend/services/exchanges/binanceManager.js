@@ -1116,16 +1116,15 @@ async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts =
 }
 
 /**
- * Get limit price for IOC from cached mark price + slippage. No REST /depth.
- * BUY: markPrice * (1 + slippage). SELL: markPrice * (1 - slippage).
- * @returns {number|null} price or null if no mark price yet
+ * Get limit price for IOC from cached mark price + 2% slippage. No REST /depth.
+ * BUY: markPrice * 1.02. SELL: markPrice * 0.98.
  */
 function getOrderbookPrice(symbol, side) {
   const sym = String(symbol).toUpperCase();
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  return isBuy ? mark * 1.01 : mark * 0.99;
+  return isBuy ? mark * 1.02 : mark * 0.98;
 }
 
 module.exports = {

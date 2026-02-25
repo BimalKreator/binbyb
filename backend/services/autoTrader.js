@@ -43,7 +43,7 @@ function floorToStepSize(quantity, stepSize) {
 async function getTradeCapital(credentials) {
   const [binanceUSDT, bybitUSDT] = await Promise.all([
     binanceManager.getBalance(credentials.binance),
-    bybitManager.getBalance(credentials.bybit),
+    bybitManager.getBalance(),
   ]);
   const minBalance = Math.min(
     Number.isFinite(binanceUSDT) ? binanceUSDT : 0,

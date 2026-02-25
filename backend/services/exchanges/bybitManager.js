@@ -392,11 +392,8 @@ function openPrivateStream(credentials) {
 
           if (msg.topic === "wallet") {
             const coins = d.coin || [];
-            const usdt = coins.find((c) => String(c?.coin ?? "").toUpperCase() === "USDT");
-            if (usdt != null) {
-              const eq = usdt.equity ?? usdt.walletBalance ?? usdt.availableToWithdraw;
-              if (eq != null && String(eq).length > 0) cachedWalletBalance = parseFloat(eq) || 0;
-            }
+            const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");
+            if (usdt) cachedWalletBalance = parseFloat(usdt.equity ?? usdt.walletBalance ?? 0) || 0;
           } else if (msg.topic === "order") {
             console.log("[Bybit] Order update", {
               symbol: d.symbol,
@@ -545,10 +542,9 @@ async function getSymbolFilters(symbol) {
 }
 
 /**
- * Get USDT wallet balance from WebSocket cache (private wallet topic). No REST calls.
- * @returns {number} cached balance or 0 if not yet received
+ * Get USDT wallet balance from WebSocket cache (private wallet topic). Synchronous; no REST.
  */
-function getBalance(credentials) {
+function getBalance() {
   return cachedWalletBalance || 0;
 }
 
