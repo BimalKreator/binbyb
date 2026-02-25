@@ -420,10 +420,16 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         const { s, p, r, T, E } = payload;
         if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
         if (s != null) {
+          const nextFundingTime = T != null ? Number(T) : null;
           cachedFundingRates[s] = {
             fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
-            nextFundingTime: T != null ? Number(T) : null,
+            nextFundingTime,
           };
+          if (nextFundingTime != null && Number.isFinite(nextFundingTime)) {
+            const intervalMs = nextFundingTime - Date.now();
+            const hoursUntilNext = intervalMs / (1000 * 60 * 60);
+            fundingIntervalCache[s] = intervalHoursFromHoursUntilNext(hoursUntilNext);
+          }
         }
         if (!onFundingUpdate || !s) return;
         const now = Date.now();
@@ -900,7 +906,6 @@ async function start(credentials, options = {}) {
   publicStopped = false;
   publicReconnectAttempts = 0;
   await ensureExchangeInfoAndLeverageLoaded(credentials);
-  await ensureFundingInfoLoaded();
   const symbols = options.symbols || DEFAULT_SYMBOLS;
   openPublicStreams(symbols);
   await startPrivateStream(credentials);
@@ -1019,10 +1024,9 @@ async function ensureFundingInfoLoaded() {
 }
 
 /**
- * Get funding interval hours (1, 2, 4, or 8) from cache only. Default 8 if symbol not found.
+ * Get funding interval hours (1, 2, 4, or 8) from WebSocket-updated cache only. No REST. Default 8 if symbol not found.
  */
-async function getFundingIntervalHours(symbol) {
-  await ensureFundingInfoLoaded();
+function getFundingIntervalHours(symbol) {
   const sym = String(symbol || "").toUpperCase();
   return fundingIntervalCache[sym] ?? 8;
 }
