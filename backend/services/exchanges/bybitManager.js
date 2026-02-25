@@ -411,8 +411,16 @@ function openPrivateStream(credentials) {
               avgPrice: d.avgPrice,
             });
           } else if (msg.topic === "position") {
-            // Position state populated from position topic; exit loops read via getLivePositions()
-            upsertLivePosition(d);
+            if (parseFloat(d.size) === 0) {
+              const sym = String(d?.symbol || "").toUpperCase();
+              if (sym) {
+                Object.keys(livePositionsByKey).forEach((key) => {
+                  if (key.startsWith(sym + ":")) delete livePositionsByKey[key];
+                });
+              }
+            } else {
+              upsertLivePosition(d);
+            }
           }
         }
         if (msg.topic === "position") emitPositionUpdate();
@@ -608,7 +616,6 @@ async function getPositionDetails(credentials, symbol) {
       "X-BAPI-SIGN": signature,
     };
     const positionResponse = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
-    console.log(`[Bybit Debug] Position List Raw Response for ${symbol || "ALL"}:`, JSON.stringify(positionResponse.data, null, 2));
     const data = positionResponse.data;
     const list = data?.result?.list || [];
     return list
@@ -834,8 +841,8 @@ async function hydratePositionsFromRest(credentials) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const list = await getPositionDetails(credentials);
       Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
+      const list = await getPositionDetails(credentials);
       for (const p of list || []) {
         const sym = String(p?.symbol || "").toUpperCase();
         const positionAmt = parseFloat(String(p?.positionAmt ?? 0));
@@ -995,4 +1002,5 @@ module.exports = {
   getPositionSymbols,
   getPositionDetails,
   getSymbolFilters,
+  hydratePositionsFromRest,
 };

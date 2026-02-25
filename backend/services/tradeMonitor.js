@@ -77,11 +77,12 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
     return { binanceOk: false, bybitOk: false };
   }
   const sym = toUpperSymbol(symbol);
+  const binanceQty = Math.abs(Number(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
+  const bybitQty = Math.abs(Number(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
+  if (binanceQty <= 0 && bybitQty <= 0) return { binanceOk: false, bybitOk: false };
   const binanceCloseSide = binancePos.side === "BUY" ? "SELL" : "BUY";
-  const binanceQty = Math.abs(Number(binancePos.positionAmt) || 0);
   const binancePositionSide = binancePos.positionSide || undefined;
   const bybitCloseSide = String(bybitPos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
-  const bybitQty = Math.abs(Number(bybitPos.positionAmt) || 0);
 
   const combinedPnl =
     (Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : 0) +
@@ -143,8 +144,9 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
     console.error("[TradeMonitor] Order circuit breaker: trading paused, skipping closeOrphan", toUpperSymbol(symbol), exchange);
     return;
   }
+  if (!pos || (pos.size != null && parseFloat(pos.size) <= 0)) return;
   const sym = toUpperSymbol(symbol);
-  const qty = Math.abs(Number(pos?.positionAmt) || 0);
+  const qty = Math.abs(Number(pos?.positionAmt ?? pos?.size ?? 0) || 0);
   if (qty <= 0) return;
   const isLong =
     (exchange === "binance" && pos.side === "BUY") ||

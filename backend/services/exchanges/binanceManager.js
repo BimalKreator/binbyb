@@ -1192,4 +1192,5 @@ module.exports = {
   getPositionSymbols,
   getPositionDetails,
   getSymbolFilters,
+  hydratePositionsFromRest,
 };

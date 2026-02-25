@@ -218,6 +218,10 @@ router.post("/close-all", async (req, res) => {
     }).catch((e) => console.error("[Trade/close-all] TradeLog create failed", e.message));
 
     autoTrader.clearEntryFundingDirection(sym);
+    await Promise.all([
+      binanceManager.hydratePositionsFromRest(keys.binance),
+      bybitManager.hydratePositionsFromRest(keys.bybit),
+    ]);
     return res.json({
       success: true,
       data: { symbol: sym, binance: results.binance, bybit: results.bybit },
