@@ -112,6 +112,9 @@ function upsertLivePosition(raw) {
     return;
   }
   const side = positionSide === "LONG" ? "BUY" : positionSide === "SHORT" ? "SELL" : amt > 0 ? "BUY" : "SELL";
+  const entryPrice = parseFloat(raw?.ep ?? raw?.entryPrice ?? 0) || null;
+  const leverage = raw?.l != null ? Number(raw.l) : raw?.leverage != null ? Number(raw.leverage) : null;
+  const liquidationPrice = parseFloat(raw?.lp ?? raw?.liquidationPrice ?? 0) || null;
   livePositionsByKey[key] = {
     symbol: sym,
     unrealizedProfit: parseFloat(raw?.up ?? raw?.unRealizedProfit ?? raw?.unrealizedProfit ?? 0) || 0,
@@ -119,6 +122,9 @@ function upsertLivePosition(raw) {
     positionAmt: amt,
     side,
     positionSide,
+    entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+    leverage: Number.isFinite(leverage) ? leverage : null,
+    liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
   };
 }
 
@@ -858,6 +864,9 @@ async function hydratePositionsFromRest(credentials) {
         if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) continue;
         const posSide = p?.positionSide === "LONG" || p?.positionSide === "SHORT" ? p.positionSide : "BOTH";
         const key = `${sym}:${posSide}`;
+        const entryPrice = parseFloat(String(p?.entryPrice ?? 0)) || null;
+        const leverage = p?.leverage != null ? Number(p.leverage) : null;
+        const liquidationPrice = parseFloat(String(p?.liquidationPrice ?? 0)) || null;
         livePositionsByKey[key] = {
           symbol: sym,
           unrealizedProfit: parseFloat(String(p?.unrealizedProfit ?? 0)) || 0,
@@ -865,6 +874,9 @@ async function hydratePositionsFromRest(credentials) {
           positionAmt,
           side: p?.side || (positionAmt > 0 ? "BUY" : "SELL"),
           positionSide: posSide,
+          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+          leverage: Number.isFinite(leverage) ? leverage : null,
+          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
         };
       }
       emitPositionUpdate();
@@ -909,6 +921,15 @@ async function start(credentials, options = {}) {
       console.warn("[Binance] One-time balance hydration failed:", e.message);
     }
   }
+}
+
+/**
+ * Get mark price from WebSocket cache (markPriceUpdate stream). No REST.
+ */
+function getMarkPrice(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const v = lastMarkPriceBySymbol[s];
+  return v != null && Number.isFinite(v) ? v : null;
 }
 
 /**
@@ -1090,6 +1111,9 @@ async function getPositionDetails(credentials) {
       .map((p) => {
         const amt = parseFloat(String(p.positionAmt ?? 0));
         const posSide = (p.positionSide || "BOTH").toUpperCase();
+        const entryPrice = parseFloat(String(p.entryPrice ?? 0)) || null;
+        const leverage = p.leverage != null ? Number(p.leverage) : null;
+        const liquidationPrice = parseFloat(String(p.liquidationPrice ?? 0)) || null;
         return {
           symbol: String(p.symbol || "").toUpperCase(),
           unrealizedProfit: parseFloat(String(p.unRealizedProfit ?? p.unrealizedProfit ?? 0)) || 0,
@@ -1097,6 +1121,9 @@ async function getPositionDetails(credentials) {
           positionAmt: amt,
           side: amt > 0 ? "BUY" : "SELL",
           positionSide: posSide === "LONG" || posSide === "SHORT" ? posSide : "BOTH",
+          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+          leverage: Number.isFinite(leverage) ? leverage : null,
+          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
         };
       })
       .filter((p) => p.symbol);
@@ -1138,6 +1165,7 @@ module.exports = {
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,
+  getMarkPrice,
   getCachedFundingRate,
   getCachedNextFundingTime,
   getMaxLeverage,

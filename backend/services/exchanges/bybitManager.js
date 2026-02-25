@@ -68,12 +68,18 @@ function upsertLivePosition(raw) {
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "bybit");
     return;
   }
+  const entryPrice = parseFloat(raw?.avgPrice ?? raw?.entryPrice ?? 0) || null;
+  const leverage = raw?.leverage != null ? Number(raw.leverage) : null;
+  const liquidationPrice = parseFloat(raw?.liqPrice ?? raw?.liquidationPrice ?? 0) || null;
   livePositionsByKey[key] = {
     symbol: sym,
     unrealizedProfit: parseFloat(raw?.unrealisedPnl ?? 0) || 0,
     marginUsed: parseFloat(raw?.positionIM ?? raw?.positionIMByMp ?? 0) || 0,
     positionAmt: size,
     side: side || "Sell",
+    entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+    leverage: Number.isFinite(leverage) ? leverage : null,
+    liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
   };
 }
 
@@ -623,12 +629,18 @@ async function getPositionDetails(credentials) {
       .map((p) => {
         const size = parseFloat(String(p.size ?? 0));
         const side = String(p.side || "").toLowerCase() === "buy" ? "Buy" : "Sell";
+        const entryPrice = parseFloat(String(p.avgPrice ?? p.entryPrice ?? 0)) || null;
+        const leverage = p.leverage != null ? Number(p.leverage) : null;
+        const liquidationPrice = parseFloat(String(p.liqPrice ?? p.liquidationPrice ?? 0)) || null;
         return {
           symbol: String(p.symbol || "").toUpperCase(),
           unrealizedProfit: parseFloat(String(p.unrealisedPnl ?? 0)) || 0,
           marginUsed: parseFloat(String(p.positionIM ?? 0)) || 0,
           positionAmt: size,
           side,
+          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+          leverage: Number.isFinite(leverage) ? leverage : null,
+          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
         };
       })
       .filter((p) => p.symbol);
@@ -836,12 +848,18 @@ async function hydratePositionsFromRest(credentials) {
         if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) continue;
         const side = String(p?.side || "").toLowerCase() === "buy" ? "Buy" : "Sell";
         const key = `${sym}:${side}:0`;
+        const entryPrice = parseFloat(String(p?.entryPrice ?? 0)) || null;
+        const leverage = p?.leverage != null ? Number(p.leverage) : null;
+        const liquidationPrice = parseFloat(String(p?.liquidationPrice ?? 0)) || null;
         livePositionsByKey[key] = {
           symbol: sym,
           unrealizedProfit: parseFloat(String(p?.unrealizedProfit ?? 0)) || 0,
           marginUsed: parseFloat(String(p?.marginUsed ?? 0)) || 0,
           positionAmt,
           side,
+          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+          leverage: Number.isFinite(leverage) ? leverage : null,
+          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
         };
       }
       emitPositionUpdate();
@@ -902,6 +920,15 @@ async function start(credentials, options = {}) {
 }
 
 /**
+ * Get mark price from WebSocket cache (tickers stream). No REST.
+ */
+function getMarkPrice(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const v = lastMarkPriceBySymbol[s];
+  return v != null && Number.isFinite(v) ? v : null;
+}
+
+/**
  * Get funding rate from WebSocket cache (tickers stream). No REST.
  */
 function getCachedFundingRate(symbol) {
@@ -952,6 +979,7 @@ module.exports = {
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,
+  getMarkPrice,
   getCachedFundingRate,
   getCachedNextFundingTime,
   getMaxLeverage,

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
-import { XCircle } from "lucide-react";
+import { XCircle, ChevronDown, ChevronRight } from "lucide-react";
 
 type VolatilityMeter = { level: string; count?: number };
 
@@ -29,6 +29,14 @@ type PositionLeg = {
   positionAmt: number;
   unrealizedProfit: number;
   marginUsed: number;
+  entryPrice: number | null;
+  leverage: number | null;
+  liquidationPrice: number | null;
+  markPrice: number | null;
+  fundingRate: number | null;
+  fundingRatePct: number | null;
+  nextFundingAmount: number;
+  exchangeFees: number;
 };
 
 type PositionRow = {
@@ -38,6 +46,7 @@ type PositionRow = {
   combinedUnrealizedProfit: number;
   combinedMarginUsed: number;
   combinedPnlPercent: number | null;
+  totalNextFundingAmount: number;
   nextFundingPayment: { nextFundingTime: number; nextFundingTimeISO: string } | null;
 };
 
@@ -100,11 +109,16 @@ function VolatilityGauge({ level, count = 0 }: VolatilityMeter) {
   );
 }
 
+type PositionsResponse = { success: boolean; data?: PositionRow[]; grandTotalPnl?: number; grandTotalNextFundingAmount?: number };
+
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
+  const [grandTotalPnl, setGrandTotalPnl] = useState<number>(0);
+  const [grandTotalNextFunding, setGrandTotalNextFunding] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -117,7 +131,7 @@ export default function Home() {
 
   const fetchPositions = useCallback(async () => {
     try {
-      const res = await api.get<{ success: boolean; data?: PositionRow[] }>("/dashboard/positions");
+      const res = await api.get<PositionsResponse>("/dashboard/positions");
       const raw = res.data?.success ? res.data.data : undefined;
       const list = Array.isArray(raw)
         ? raw.filter(
@@ -126,6 +140,8 @@ export default function Home() {
           )
         : [];
       setPositions(list);
+      setGrandTotalPnl(Number(res.data?.grandTotalPnl) || 0);
+      setGrandTotalNextFunding(Number(res.data?.grandTotalNextFundingAmount) || 0);
     } catch {
       toast.error("Failed to load positions");
     }
@@ -213,7 +229,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Active positions */}
+        {/* Active positions — expandable accordion */}
         <section>
           <h3 className="text-base font-medium text-foreground mb-3">Active Positions</h3>
           {positions.length === 0 ? (
@@ -222,65 +238,169 @@ export default function Home() {
             </div>
           ) : (
             <div className="rounded-xl border border-slate-700 bg-slate-800/30 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[320px] text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-700 text-left text-slate-400">
-                      <th className="py-2.5 px-3 font-medium">Symbol</th>
-                      <th className="py-2.5 px-3 font-medium text-right">PnL</th>
-                      <th className="py-2.5 px-3 font-medium text-right">Margin</th>
-                      <th className="py-2.5 px-3 font-medium text-right hidden sm:table-cell">Funding</th>
-                      <th className="py-2.5 px-3 w-[100px]" aria-label="Close" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {positions.map((row) => {
-                      const pnl = row.combinedUnrealizedProfit ?? 0;
-                      const pnlPct = row.combinedPnlPercent;
-                      const nextMs =
-                        row.nextFundingPayment?.nextFundingTime != null
-                          ? row.nextFundingPayment.nextFundingTime - Date.now()
-                          : null;
-                      return (
-                        <tr
-                          key={row.symbol}
-                          className="border-b border-slate-700/80 last:border-b-0 hover:bg-slate-700/20"
+              {/* Panel header: grand totals */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-700 bg-slate-800/50">
+                <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total PnL</p>
+                    <p
+                      className={`text-lg font-semibold ${
+                        grandTotalPnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                      }`}
+                    >
+                      {formatUsd(grandTotalPnl)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total Next Funding</p>
+                    <p className="text-lg font-semibold text-foreground">
+                      {formatUsd(grandTotalNextFunding)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Token accordion list */}
+              <div className="divide-y divide-slate-700/80">
+                {positions.map((row) => {
+                  const isExpanded = expandedSymbol === row.symbol;
+                  const pnl = row.combinedUnrealizedProfit ?? 0;
+                  const totalFunding = row.totalNextFundingAmount ?? 0;
+                  return (
+                    <div key={row.symbol} className="bg-slate-800/20">
+                      {/* Token bar (group header) */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setExpandedSymbol(isExpanded ? null : row.symbol)}
+                        onKeyDown={(e) =>
+                          (e.key === "Enter" || e.key === " ") && setExpandedSymbol(isExpanded ? null : row.symbol)
+                        }
+                        className="flex flex-wrap items-center gap-2 sm:gap-4 px-4 py-3 hover:bg-slate-700/20 cursor-pointer touch-manipulation min-h-[52px]"
+                        aria-expanded={isExpanded}
+                      >
+                        <span className="flex-shrink-0 text-slate-400" aria-hidden>
+                          {isExpanded ? (
+                            <ChevronDown className="w-5 h-5" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5" />
+                          )}
+                        </span>
+                        <span className="font-medium text-foreground min-w-[80px]">{row.symbol}</span>
+                        <span
+                          className={`font-medium ${
+                            pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                          }`}
                         >
-                          <td className="py-2.5 px-3 font-medium text-foreground max-w-[120px] sm:max-w-none truncate" title={row.symbol}>{row.symbol}</td>
-                          <td className="py-2.5 px-3 text-right">
-                            <span className={pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}>
-                              {formatUsd(pnl)}
-                            </span>
-                            {pnlPct != null && (
-                              <span className="block text-xs text-slate-400">{formatPct(pnlPct)}</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-300">
-                            {formatUsd(row.combinedMarginUsed ?? 0)}
-                            <span className="block text-xs text-slate-500 sm:hidden">
-                              Fund {formatTimeToFunding(nextMs)}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-400 hidden sm:table-cell">
-                            {formatTimeToFunding(nextMs)}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <button
-                              type="button"
-                              onClick={() => handleCloseTrade(row.symbol)}
-                              disabled={closingSymbol === row.symbol}
-                              className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--loss)]/20 text-[var(--loss)] hover:bg-[var(--loss)]/30 px-3 py-2.5 text-xs font-medium disabled:opacity-50 touch-manipulation"
-                              aria-label={`Close trade ${row.symbol}`}
-                            >
-                              <XCircle className="w-4 h-4 shrink-0" />
-                              <span className="hidden sm:inline">Close</span>
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          {formatUsd(pnl)}
+                        </span>
+                        <span className="text-slate-400 text-sm">
+                          Next fund: {formatUsd(totalFunding)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCloseTrade(row.symbol);
+                          }}
+                          disabled={closingSymbol === row.symbol}
+                          className="ml-auto flex-shrink-0 inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--loss)]/20 text-[var(--loss)] hover:bg-[var(--loss)]/30 px-3 py-2 text-xs font-medium disabled:opacity-50 touch-manipulation"
+                          aria-label={`Exit ${row.symbol}`}
+                        >
+                          <XCircle className="w-4 h-4 shrink-0" />
+                          Exit
+                        </button>
+                      </div>
+
+                      {/* Expanded details: Binance + Bybit rows */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-0 border-t border-slate-700/60">
+                          <div className="overflow-x-auto -mx-4 px-4">
+                            <table className="w-full text-sm min-w-[640px]">
+                              <thead>
+                                <tr className="text-left text-slate-400 border-b border-slate-700">
+                                  <th className="py-2 pr-2 font-medium">Exchange</th>
+                                  <th className="py-2 pr-2 font-medium">Direction</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Entry</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Qty</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Leverage</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Mark</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Funding %</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Liq. Price</th>
+                                  <th className="py-2 pr-2 font-medium text-right">PnL</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Next Fund</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Margin</th>
+                                  <th className="py-2 font-medium text-right">Fees</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {[
+                                  { name: "Binance", leg: row.binance },
+                                  { name: "Bybit", leg: row.bybit },
+                                ].map(({ name, leg }) => (
+                                  <tr key={name} className="border-b border-slate-700/50 last:border-b-0">
+                                    <td className="py-2 pr-2 text-foreground font-medium">{name}</td>
+                                    <td className="py-2 pr-2">
+                                      <span
+                                        className={
+                                          String(leg.side).toUpperCase() === "BUY" || leg.side === "Buy"
+                                            ? "text-[var(--profit)]"
+                                            : "text-[var(--loss)]"
+                                        }
+                                      >
+                                        {leg.side}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.entryPrice != null ? leg.entryPrice.toFixed(2) : "—"}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.positionAmt}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.leverage != null ? leg.leverage : "—"}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.markPrice != null ? leg.markPrice.toFixed(2) : "—"}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.fundingRatePct != null
+                                        ? leg.fundingRatePct.toFixed(4) + "%"
+                                        : "—"}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {leg.liquidationPrice != null
+                                        ? leg.liquidationPrice.toFixed(2)
+                                        : "—"}
+                                    </td>
+                                    <td
+                                      className={`py-2 pr-2 text-right font-medium ${
+                                        (leg.unrealizedProfit ?? 0) >= 0
+                                          ? "text-[var(--profit)]"
+                                          : "text-[var(--loss)]"
+                                      }`}
+                                    >
+                                      {formatUsd(leg.unrealizedProfit ?? 0)}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {formatUsd(leg.nextFundingAmount ?? 0)}
+                                    </td>
+                                    <td className="py-2 pr-2 text-right text-slate-300">
+                                      {formatUsd(leg.marginUsed ?? 0)}
+                                    </td>
+                                    <td className="py-2 text-right text-slate-400">
+                                      {formatUsd(leg.exchangeFees ?? 0)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
