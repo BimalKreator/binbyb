@@ -48,8 +48,8 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Compute interval (1h, 2h, 4h, 8h) dynamically from cache or nextFundingTime. Never returns Loading.
- * Uses WebSocket nextFundingTime so interval is available as soon as we have funding data.
+ * Compute interval (1h, 2h, 4h, 8h) dynamically. When cache is 8 or null and nextFundingTime is present,
+ * MUST return the calculated value immediately — never leads to Loading.
  */
 function computeIntervalHours(symbol, nextFundingTime, source) {
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
@@ -268,11 +268,18 @@ async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {
     for (const item of list) {
       const sym = String(item.symbol || "").toUpperCase();
       if (!symbolSet.has(sym)) continue;
+      const nextFundingTime = item.nextFundingTime ?? null;
+      const intervalHours = nextFundingTime != null && Number.isFinite(nextFundingTime)
+        ? computeIntervalHours(sym, nextFundingTime, "binance")
+        : 8;
+      intervalHoursCache[sym] = intervalHours;
+      intervalDisplayCache[sym] = intervalHoursToLabel(intervalHours);
       binanceData[sym] = {
         fundingRate: item.lastFundingRate ?? 0,
-        nextFundingTime: item.nextFundingTime ?? null,
+        nextFundingTime,
         markPrice: item.markPrice ?? 0,
         eventTime: now,
+        intervalHours,
       };
     }
     console.log("[Screener] Hydrated Binance funding from premiumIndex for", Object.keys(binanceData).length, "symbols.");
