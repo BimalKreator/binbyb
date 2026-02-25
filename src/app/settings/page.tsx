@@ -15,6 +15,10 @@ type SettingRecord = {
   stopLoss: number;
   takeProfit: number;
   autoTrade: boolean;
+  autoTradeEnabled?: boolean;
+  autoExitEnabled?: boolean;
+  entryTimeMs?: number;
+  entrySlippagePct?: number;
   userMinSpread?: number;
 };
 export default function SettingsPage() {
@@ -30,6 +34,10 @@ export default function SettingsPage() {
   const [stopLoss, setStopLoss] = useState(0);
   const [takeProfit, setTakeProfit] = useState(0);
   const [autoTrade, setAutoTrade] = useState(false);
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
+  const [autoExitEnabled, setAutoExitEnabled] = useState(false);
+  const [entryTimeMs, setEntryTimeMs] = useState(1000);
+  const [entrySlippagePct, setEntrySlippagePct] = useState(2);
 
   useEffect(() => {
     api
@@ -44,6 +52,10 @@ export default function SettingsPage() {
           setStopLoss(s.stopLoss ?? 0);
           setTakeProfit(s.takeProfit ?? 0);
           setAutoTrade(s.autoTrade ?? false);
+          setAutoTradeEnabled(s.autoTradeEnabled ?? false);
+          setAutoExitEnabled(s.autoExitEnabled ?? false);
+          setEntryTimeMs(s.entryTimeMs ?? 1000);
+          setEntrySlippagePct(s.entrySlippagePct ?? 2);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -60,6 +72,10 @@ export default function SettingsPage() {
         stopLoss,
         takeProfit,
         autoTrade,
+        autoTradeEnabled,
+        autoExitEnabled,
+        entryTimeMs,
+        entrySlippagePct,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -79,6 +95,43 @@ export default function SettingsPage() {
   return (
     <div className="w-full min-w-0 max-w-[100vw] overflow-x-hidden px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-4">Settings</h2>
+
+      {/* Master toggles - very top */}
+      <section className={`${sectionClass} rounded-xl border-2 border-slate-600 bg-slate-800/50 p-5`}>
+        <h3 className="text-base font-semibold text-foreground mb-4">Auto Trade & Exit</h3>
+        {loadingSettings ? (
+          <Loader size="small" label="Loading..." />
+        ) : (
+          <div className="space-y-5">
+            <label className="flex items-center justify-between gap-4 cursor-pointer p-3 rounded-lg bg-slate-700/50 hover:bg-slate-700/70 transition-colors">
+              <span className="text-sm font-medium text-foreground">Auto Trade Master Switch</span>
+              <div className="relative w-14 h-8 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={autoTradeEnabled}
+                  onChange={(e) => setAutoTradeEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors shadow-inner" aria-hidden />
+                <div className="absolute left-1 top-1 w-6 h-6 rounded-full bg-white shadow transition-transform peer-checked:translate-x-7" aria-hidden />
+              </div>
+            </label>
+            <label className="flex items-center justify-between gap-4 cursor-pointer p-3 rounded-lg bg-slate-700/50 hover:bg-slate-700/70 transition-colors">
+              <span className="text-sm font-medium text-foreground">Auto Exit Master Switch</span>
+              <div className="relative w-14 h-8 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={autoExitEnabled}
+                  onChange={(e) => setAutoExitEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors shadow-inner" aria-hidden />
+                <div className="absolute left-1 top-1 w-6 h-6 rounded-full bg-white shadow transition-transform peer-checked:translate-x-7" aria-hidden />
+              </div>
+            </label>
+          </div>
+        )}
+      </section>
 
       {/* Trading Settings - synced with Setting model */}
       <section className={sectionClass}>
@@ -152,6 +205,31 @@ export default function SettingsPage() {
                 </label>
               </div>
             </div>
+            <label className="block">
+              <span className={labelClass}>Entry Time before Funding (ms)</span>
+              <input
+                type="number"
+                min={0}
+                value={entryTimeMs}
+                onChange={(e) => setEntryTimeMs(Math.max(0, Number(e.target.value) ?? 1000))}
+                className={inputClass}
+                placeholder="1000"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">Milliseconds before funding to execute entry</span>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Entry Slippage Buffer (%)</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={0.1}
+                value={entrySlippagePct}
+                onChange={(e) => setEntrySlippagePct(Math.max(0, Math.min(100, Number(e.target.value) ?? 2)))}
+                className={inputClass}
+                placeholder="2"
+              />
+            </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"

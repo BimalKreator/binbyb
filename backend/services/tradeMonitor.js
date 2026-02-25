@@ -190,6 +190,8 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
 
 async function runMonitor() {
   const settings = await Setting.findOne().lean();
+  if (!settings?.autoExitEnabled) return;
+
   const keys = await getDecryptedApiKeys();
   if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) {
     return;

@@ -23,7 +23,19 @@ router.get("/", async (req, res) => {
 /** PUT /api/settings - Update global settings */
 router.put("/", async (req, res) => {
   try {
-    const { capitalPercent, leverage, maxTrades, stopLoss, takeProfit, autoTrade, userMinSpread } = req.body;
+    const {
+      capitalPercent,
+      leverage,
+      maxTrades,
+      stopLoss,
+      takeProfit,
+      autoTrade,
+      autoTradeEnabled,
+      autoExitEnabled,
+      entryTimeMs,
+      entrySlippagePct,
+      userMinSpread,
+    } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
     if (leverage !== undefined) update.leverage = Math.max(1, Math.min(125, Number(leverage) || 10));
@@ -31,6 +43,10 @@ router.put("/", async (req, res) => {
     if (stopLoss !== undefined) update.stopLoss = Number(stopLoss);
     if (takeProfit !== undefined) update.takeProfit = Number(takeProfit);
     if (autoTrade !== undefined) update.autoTrade = Boolean(autoTrade);
+    if (autoTradeEnabled !== undefined) update.autoTradeEnabled = Boolean(autoTradeEnabled);
+    if (autoExitEnabled !== undefined) update.autoExitEnabled = Boolean(autoExitEnabled);
+    if (entryTimeMs !== undefined) update.entryTimeMs = Math.max(0, Number(entryTimeMs) || 1000);
+    if (entrySlippagePct !== undefined) update.entrySlippagePct = Math.max(0, Math.min(100, Number(entrySlippagePct) ?? 2));
     if (userMinSpread !== undefined) update.userMinSpread = Number(userMinSpread);
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();

@@ -1,5 +1,6 @@
 const WebSocket = require("ws");
 const axios = require("axios");
+axios.defaults.family = 4;
 axios.interceptors.request.use((request) => {
   console.log(`[REST API TRACKER] ${request.method.toUpperCase()} ${request.baseURL || ""}${request.url}`);
   return request;
@@ -104,7 +105,7 @@ function connectTradeWs(credentials) {
     tradeWs = null;
   }
   tradeWsConnectPromise = new Promise((resolve, reject) => {
-    const ws = new WebSocket(TRADE_WS_URL);
+    const ws = new WebSocket(TRADE_WS_URL, { family: 4 });
     tradeWs = ws;
     ws.on("open", () => {
       const expires = Date.now() + 10000;
@@ -294,7 +295,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
 
   publicStreamSymbols = symbols;
-  const ws = new WebSocket(PUBLIC_WS_URL);
+  const ws = new WebSocket(PUBLIC_WS_URL, { family: 4 });
   publicWs = ws;
 
   ws.on("open", () => {
@@ -363,7 +364,7 @@ function openPrivateStream(credentials) {
   }
   privateCredentials = credentials;
 
-  privateWs = new WebSocket(PRIVATE_WS_URL);
+  privateWs = new WebSocket(PRIVATE_WS_URL, { family: 4 });
 
   privateWs.on("open", () => {
     privateReconnectAttempts = 0;
@@ -721,15 +722,19 @@ async function placeMarketCloseOrder(credentials, symbol, side, qty) {
 /** Slippage 1% so IOC orders get filled. */
 
 /**
- * Get limit price for IOC from cached mark price + 1% slippage. No REST orderbook.
- * BUY: markPrice * 1.01. SELL: markPrice * 0.99.
+ * Get limit price for IOC from cached mark price + slippage. No REST orderbook.
+ * BUY (Long): markPrice * (1 + slippagePct/100). SELL (Short): markPrice * (1 - slippagePct/100).
+ * @param {string} symbol
+ * @param {string} side - Buy | Sell
+ * @param {number} [slippagePct=2] - slippage in percent (e.g. 2 = 2%)
  */
-function getOrderbookPrice(symbol, side) {
+function getOrderbookPrice(symbol, side, slippagePct = 2) {
   const sym = String(symbol).toUpperCase();
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
+  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : 2;
   const isBuy = String(side).toLowerCase() === "buy";
-  return isBuy ? mark * 1.01 : mark * 0.99;
+  return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
 }
 
 async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = {}) {
@@ -885,25 +890,36 @@ async function start(credentials, options = {}) {
     try {
       const timestamp = Date.now();
       const recvWindow = 5000;
-      const params = { accountType: "UNIFIED", recvWindow, timestamp };
-      const queryString = Object.keys(params)
-        .sort()
-        .map((k) => `${k}=${params[k]}`)
-        .join("&");
-      const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${queryString}`;
-      const signature = signMessage(signStr, credentials.apiSecret);
-      const { data } = await axios.get(
-        `${REST_BASE}/v5/account/wallet-balance?${queryString}&signature=${signature}`,
-        {
-          headers: {
-            "X-BAPI-API-KEY": credentials.apiKey,
-            "X-BAPI-TIMESTAMP": String(timestamp),
-            "X-BAPI-RECV-WINDOW": String(recvWindow),
-            "X-BAPI-SIGN": signature,
-          },
-        }
-      );
-      const list = data?.result?.list || [];
+      const buildQuery = (accountType) => {
+        const params = { accountType, recvWindow, timestamp };
+        return Object.keys(params)
+          .sort()
+          .map((k) => `${k}=${params[k]}`)
+          .join("&");
+      };
+      const signStr = (q) => `${timestamp}${credentials.apiKey}${recvWindow}${q}`;
+      const getBalance = async (accountType) => {
+        const queryString = buildQuery(accountType);
+        const signature = signMessage(signStr(queryString), credentials.apiSecret);
+        const { data } = await axios.get(
+          `${REST_BASE}/v5/account/wallet-balance?${queryString}&signature=${signature}`,
+          {
+            headers: {
+              "X-BAPI-API-KEY": credentials.apiKey,
+              "X-BAPI-TIMESTAMP": String(timestamp),
+              "X-BAPI-RECV-WINDOW": String(recvWindow),
+              "X-BAPI-SIGN": signature,
+            },
+          }
+        );
+        return data;
+      };
+      let data = await getBalance("UNIFIED");
+      let list = data?.result?.list || [];
+      if (!list.length) {
+        data = await getBalance("CONTRACT");
+        list = data?.result?.list || [];
+      }
       for (const acc of list) {
         const coins = acc.coin || [];
         const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");

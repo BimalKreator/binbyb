@@ -10,6 +10,10 @@ const settingSchema = new mongoose.Schema(
     slPercent: { type: Number, default: 0 },   // combined PnL % to trigger stop (e.g. -2)
     tpPercent: { type: Number, default: 0 },   // combined PnL % to trigger take profit (e.g. 1)
     autoTrade: { type: Boolean, default: false },
+    autoTradeEnabled: { type: Boolean, default: false },
+    autoExitEnabled: { type: Boolean, default: false },
+    entryTimeMs: { type: Number, default: 1000 }, // ms before funding to execute entry
+    entrySlippagePct: { type: Number, default: 2 }, // IOC limit order slippage %
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
     openingBalance: { type: Number, default: 0 }, // USDT balance at start (for Profit = Current - Opening - Deposits + Withdrawals)
   },

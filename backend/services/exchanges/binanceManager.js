@@ -1,5 +1,6 @@
 const WebSocket = require("ws");
 const axios = require("axios");
+axios.defaults.family = 4;
 axios.interceptors.request.use((request) => {
   console.log(`[REST API TRACKER] ${request.method.toUpperCase()} ${request.baseURL || ""}${request.url}`);
   return request;
@@ -146,7 +147,7 @@ function connectApiWs() {
     apiWs = null;
   }
   apiWsConnectPromise = new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_FAPI_BASE);
+    const ws = new WebSocket(WS_FAPI_BASE, { family: 4 });
     apiWs = ws;
     ws.on("open", () => {
       console.log("[Binance] WS-FAPI (order API) connected");
@@ -303,9 +304,13 @@ async function placeWSMarketOrder(credentials, symbol, side, quantity, opts = {}
     side: sideNorm,
     type: "MARKET",
     quantity: qtyStr,
-    reduceOnly: "true",
     timestamp,
   };
+  if (positionSide === "LONG" || positionSide === "SHORT") {
+    // Hedge mode: do not include reduceOnly (avoids Binance conflict)
+  } else {
+    params.reduceOnly = "true";
+  }
   if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
 
   const queryString = Object.keys(params)
@@ -393,7 +398,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   const streams = list.map((s) => `${s.toLowerCase()}@markPrice@1s`);
   const url = `${PUBLIC_WS_BASE}/stream?streams=${streams.join("/")}`;
 
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url, { family: 4 });
   publicWs = ws;
 
   ws.on("open", () => {
@@ -472,7 +477,7 @@ async function startPrivateStream(credentials) {
   }
 
   const url = `${PUBLIC_WS_BASE}/ws/${listenKey}`;
-  privateWs = new WebSocket(url);
+  privateWs = new WebSocket(url, { family: 4 });
 
   privateWs.on("open", () => {
     privateReconnectAttempts = 0;
@@ -1143,15 +1148,19 @@ async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts =
 }
 
 /**
- * Get limit price for IOC from cached mark price + 2% slippage. No REST /depth.
- * BUY: markPrice * 1.02. SELL: markPrice * 0.98.
+ * Get limit price for IOC from cached mark price + slippage. No REST /depth.
+ * BUY (Long): markPrice * (1 + slippagePct/100). SELL (Short): markPrice * (1 - slippagePct/100).
+ * @param {string} symbol
+ * @param {string} side - BUY | SELL
+ * @param {number} [slippagePct=2] - slippage in percent (e.g. 2 = 2%)
  */
-function getOrderbookPrice(symbol, side) {
+function getOrderbookPrice(symbol, side, slippagePct = 2) {
   const sym = String(symbol).toUpperCase();
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
+  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : 2;
   const isBuy = String(side).toUpperCase() === "BUY";
-  return isBuy ? mark * 1.02 : mark * 0.98;
+  return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
 }
 
 module.exports = {

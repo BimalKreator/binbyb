@@ -125,10 +125,11 @@ function getSidesFromToken(token) {
 
 /**
  * Execute one auto entry: top token from screener, orderbook pricing, place IOC on both exchanges.
+ * Entry only when autoTradeEnabled and timeRemaining in (0, entryTimeMs].
  */
 async function runAutoEntry() {
   const settings = await Setting.findOne().lean();
-  if (!settings?.autoTrade) return;
+  if (!settings?.autoTradeEnabled) return;
 
   const keys = await getDecryptedApiKeys();
   if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) {
@@ -143,7 +144,13 @@ async function runAutoEntry() {
   if (!rankedTokens || rankedTokens.length === 0) return;
 
   const top = rankedTokens[0];
+  const entryTimeMs = Math.max(0, Number(settings.entryTimeMs) ?? 1000);
+  const nextFundingTime = top.nextFundingTime;
+  if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return;
   const now = Date.now();
+  const timeRemaining = nextFundingTime - now;
+  if (timeRemaining <= 0 || timeRemaining > entryTimeMs) return;
+
   if (lastEntryTimeBySymbol[top.symbol] && now - lastEntryTimeBySymbol[top.symbol] < ENTRY_BUFFER_MS) {
     return; // buffer: skip
   }
@@ -159,10 +166,11 @@ async function runAutoEntry() {
 
   const { binanceSide, bybitSide } = getSidesFromToken(top);
   const levInt = Math.max(1, Math.min(125, Number(settings.leverage) || DEFAULT_LEVERAGE));
+  const slippagePct = Number.isFinite(settings.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
 
   const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
-    binanceManager.getOrderbookPrice(top.symbol, binanceSide),
-    bybitManager.getOrderbookPrice(top.symbol, bybitSide),
+    binanceManager.getOrderbookPrice(top.symbol, binanceSide, slippagePct),
+    bybitManager.getOrderbookPrice(top.symbol, bybitSide, slippagePct),
   ]);
   const binancePrice = Number.isFinite(binanceOrderbookPrice) && binanceOrderbookPrice > 0
     ? binanceOrderbookPrice
