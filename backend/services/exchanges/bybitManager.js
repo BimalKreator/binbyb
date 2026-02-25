@@ -556,31 +556,23 @@ function getBalance() {
 }
 
 /**
- * Get open position symbols (size !== 0) for linear. USER_DATA, signed.
+ * Get open position symbols (size !== 0) for linear. USER_DATA, signed. Header-based auth only.
  */
 async function getPositionSymbols(credentials) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return [];
   try {
-    const timestamp = Date.now();
-    const recvWindow = 5000;
-    const params = { category: "linear", recvWindow, timestamp };
-    const queryString = Object.keys(params)
-      .sort()
-      .map((k) => `${k}=${params[k]}`)
-      .join("&");
-    const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${queryString}`;
+    const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+    const qs = "category=linear";
+    const signStr = timestamp + credentials.apiKey + recvWindow + qs;
     const signature = signMessage(signStr, credentials.apiSecret);
-    const { data } = await axios.get(
-      `${REST_BASE}/v5/position/list?${queryString}&signature=${signature}`,
-      {
-        headers: {
-          "X-BAPI-API-KEY": credentials.apiKey,
-          "X-BAPI-TIMESTAMP": String(timestamp),
-          "X-BAPI-RECV-WINDOW": String(recvWindow),
-          "X-BAPI-SIGN": signature,
-        },
-      }
-    );
+    const headers = {
+      "X-BAPI-API-KEY": credentials.apiKey,
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+      "X-BAPI-SIGN": signature,
+    };
+    const { data } = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
     const list = data?.result?.list || [];
     return list
       .filter((p) => {
@@ -598,29 +590,22 @@ async function getPositionSymbols(credentials) {
  * Get position details for PnL/margin: unrealizedProfit, marginUsed, size, side. USER_DATA, signed.
  * @returns {Promise<Array<{ symbol: string, unrealizedProfit: number, marginUsed: number, positionAmt: number, side: string }>>}
  */
-async function getPositionDetails(credentials) {
+async function getPositionDetails(credentials, symbol) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return [];
   try {
-    const timestamp = Date.now();
-    const recvWindow = 5000;
-    const params = { category: "linear", recvWindow, timestamp };
-    const queryString = Object.keys(params)
-      .sort()
-      .map((k) => `${k}=${params[k]}`)
-      .join("&");
-    const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${queryString}`;
+    const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+    const qs = symbol ? `category=linear&symbol=${encodeURIComponent(symbol)}` : "category=linear";
+    const signStr = timestamp + credentials.apiKey + recvWindow + qs;
     const signature = signMessage(signStr, credentials.apiSecret);
-    const { data } = await axios.get(
-      `${REST_BASE}/v5/position/list?${queryString}&signature=${signature}`,
-      {
-        headers: {
-          "X-BAPI-API-KEY": credentials.apiKey,
-          "X-BAPI-TIMESTAMP": String(timestamp),
-          "X-BAPI-RECV-WINDOW": String(recvWindow),
-          "X-BAPI-SIGN": signature,
-        },
-      }
-    );
+    const headers = {
+      "X-BAPI-API-KEY": credentials.apiKey,
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+      "X-BAPI-SIGN": signature,
+    };
+    const positionResponse = await axios.get(REST_BASE + "/v5/position/list?" + qs, { headers });
+    const data = positionResponse.data;
     const list = data?.result?.list || [];
     return list
       .filter((p) => {
@@ -888,40 +873,36 @@ async function start(credentials, options = {}) {
   await hydratePositionsFromRest(credentials);
   if (credentials?.apiKey && credentials?.apiSecret) {
     try {
-      const timestamp = Date.now();
-      const recvWindow = 5000;
-      const buildQuery = (accountType) => {
-        const params = { accountType, recvWindow, timestamp };
-        return Object.keys(params)
-          .sort()
-          .map((k) => `${k}=${params[k]}`)
-          .join("&");
+      const timestamp = Date.now().toString();
+      const recvWindow = "5000";
+
+      const qsUnified = "accountType=UNIFIED";
+      const signStrUnified = timestamp + credentials.apiKey + recvWindow + qsUnified;
+      const signatureUnified = signMessage(signStrUnified, credentials.apiSecret);
+      const headersUnified = {
+        "X-BAPI-API-KEY": credentials.apiKey,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "X-BAPI-SIGN": signatureUnified,
       };
-      const signStr = (q) => `${timestamp}${credentials.apiKey}${recvWindow}${q}`;
-      const getBalance = async (accountType) => {
-        const queryString = buildQuery(accountType);
-        const signature = signMessage(signStr(queryString), credentials.apiSecret);
-        const { data } = await axios.get(
-          `${REST_BASE}/v5/account/wallet-balance?${queryString}&signature=${signature}`,
-          {
-            headers: {
-              "X-BAPI-API-KEY": credentials.apiKey,
-              "X-BAPI-TIMESTAMP": String(timestamp),
-              "X-BAPI-RECV-WINDOW": String(recvWindow),
-              "X-BAPI-SIGN": signature,
-            },
-          }
-        );
-        return data;
-      };
-      let data = await getBalance("UNIFIED");
+      let data = (await axios.get(REST_BASE + "/v5/account/wallet-balance?" + qsUnified, { headers: headersUnified })).data;
+
       let list = data?.result?.list || [];
       if (!list.length) {
-        data = await getBalance("CONTRACT");
+        const qsContract = "accountType=CONTRACT";
+        const signStrContract = timestamp + credentials.apiKey + recvWindow + qsContract;
+        const signatureContract = signMessage(signStrContract, credentials.apiSecret);
+        const headersContract = {
+          "X-BAPI-API-KEY": credentials.apiKey,
+          "X-BAPI-TIMESTAMP": timestamp,
+          "X-BAPI-RECV-WINDOW": recvWindow,
+          "X-BAPI-SIGN": signatureContract,
+        };
+        data = (await axios.get(REST_BASE + "/v5/account/wallet-balance?" + qsContract, { headers: headersContract })).data;
         list = data?.result?.list || [];
       }
-      let usdtCoin = null;
 
+      let usdtCoin = null;
       for (const item of list) {
         if (Array.isArray(item.coin)) {
           usdtCoin = item.coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
