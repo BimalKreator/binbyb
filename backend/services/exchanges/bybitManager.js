@@ -1,5 +1,9 @@
 const WebSocket = require("ws");
 const axios = require("axios");
+axios.interceptors.request.use((request) => {
+  console.log(`[REST API TRACKER] ${request.method.toUpperCase()} ${request.baseURL || ""}${request.url}`);
+  return request;
+});
 const CryptoJS = require("crypto-js");
 const { logLatency } = require("./latencyTracker");
 
@@ -243,6 +247,8 @@ let publicStopped = false;
 const lastFundingEmitBySymbol = {};
 /** markPrice per symbol from public tickers (for getOrderbookPrice without REST). */
 const lastMarkPriceBySymbol = {};
+/** Funding rate and nextFundingTime from public tickers stream. No REST /funding/history. */
+const cachedFundingRates = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -306,6 +312,10 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             const sym = String(d.symbol).toUpperCase();
             const mp = parseFloat(d.markPrice || d.lastPrice || 0);
             if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
+            cachedFundingRates[sym] = {
+              fundingRate: Number.isFinite(parseFloat(d.fundingRate)) ? parseFloat(d.fundingRate) : 0,
+              nextFundingTime: d.nextFundingTime != null ? Number(d.nextFundingTime) : null,
+            };
             if (!onFundingUpdate) continue;
             const now = Date.now();
             const last = lastFundingEmitBySymbol[sym];
@@ -443,7 +453,48 @@ function openPrivateStream(credentials) {
  * @param {number} price - limit price
  * @param {object} [opts] - { orderLinkId, category }
  */
-/** Cache symbol filters (qtyStep, tickSize) from instruments-info. */
+/** Global cache: one-time REST fetch at startup. No per-symbol REST. */
+let cachedInstrumentsInfo = [];
+/** symbol -> instrument for fast lookup. */
+let instrumentsBySymbol = {};
+let instrumentsLoadPromise = null;
+
+/**
+ * One-time load: single batch GET /v5/market/instruments-info?category=linear (paginated once at startup).
+ * Fills cachedInstrumentsInfo and instrumentsBySymbol. Never loop REST per symbol.
+ */
+async function ensureInstrumentsLoaded() {
+  if (cachedInstrumentsInfo.length > 0) return;
+  if (instrumentsLoadPromise) return instrumentsLoadPromise;
+  instrumentsLoadPromise = (async () => {
+    try {
+      const all = [];
+      let cursor;
+      do {
+        const params = { category: "linear", limit: 500 };
+        if (cursor) params.cursor = cursor;
+        const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, { params });
+        const list = data?.result?.list || [];
+        all.push(...list);
+        cursor = data?.result?.nextPageCursor || null;
+      } while (cursor);
+      cachedInstrumentsInfo = all;
+      instrumentsBySymbol = {};
+      for (const item of all) {
+        const s = (item.symbol || "").toUpperCase();
+        if (s) instrumentsBySymbol[s] = item;
+      }
+      console.log("[Bybit] One-time instruments-info loaded:", cachedInstrumentsInfo.length, "instruments");
+    } catch (e) {
+      console.warn("[Bybit] One-time instruments-info load failed", e.message);
+    } finally {
+      instrumentsLoadPromise = null;
+    }
+  })();
+  return instrumentsLoadPromise;
+}
+
+/** Cache symbol filters (qtyStep, tickSize) from cachedInstrumentsInfo. */
 let bybitSymbolFiltersCache = {};
 
 function decimalsFromStep(stepSize) {
@@ -475,29 +526,22 @@ function formatPriceToTickSize(price, tickSize) {
 }
 
 /**
- * Get lotSizeFilter.qtyStep and priceFilter.tickSize for a symbol. Cached.
+ * Get lotSizeFilter.qtyStep and priceFilter.tickSize for a symbol. From memory cache only; no per-symbol REST.
  */
 async function getSymbolFilters(symbol) {
   const sym = String(symbol).toUpperCase();
   if (bybitSymbolFiltersCache[sym]) return bybitSymbolFiltersCache[sym];
-  try {
-    const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, {
-      params: { category: "linear", symbol: sym },
-    });
-    const list = data?.result?.list || [];
-    const item = list.find((s) => (s.symbol || "").toUpperCase() === sym);
-    if (!item) {
-      bybitSymbolFiltersCache[sym] = { stepSize: null, tickSize: null, maxOrderQty: null };
-      return bybitSymbolFiltersCache[sym];
-    }
-    const stepSize = item.lotSizeFilter?.qtyStep ?? null;
-    const tickSize = item.priceFilter?.tickSize ?? null;
-    const maxOrderQty = item.lotSizeFilter?.maxOrderQty ?? null;
-    bybitSymbolFiltersCache[sym] = { stepSize, tickSize, maxOrderQty };
+  await ensureInstrumentsLoaded();
+  const item = instrumentsBySymbol[sym];
+  if (!item) {
+    bybitSymbolFiltersCache[sym] = { stepSize: null, tickSize: null, maxOrderQty: null };
     return bybitSymbolFiltersCache[sym];
-  } catch (e) {
-    return { stepSize: null, tickSize: null, maxOrderQty: null };
   }
+  const stepSize = item.lotSizeFilter?.qtyStep ?? null;
+  const tickSize = item.priceFilter?.tickSize ?? null;
+  const maxOrderQty = item.lotSizeFilter?.maxOrderQty ?? null;
+  bybitSymbolFiltersCache[sym] = { stepSize, tickSize, maxOrderQty };
+  return bybitSymbolFiltersCache[sym];
 }
 
 /**
@@ -505,9 +549,7 @@ async function getSymbolFilters(symbol) {
  * @returns {number} cached balance or 0 if not yet received
  */
 function getBalance(credentials) {
-  return typeof cachedWalletBalance === "number" && Number.isFinite(cachedWalletBalance)
-    ? cachedWalletBalance
-    : 0;
+  return cachedWalletBalance || 0;
 }
 
 /**
@@ -668,21 +710,18 @@ async function placeMarketCloseOrder(credentials, symbol, side, qty) {
   return placeWSMarketOrder(credentials, symbol, side, Math.abs(qty));
 }
 
-/** Slippage (0.1%) applied to mark price when no REST orderbook. */
-const ORDERBOOK_SLIPPAGE_PCT = 0.001;
+/** Slippage 1% so IOC orders get filled. */
 
 /**
- * Get limit price for IOC from cached mark price + slippage. No REST orderbook.
- * Buy: markPrice * (1 + slippage). Sell: markPrice * (1 - slippage).
- * @returns {number|null} price or null if no mark price yet
+ * Get limit price for IOC from cached mark price + 1% slippage. No REST orderbook.
+ * BUY: markPrice * 1.01. SELL: markPrice * 0.99.
  */
 function getOrderbookPrice(symbol, side) {
   const sym = String(symbol).toUpperCase();
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
   const isBuy = String(side).toLowerCase() === "buy";
-  const slip = ORDERBOOK_SLIPPAGE_PCT;
-  return isBuy ? mark * (1 + slip) : mark * (1 - slip);
+  return isBuy ? mark * 1.01 : mark * 0.99;
 }
 
 async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = {}) {
@@ -776,6 +815,8 @@ function stop() {
   privateCredentials = null;
   tradeWsCredentials = null;
   cachedWalletBalance = 0;
+  instrumentsLoadPromise = null;
+  Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   console.log("[Bybit] Manager stopped");
@@ -821,12 +862,11 @@ async function hydratePositionsFromRest(credentials) {
 async function start(credentials, options = {}) {
   publicStopped = false;
   publicReconnectAttempts = 0;
+  await ensureInstrumentsLoaded();
   const symbols = options.symbols || DEFAULT_SYMBOLS;
   openPublicStreams(symbols);
   openPrivateStream(credentials);
   await hydratePositionsFromRest(credentials);
-
-  // One-time REST fetch to seed cachedWalletBalance; WS will keep it updated. No retries.
   if (credentials?.apiKey && credentials?.apiSecret) {
     try {
       const timestamp = Date.now();
@@ -860,57 +900,49 @@ async function start(credentials, options = {}) {
         }
       }
     } catch (e) {
-      console.warn("[Bybit] One-time balance fetch failed:", e.message, "- WS will set balance on first update");
-      // Leave cachedWalletBalance at 0
+      console.warn("[Bybit] One-time balance hydration failed:", e.message);
     }
   }
 }
 
 /**
- * Fetch last funding time (ms) for interval calculation. Public endpoint.
+ * Get funding rate from WebSocket cache (tickers stream). No REST.
  */
-async function getLastFundingTime(symbol) {
-  const { data } = await axios.get(`${REST_BASE}/v5/market/funding/history`, {
-    params: { category: "linear", symbol: symbol.toUpperCase(), limit: 1 },
-  });
-  const list = data?.result?.list;
-  const item = list && list.length ? list[0] : null;
-  return item && item.fundingRateTimestamp ? Number(item.fundingRateTimestamp) : null;
+function getCachedFundingRate(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const c = cachedFundingRates[s];
+  return c != null && Number.isFinite(c.fundingRate) ? c.fundingRate : null;
 }
 
 /**
- * Fetch max leverage for symbol. Public endpoint.
+ * Get next funding time from WebSocket cache. No REST.
+ */
+function getCachedNextFundingTime(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const c = cachedFundingRates[s];
+  return c?.nextFundingTime != null && Number.isFinite(c.nextFundingTime) ? c.nextFundingTime : null;
+}
+
+/**
+ * Get max leverage for symbol from one-time cached instruments-info. No per-symbol REST.
  */
 async function getMaxLeverage(symbol) {
-  const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, {
-    params: { category: "linear", symbol: symbol.toUpperCase() },
-  });
-  const list = data?.result?.list;
-  const instrument = list && list.length ? list[0] : null;
+  await ensureInstrumentsLoaded();
+  const sym = String(symbol).toUpperCase();
+  const instrument = instrumentsBySymbol[sym];
   const lev = instrument?.leverageFilter?.maxLeverage;
   return lev != null ? Number(lev) : null;
 }
 
 /**
- * Fetch all linear perpetual symbols from Instruments Info. Public endpoint. Uses pagination.
+ * Get all linear perpetual symbols from one-time cached instruments-info. No REST loop.
  * @returns {Promise<string[]>} e.g. ["BTCUSDT", "ETHUSDT", ...]
  */
 async function getPerpetualSymbols() {
-  const all = [];
-  let cursor;
-  do {
-    const params = { category: "linear", limit: 500 };
-    if (cursor) params.cursor = cursor;
-    const { data } = await axios.get(`${REST_BASE}/v5/market/instruments-info`, { params });
-    const list = data?.result?.list || [];
-    for (const item of list) {
-      if (item.symbol && item.status === "Trading") {
-        all.push(item.symbol);
-      }
-    }
-    cursor = data?.result?.nextPageCursor || null;
-  } while (cursor);
-  return all;
+  await ensureInstrumentsLoaded();
+  return cachedInstrumentsInfo
+    .filter((item) => item.symbol && item.status === "Trading")
+    .map((item) => item.symbol);
 }
 
 module.exports = {
@@ -924,7 +956,8 @@ module.exports = {
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,
-  getLastFundingTime,
+  getCachedFundingRate,
+  getCachedNextFundingTime,
   getMaxLeverage,
   getPerpetualSymbols,
   getOrderbookPrice,

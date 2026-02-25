@@ -72,14 +72,14 @@ export default function FundsPage() {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 w-full max-w-[100vw] overflow-y-auto overflow-x-hidden pb-24 px-4 py-4">
-      <h2 className="text-lg font-semibold text-foreground mb-2">Fund Management</h2>
-      <p className="text-sm text-slate-400 mb-6">
+    <div className="flex flex-col flex-1 min-h-0 w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
+      <h2 className="text-lg font-semibold text-foreground mb-2 shrink-0">Fund Management</h2>
+      <p className="text-sm text-slate-400 mb-6 shrink-0">
         Record manual deposits and withdrawals. History is loaded from the server.
       </p>
 
       {/* Entry form */}
-      <section className="mb-8">
+      <section className="mb-8 shrink-0">
         <h3 className="text-base font-medium text-foreground mb-3">New Entry</h3>
         <form
           onSubmit={handleSubmit}
@@ -161,15 +161,15 @@ export default function FundsPage() {
         </form>
       </section>
 
-      {/* History table */}
-      <section>
-        <h3 className="text-base font-medium text-foreground mb-3">History</h3>
+      {/* History table — scrollable above bottom nav */}
+      <section className="flex-1 min-h-0 overflow-y-auto pb-24 flex flex-col">
+        <h3 className="text-base font-medium text-foreground mb-3 shrink-0">History</h3>
         {loading ? (
           <Loader size="small" label="Loading..." />
         ) : fundLogs.length === 0 ? (
           <p className="text-sm text-slate-500 py-6">No fund logs yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-4 sm:mx-0">
+          <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-4 sm:mx-0 shrink-0">
             <table className="w-full text-sm min-w-[320px]">
               <thead>
                 <tr className="border-b border-slate-700 bg-slate-800/50">

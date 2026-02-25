@@ -16,7 +16,6 @@ const binanceData = {};
 const bybitData = {};
 const intervalHoursCache = {};
 const intervalDisplayCache = {}; // '1h' | '2h' | '4h' | '8h' | 'Loading'
-const lastFundingTimeCache = { binance: {}, bybit: {} };
 const maxLeverageCache = {};
 let rankedTokens = [];
 let volatilityMeter = { level: "Low", count: 0 };
@@ -48,45 +47,11 @@ function intervalHoursToLabel(hours) {
   return "Loading";
 }
 
-async function getLastFundingTimeBinance(symbol) {
-  if (lastFundingTimeCache.binance[symbol] != null) return lastFundingTimeCache.binance[symbol];
-  try {
-    const t = await binanceManager.getLastFundingTime(symbol);
-    if (t != null) lastFundingTimeCache.binance[symbol] = t;
-    return t;
-  } catch (e) {
-    return null;
-  }
-}
-
-async function getLastFundingTimeBybit(symbol) {
-  if (lastFundingTimeCache.bybit[symbol] != null) return lastFundingTimeCache.bybit[symbol];
-  try {
-    const t = await bybitManager.getLastFundingTime(symbol);
-    if (t != null) lastFundingTimeCache.bybit[symbol] = t;
-    return t;
-  } catch (e) {
-    return null;
-  }
-}
-
 /**
- * Compute interval when a WebSocket message has nextFundingTime.
- * Interval = NextFundingTime - LastFundingTime (ms) → strictly '1h'|'2h'|'4h'|'8h'.
- * If lastFundingTime is undefined or (Next - Last) is NaN, fetch from exchange REST (Binance fundingInfo) or default 8h.
+ * Compute interval (1h, 2h, 4h, 8h) from one-time Binance fundingInfo or default. No REST fundingRate/funding/history.
  */
 async function computeIntervalHours(symbol, nextFundingTime, source) {
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
-  const last =
-    source === "binance"
-      ? await getLastFundingTimeBinance(symbol)
-      : await getLastFundingTimeBybit(symbol);
-  if (last != null && Number.isFinite(last)) {
-    const intervalMs = nextFundingTime - last;
-    const hours = intervalMsToHours(intervalMs);
-    if (hours != null) return hours;
-  }
-  // Fallback: LastFundingTime unknown or intervalMs resulted in NaN – fetch from REST or default 8h
   if (source === "binance") {
     try {
       const fromApi = await binanceManager.getFundingIntervalHours(symbol);
@@ -95,7 +60,7 @@ async function computeIntervalHours(symbol, nextFundingTime, source) {
       // ignore
     }
   }
-  return 8; // standard for Binance/Bybit perpetuals; never leave as Loading
+  return 8; // Bybit or fallback: standard interval
 }
 
 async function fetchAndCacheMaxLeverage(symbol) {
@@ -291,9 +256,8 @@ function onBybitFunding(data) {
 }
 
 /**
- * Hydrate Binance funding state and interval from /fapi/v1/premiumIndex on startup.
- * Only updates symbols in the common list (exist on both exchanges). Interval is derived
- * from (nextFundingTime - now) / 3600000 and mapped to 1h, 2h, 4h, 8h.
+ * Hydrate Binance funding state from ONE batch call (getPremiumIndex). Interval derived in-memory
+ * from nextFundingTime. No per-symbol REST; all data from manager caches after this single call.
  * @param {string[]} commonSymbols - Symbols that exist on both Binance and Bybit
  */
 async function hydrateBinanceIntervalsFromPremiumIndex(commonSymbols) {

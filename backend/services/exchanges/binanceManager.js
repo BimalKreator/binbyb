@@ -1,5 +1,9 @@
 const WebSocket = require("ws");
 const axios = require("axios");
+axios.interceptors.request.use((request) => {
+  console.log(`[REST API TRACKER] ${request.method.toUpperCase()} ${request.baseURL || ""}${request.url}`);
+  return request;
+});
 const CryptoJS = require("crypto-js");
 const { logLatency } = require("./latencyTracker");
 
@@ -13,6 +17,10 @@ const BINANCE_WEIGHT_PAUSE_MS = 60000;
 let binanceRestPausedUntil = 0;
 
 const binanceAxios = axios.create();
+binanceAxios.interceptors.request.use((req) => {
+  console.log(`[REST API TRACKER] ${req.method.toUpperCase()} ${req.baseURL || ""}${req.url}`);
+  return req;
+});
 binanceAxios.interceptors.request.use(
   (config) => {
     if (Date.now() < binanceRestPausedUntil) {
@@ -252,8 +260,8 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
   });
 }
 
-/** Slippage (e.g. 0.001 = 0.1%) applied to mark price when no REST orderbook. */
-const ORDERBOOK_SLIPPAGE_PCT = 0.001;
+/** Slippage 1% so IOC orders get filled. */
+const ORDERBOOK_SLIPPAGE_PCT = 0.01;
 
 /**
  * Place a MARKET reduce-only order via WebSocket API (order.place).
@@ -334,6 +342,8 @@ let publicStopped = false;
 const lastFundingEmitBySymbol = {};
 /** markPrice per symbol from public stream (for getOrderbookPrice without REST). */
 const lastMarkPriceBySymbol = {};
+/** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
+const cachedFundingRates = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -398,6 +408,12 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       if (payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
         if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
+        if (s != null) {
+          cachedFundingRates[s] = {
+            fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
+            nextFundingTime: T != null ? Number(T) : null,
+          };
+        }
         if (!onFundingUpdate || !s) return;
         const now = Date.now();
         const last = lastFundingEmitBySymbol[s];
@@ -525,10 +541,79 @@ async function startPrivateStream(credentials) {
   }, LISTEN_KEY_KEEPALIVE_MS);
 }
 
-/** Cache symbol filters (stepSize, tickSize) from exchangeInfo. */
+/** Global cache: one-time REST fetch at startup. No per-symbol REST. */
+let cachedExchangeInfo = null;
+let cachedLeverageBrackets = null;
+/** Set true after one attempt (success or fail) to avoid 401 retry loop. */
+let leverageBracketAttempted = false;
+/** Single-flight for the one-time load. */
+let exchangeInfoAndLeverageLoadPromise = null;
+
+/** Cache symbol filters (stepSize, tickSize) from cachedExchangeInfo. */
 let symbolFiltersCache = {};
 /** Single-flight: only one exchangeInfo request in flight to prevent concurrent storms. */
 let exchangeInfoFetchPromise = null;
+
+/**
+ * One-time load: one GET /fapi/v1/exchangeInfo (public). If credentials provided, one signed GET /fapi/v1/leverageBracket.
+ * Never rejects: on failure we log once and resolve so no retry loop.
+ */
+async function ensureExchangeInfoAndLeverageLoaded(credentials) {
+  if (cachedExchangeInfo != null && (cachedLeverageBrackets != null || !(credentials?.apiKey && credentials?.apiSecret) || leverageBracketAttempted)) {
+    return;
+  }
+  if (exchangeInfoAndLeverageLoadPromise) return exchangeInfoAndLeverageLoadPromise;
+  exchangeInfoAndLeverageLoadPromise = (async () => {
+    if (cachedExchangeInfo == null) {
+      try {
+        const infoRes = await binanceAxios.get(`${REST_BASE}/fapi/v1/exchangeInfo`);
+        const data = infoRes?.data;
+        const symbols = (data && data.symbols) || [];
+        cachedExchangeInfo = data;
+        for (const item of symbols) {
+          const s = (item.symbol || "").toUpperCase();
+          if (!s) continue;
+          if (!item.filters) {
+            symbolFiltersCache[s] = { stepSize: null, tickSize: null, maxOrderQty: null };
+            continue;
+          }
+          let stepSize = null;
+          let tickSize = null;
+          let maxOrderQty = null;
+          for (const f of item.filters) {
+            if (f.filterType === "LOT_SIZE") {
+              stepSize = f.stepSize;
+              maxOrderQty = f.maxQty;
+            }
+            if (f.filterType === "PRICE_FILTER") tickSize = f.tickSize;
+          }
+          symbolFiltersCache[s] = { stepSize, tickSize, maxOrderQty };
+        }
+      } catch (e) {
+        console.warn("[Binance] One-time exchangeInfo load failed:", e.message);
+      }
+    }
+    if (credentials?.apiKey && credentials?.apiSecret && !leverageBracketAttempted) {
+      leverageBracketAttempted = true;
+      try {
+        const timestamp = Date.now();
+        const queryString = `timestamp=${timestamp}`;
+        const signature = signQueryString(queryString, credentials.apiSecret);
+        const fullQuery = `${queryString}&signature=${signature}`;
+        const bracketRes = await binanceAxios.get(`${REST_BASE}/fapi/v1/leverageBracket?${fullQuery}`, {
+          headers: { "X-MBX-APIKEY": credentials.apiKey },
+        });
+        const bracketData = Array.isArray(bracketRes?.data) ? bracketRes.data : [];
+        cachedLeverageBrackets = bracketData;
+      } catch (e) {
+        console.warn("[Binance] One-time leverageBracket load failed (401 or network):", e.message);
+        // Resolve anyway; do not reject so no retry loop.
+      }
+    }
+    exchangeInfoAndLeverageLoadPromise = null;
+  })();
+  return exchangeInfoAndLeverageLoadPromise;
+}
 
 function decimalsFromStep(stepSize) {
   const s = String(stepSize);
@@ -565,49 +650,19 @@ function formatPriceToTickSize(price, tickSize) {
 }
 
 /**
- * Fetch exchangeInfo once and fill symbolFiltersCache for all symbols. Single-flight to prevent concurrent storms.
+ * Fetch exchangeInfo once and fill symbolFiltersCache. Uses one-time ensureExchangeInfoAndLeverageLoaded.
  */
 async function fetchAndCacheAllSymbolFilters() {
-  if (exchangeInfoFetchPromise) return exchangeInfoFetchPromise;
-  exchangeInfoFetchPromise = (async () => {
-    try {
-      const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/exchangeInfo`);
-      const symbols = (data && data.symbols) || [];
-      for (const item of symbols) {
-        const s = (item.symbol || "").toUpperCase();
-        if (!s) continue;
-        if (!item.filters) {
-          symbolFiltersCache[s] = { stepSize: null, tickSize: null, maxOrderQty: null };
-          continue;
-        }
-        let stepSize = null;
-        let tickSize = null;
-        let maxOrderQty = null;
-        for (const f of item.filters) {
-          if (f.filterType === "LOT_SIZE") {
-            stepSize = f.stepSize;
-            maxOrderQty = f.maxQty;
-          }
-          if (f.filterType === "PRICE_FILTER") tickSize = f.tickSize;
-        }
-        symbolFiltersCache[s] = { stepSize, tickSize, maxOrderQty };
-      }
-    } catch (e) {
-      console.warn("[Binance] exchangeInfo fetch failed", e.message);
-    } finally {
-      exchangeInfoFetchPromise = null;
-    }
-  })();
-  return exchangeInfoFetchPromise;
+  await ensureExchangeInfoAndLeverageLoaded();
 }
 
 /**
- * Get LOT_SIZE.stepSize and PRICE_FILTER.tickSize for a symbol. Cached; single-flight for exchangeInfo.
+ * Get LOT_SIZE.stepSize and PRICE_FILTER.tickSize for a symbol. From memory cache only; no per-symbol REST.
  */
 async function getSymbolFilters(symbol) {
   const sym = String(symbol).toUpperCase();
   if (symbolFiltersCache[sym]) return symbolFiltersCache[sym];
-  await fetchAndCacheAllSymbolFilters();
+  await ensureExchangeInfoAndLeverageLoaded();
   return symbolFiltersCache[sym] || { stepSize: null, tickSize: null, maxOrderQty: null };
 }
 
@@ -773,7 +828,13 @@ function stop() {
   listenKey = null;
   privateCredentials = null;
   exchangeInfoFetchPromise = null;
+  exchangeInfoAndLeverageLoadPromise = null;
+  leverageBracketAttempted = false;
+  fundingInfoLoadPromise = null;
+  cachedFundingInfo = null;
+  Object.keys(fundingIntervalCache).forEach((k) => delete fundingIntervalCache[k]);
   cachedWalletBalance = 0;
+  Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   console.log("[Binance] Manager stopped");
@@ -820,12 +881,12 @@ async function hydratePositionsFromRest(credentials) {
 async function start(credentials, options = {}) {
   publicStopped = false;
   publicReconnectAttempts = 0;
+  await ensureExchangeInfoAndLeverageLoaded(credentials);
+  await ensureFundingInfoLoaded();
   const symbols = options.symbols || DEFAULT_SYMBOLS;
   openPublicStreams(symbols);
   await startPrivateStream(credentials);
   await hydratePositionsFromRest(credentials);
-
-  // One-time REST fetch to seed cachedWalletBalance; WS will keep it updated. No retries.
   if (credentials?.apiKey && credentials?.apiSecret) {
     try {
       const timestamp = Date.now();
@@ -845,76 +906,98 @@ async function start(credentials, options = {}) {
         cachedWalletBalance = parseFloat(bal) || 0;
       }
     } catch (e) {
-      console.warn("[Binance] One-time balance fetch failed:", e.message, "- WS will set balance on first update");
-      // Leave cachedWalletBalance at 0
+      console.warn("[Binance] One-time balance hydration failed:", e.message);
     }
   }
 }
 
 /**
- * Fetch last funding time (ms) for interval calculation. Public endpoint.
+ * Get funding rate from WebSocket cache (markPriceUpdate stream). No REST.
  */
-async function getLastFundingTime(symbol) {
-  const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingRate`, {
-    params: { symbol: symbol.toUpperCase(), limit: 1 },
-  });
-  const item = Array.isArray(data) && data.length ? data[0] : null;
-  return item ? item.fundingTime : null;
+function getCachedFundingRate(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const c = cachedFundingRates[s];
+  return c != null && Number.isFinite(c.fundingRate) ? c.fundingRate : null;
 }
 
 /**
- * Fetch max leverage for symbol. Public endpoint.
+ * Get next funding time from WebSocket cache. No REST.
+ */
+function getCachedNextFundingTime(symbol) {
+  const s = String(symbol || "").toUpperCase();
+  const c = cachedFundingRates[s];
+  return c?.nextFundingTime != null && Number.isFinite(c.nextFundingTime) ? c.nextFundingTime : null;
+}
+
+/**
+ * Get max leverage for symbol from one-time cached leverageBracket. No per-symbol REST.
  */
 async function getMaxLeverage(symbol) {
-  const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/leverageBracket`, {
-    params: { symbol: symbol.toUpperCase() },
-  });
-  const brackets = data && data[0] && data[0].brackets;
+  await ensureExchangeInfoAndLeverageLoaded();
+  const sym = String(symbol).toUpperCase();
+  if (!Array.isArray(cachedLeverageBrackets)) return null;
+  const entry = cachedLeverageBrackets.find((e) => (e.symbol || "").toUpperCase() === sym);
+  const brackets = entry?.brackets;
   if (!brackets || !brackets.length) return null;
-  const maxLev = Math.max(...brackets.map((b) => b.initialLeverage));
-  return maxLev;
+  return Math.max(...brackets.map((b) => b.initialLeverage));
 }
 
 /**
- * Fetch all USDT-margined perpetual symbols from Exchange Info. Public endpoint.
+ * Get all USDT-margined perpetual symbols from one-time cached exchangeInfo. No REST loop.
  * @returns {Promise<string[]>} e.g. ["BTCUSDT", "ETHUSDT", ...]
  */
 async function getPerpetualSymbols() {
-  const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/exchangeInfo`);
-  const symbols = (data && data.symbols) || [];
+  await ensureExchangeInfoAndLeverageLoaded();
+  const symbols = (cachedExchangeInfo && cachedExchangeInfo.symbols) || [];
   return symbols
     .filter((s) => s.contractType === "PERPETUAL" && s.status === "TRADING")
     .map((s) => s.symbol);
 }
 
-/** Cache for funding interval hours by symbol (from REST fundingInfo). */
+/** One-time load: full array from GET /fapi/v1/fundingInfo. No per-symbol REST. */
+let cachedFundingInfo = null;
+let fundingInfoLoadPromise = null;
+/** Symbol -> interval hours (1,2,4,8) derived from cachedFundingInfo. */
 let fundingIntervalCache = {};
 
 /**
- * Fetch funding interval hours from REST GET /fapi/v1/fundingInfo. Public endpoint.
- * Returns 1, 2, 4, or 8; null if not found or API error.
+ * Make EXACTLY ONE unparameterized GET /fapi/v1/fundingInfo and store in cachedFundingInfo.
+ */
+async function ensureFundingInfoLoaded() {
+  if (cachedFundingInfo != null) return;
+  if (fundingInfoLoadPromise) return fundingInfoLoadPromise;
+  fundingInfoLoadPromise = (async () => {
+    try {
+      const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
+      const list = Array.isArray(data) ? data : [];
+      cachedFundingInfo = list;
+      for (const item of list) {
+        const sym = (item.symbol || "").toUpperCase();
+        if (!sym) continue;
+        const hours = item.fundingIntervalHours;
+        const h = hours != null ? Number(hours) : null;
+        if (h === 1 || h === 2 || h === 4 || h === 8) {
+          fundingIntervalCache[sym] = h;
+        } else if (Number.isFinite(h) && h > 0) {
+          fundingIntervalCache[sym] = h <= 1 ? 1 : h <= 2 ? 2 : h <= 4 ? 4 : 8;
+        }
+      }
+    } catch (e) {
+      console.warn("[Binance] One-time fundingInfo load failed:", e.message);
+    } finally {
+      fundingInfoLoadPromise = null;
+    }
+  })();
+  return fundingInfoLoadPromise;
+}
+
+/**
+ * Get funding interval hours (1, 2, 4, or 8) from cache only. Default 8 if symbol not found.
  */
 async function getFundingIntervalHours(symbol) {
-  if (fundingIntervalCache[symbol] != null) return fundingIntervalCache[symbol];
-  try {
-    const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
-    const list = Array.isArray(data) ? data : [];
-    const item = list.find((s) => (s.symbol || "").toUpperCase() === String(symbol).toUpperCase());
-    const hours = item?.fundingIntervalHours;
-    const h = hours != null ? Number(hours) : null;
-    if (h === 1 || h === 2 || h === 4 || h === 8) {
-      fundingIntervalCache[symbol] = h;
-      return h;
-    }
-    if (Number.isFinite(h) && h > 0) {
-      const bucket = h <= 1 ? 1 : h <= 2 ? 2 : h <= 4 ? 4 : 8;
-      fundingIntervalCache[symbol] = bucket;
-      return bucket;
-    }
-  } catch (e) {
-    // ignore
-  }
-  return null;
+  await ensureFundingInfoLoaded();
+  const sym = String(symbol || "").toUpperCase();
+  return fundingIntervalCache[sym] ?? 8;
 }
 
 /**
@@ -956,9 +1039,7 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
  * @returns {number} cached balance or 0 if not yet received
  */
 function getBalance(credentials) {
-  return typeof cachedWalletBalance === "number" && Number.isFinite(cachedWalletBalance)
-    ? cachedWalletBalance
-    : 0;
+  return cachedWalletBalance || 0;
 }
 
 /**
@@ -1044,8 +1125,7 @@ function getOrderbookPrice(symbol, side) {
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  const slip = ORDERBOOK_SLIPPAGE_PCT;
-  return isBuy ? mark * (1 + slip) : mark * (1 - slip);
+  return isBuy ? mark * 1.01 : mark * 0.99;
 }
 
 module.exports = {
@@ -1059,7 +1139,8 @@ module.exports = {
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,
-  getLastFundingTime,
+  getCachedFundingRate,
+  getCachedNextFundingTime,
   getMaxLeverage,
   getPerpetualSymbols,
   getFundingIntervalHours,
