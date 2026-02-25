@@ -84,6 +84,7 @@ router.get("/metrics", async (req, res) => {
     const totalCapitalINR = currentBalance * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
+    console.log("[Dashboard API] Metrics requested. Balances:", { binanceBalance, bybitBalance });
     return res.json({
       success: true,
       data: {
@@ -123,30 +124,50 @@ router.get("/positions", async (req, res) => {
     const bybitBySymbol = buildPrimaryBySymbol(bybitPositions);
     const binanceSymbols = new Set(Object.keys(binanceBySymbol));
     const bybitSymbols = new Set(Object.keys(bybitBySymbol));
-    const pairedSymbols = [...binanceSymbols].filter((s) => bybitSymbols.has(s));
+    const allSymbols = Array.from(new Set([...binanceSymbols, ...bybitSymbols]));
     const snapshot = screener.getSnapshot();
     const rankedTokens = snapshot?.rankedTokens || [];
+
+    const defaultBinancePos = {
+      side: "NONE",
+      positionSide: "NONE",
+      positionAmt: 0,
+      unrealizedProfit: 0,
+      marginUsed: 0,
+      entryPrice: 0,
+      leverage: 0,
+      liquidationPrice: 0,
+    };
+    const defaultBybitPos = {
+      side: "NONE",
+      positionSide: "NONE",
+      positionAmt: 0,
+      unrealizedProfit: 0,
+      marginUsed: 0,
+      entryPrice: 0,
+      leverage: 0,
+      liquidationPrice: 0,
+    };
 
     const positions = [];
     let grandTotalPnl = 0;
     let grandTotalNextFundingAmount = 0;
 
-    for (const symbol of pairedSymbols) {
-      const binancePos = binanceBySymbol[symbol];
-      const bybitPos = bybitBySymbol[symbol];
-      if (!binancePos || !bybitPos) continue;
+    for (const symbol of allSymbols) {
+      const binancePos = binanceBySymbol[symbol] ?? defaultBinancePos;
+      const bybitPos = bybitBySymbol[symbol] ?? defaultBybitPos;
 
-      const binanceMark = binanceManager.getMarkPrice(symbol);
-      const bybitMark = bybitManager.getMarkPrice(symbol);
-      const binanceFundingRate = binanceManager.getCachedFundingRate(symbol);
-      const bybitFundingRate = bybitManager.getCachedFundingRate(symbol);
+      const binanceMark = binanceManager.getMarkPrice(symbol) ?? 0;
+      const bybitMark = bybitManager.getMarkPrice(symbol) ?? 0;
+      const binanceFundingRate = binanceManager.getCachedFundingRate(symbol) ?? 0;
+      const bybitFundingRate = bybitManager.getCachedFundingRate(symbol) ?? 0;
 
       const binanceAmt = parseFloat(String(binancePos.positionAmt ?? 0)) || 0;
       const bybitAmt = parseFloat(String(bybitPos.positionAmt ?? 0)) || 0;
       const notionalBinance = Math.abs(binanceAmt) * (Number.isFinite(binanceMark) ? binanceMark : 0);
       const notionalBybit = Math.abs(bybitAmt) * (Number.isFinite(bybitMark) ? bybitMark : 0);
-      const binanceFundingDecimal = binanceFundingRate != null ? Number(binanceFundingRate) : 0;
-      const bybitFundingDecimal = bybitFundingRate != null ? Number(bybitFundingRate) : 0;
+      const binanceFundingDecimal = Number(binanceFundingRate) || 0;
+      const bybitFundingDecimal = Number(bybitFundingRate) || 0;
       const binanceNextFundingAmount = notionalBinance * binanceFundingDecimal;
       const bybitNextFundingAmount = notionalBybit * bybitFundingDecimal;
       const totalNextFundingAmount = binanceNextFundingAmount + bybitNextFundingAmount;
@@ -161,7 +182,7 @@ router.get("/positions", async (req, res) => {
       grandTotalNextFundingAmount += totalNextFundingAmount;
 
       const token = rankedTokens.find((t) => String(t?.symbol || "").toUpperCase() === symbol);
-      const nextFundingTime = token?.nextFundingTime ?? null;
+      const nextFundingTime = token != null ? (token.nextFundingTime ?? null) : null;
       const fundingPaymentEstimate =
         nextFundingTime != null && Number.isFinite(nextFundingTime)
           ? { nextFundingTime, nextFundingTimeISO: new Date(nextFundingTime).toISOString() }
@@ -180,7 +201,7 @@ router.get("/positions", async (req, res) => {
           liquidationPrice: binancePos.liquidationPrice,
           markPrice: binanceMark,
           fundingRate: binanceFundingRate,
-          fundingRatePct: binanceFundingRate != null ? binanceFundingRate * 100 : null,
+          fundingRatePct: Number.isFinite(binanceFundingRate) ? binanceFundingRate * 100 : null,
           nextFundingAmount: binanceNextFundingAmount,
           exchangeFees: 0,
         },
@@ -194,7 +215,7 @@ router.get("/positions", async (req, res) => {
           liquidationPrice: bybitPos.liquidationPrice,
           markPrice: bybitMark,
           fundingRate: bybitFundingRate,
-          fundingRatePct: bybitFundingRate != null ? bybitFundingRate * 100 : null,
+          fundingRatePct: Number.isFinite(bybitFundingRate) ? bybitFundingRate * 100 : null,
           nextFundingAmount: bybitNextFundingAmount,
           exchangeFees: 0,
         },
@@ -206,6 +227,7 @@ router.get("/positions", async (req, res) => {
       });
     }
 
+    console.log("[Dashboard API] Positions requested. Count:", positions.length);
     return res.json({
       success: true,
       data: positions,

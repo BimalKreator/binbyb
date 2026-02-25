@@ -772,8 +772,8 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
     ...opts,
   };
   const rawBody = JSON.stringify(body);
-  const message = `${timestamp}${credentials.apiKey}${recvWindow}${rawBody}`;
-  const signature = signMessage(message, credentials.apiSecret);
+  const signStr = String(timestamp) + credentials.apiKey + String(recvWindow) + rawBody;
+  const signature = signMessage(signStr, credentials.apiSecret);
 
   const res = await axios.post(`${REST_BASE}/v5/order/create`, body, {
     headers: {

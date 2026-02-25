@@ -608,12 +608,13 @@ async function ensureExchangeInfoAndLeverageLoaded(credentials) {
       leverageBracketAttempted = true;
       try {
         const timestamp = Date.now();
-        const queryString = `timestamp=${timestamp}`;
+        const recvWindow = 5000;
+        const queryString = "recvWindow=5000&timestamp=" + timestamp;
         const signature = signQueryString(queryString, credentials.apiSecret);
-        const fullQuery = `${queryString}&signature=${signature}`;
-        const bracketRes = await binanceAxios.get(`${REST_BASE}/fapi/v1/leverageBracket?${fullQuery}`, {
-          headers: { "X-MBX-APIKEY": credentials.apiKey },
-        });
+        const bracketRes = await binanceAxios.get(
+          REST_BASE + "/fapi/v1/leverageBracket?" + queryString + "&signature=" + signature,
+          { headers: { "X-MBX-APIKEY": credentials.apiKey } }
+        );
         const bracketData = Array.isArray(bracketRes?.data) ? bracketRes.data : [];
         cachedLeverageBrackets = bracketData;
       } catch (e) {
