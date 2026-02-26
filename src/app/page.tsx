@@ -191,19 +191,22 @@ export default function Home() {
   useEffect(() => {
     const { io } = require("socket.io-client");
 
-    const apiUrl = "https://tradeictearner.online";
-    console.log(`🔌 Attempting secure socket connection to: ${apiUrl}`);
+    console.log("🔌 Attempting relative socket connection...");
 
-    const socket = io(apiUrl, {
+    const socket = io({
       path: "/socket.io",
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       secure: true,
+      rejectUnauthorized: false,
     });
 
-    socket.on("connect", () => console.log("🟢 Frontend WS Connected to Backend!"));
+    socket.on("connect", () => {
+      console.log("🟢 Frontend WS Connected to Backend! ID:", socket.id);
+      socket.emit("request_live_pnl");
+    });
 
     socket.on("connect_error", (err: any) => {
-      console.error("🔴 WS Connection Error:", err.message);
+      console.error("🔴 WS Connection Error:", err.message, err.description);
     });
 
     socket.on("live_pnl_update", (payload: any) => {
