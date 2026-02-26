@@ -13,6 +13,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // When set, proxy /api/* to the backend (e.g. Vercel + separate backend, or single server without Nginx)
+  async rewrites() {
+    const backend = process.env.NEXT_PUBLIC_API_BACKEND_URL;
+    if (backend) {
+      const base = backend.replace(/\/$/, "");
+      return [{ source: "/api/:path*", destination: `${base}/api/:path*` }];
+    }
+    return [];
+  },
 };
 
 export default nextConfig;

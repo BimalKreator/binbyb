@@ -27,9 +27,14 @@ const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/binbyb
 const app = express();
 const server = http.createServer(app);
 
+// Trust first proxy (Nginx) so X-Forwarded-Proto is correct and secure cookies work over HTTPS
+app.set("trust proxy", 1);
+
 const CORS_ORIGINS = [
   "https://tradeictearner.online",
   "http://tradeictearner.online",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
 ];
 
 const io = new SocketServer(server, {
@@ -45,6 +50,7 @@ app.use(
     origin: CORS_ORIGINS,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
   })
 );
 app.use(express.json());

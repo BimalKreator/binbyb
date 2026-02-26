@@ -38,8 +38,18 @@ export default function LoginPage() {
         toast.error(data.message ?? "Login failed.");
       }
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast.error(msg || "Login failed.");
+      const ax = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
+      const msg = ax?.response?.data?.message;
+      const status = ax?.response?.status;
+      if (msg) {
+        toast.error(msg);
+      } else if (status === 404) {
+        toast.error("Login endpoint not found. Check that /api is proxied to the backend.");
+      } else if (ax?.message === "Network Error" || !status) {
+        toast.error("Network error. Check backend is running and /api is proxied.");
+      } else {
+        toast.error("Login failed.");
+      }
     } finally {
       setLoading(false);
     }
