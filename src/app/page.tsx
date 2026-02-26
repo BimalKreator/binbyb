@@ -85,14 +85,30 @@ function VolatilityGauge({ level, count = 0 }: VolatilityMeter) {
       : level === "Med"
         ? "#eab308"
         : "var(--profit)";
+  const size = 88;
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const arcLen = Math.PI * r;
+  const third = arcLen / 3;
+  const needleAngleDeg = (normalized / 100) * 180;
+  const needleRotation = needleAngleDeg - 90;
+
+  const semicirclePath = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="relative w-full h-3 rounded-full bg-slate-700 overflow-hidden" aria-hidden>
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${normalized}%`, backgroundColor: color }}
-        />
+      <div className="relative" style={{ width: size, height: size / 2 + stroke }}>
+        <svg width={size} height={size / 2 + stroke} viewBox={`0 0 ${size} ${size / 2 + stroke}`} className="overflow-visible">
+          <path d={semicirclePath} fill="none" stroke="#334155" strokeWidth={stroke} strokeLinecap="round" opacity={0.4} />
+          <path d={semicirclePath} fill="none" stroke="var(--profit)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${third} ${arcLen}`} strokeDashoffset={0} />
+          <path d={semicirclePath} fill="none" stroke="#eab308" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${third} ${arcLen}`} strokeDashoffset={-third} />
+          <path d={semicirclePath} fill="none" stroke="var(--loss)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${third} ${arcLen}`} strokeDashoffset={-2 * third} />
+          <g transform={`translate(${cx}, ${cy}) rotate(${needleRotation})`}>
+            <line x1={0} y1={0} x2={0} y2={-r + stroke} stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" className="text-slate-200" />
+          </g>
+        </svg>
       </div>
       <div className="flex items-center justify-between w-full text-xs">
         <span className="text-slate-400">Volatility</span>
@@ -209,20 +225,31 @@ export default function Home() {
             <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3450</p>
           </div>
 
-          {/* Profit */}
+          {/* Profit — display: Total Capital - 3450 - today deposit - today withdrawal; opening balance hardcoded */}
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Net Profit</p>
-            <p
-              className={`text-xl font-semibold ${
-                Number(m.profit) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
-              }`}
-            >
-              {formatUsd(m.profit ?? 0)}
-            </p>
-            <p className="text-sm text-slate-400 mt-0.5">
-              Profit % {m.profitPercent != null ? formatPct(m.profitPercent) : "—"}
-              {m.dailyROI != null ? ` · Daily ROI ${formatPct(m.dailyROI)}` : ""}
-            </p>
+            {(() => {
+              const OPENING_BALANCE = 3450;
+              const todaysDeposit = 0;
+              const todaysWithdrawal = 0;
+              const totalCapitalDisplay = (m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500;
+              const netProfitDisplay = totalCapitalDisplay - OPENING_BALANCE - todaysDeposit - todaysWithdrawal;
+              return (
+                <>
+                  <p
+                    className={`text-xl font-semibold ${
+                      netProfitDisplay >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                    }`}
+                  >
+                    {formatUsd(netProfitDisplay)}
+                  </p>
+                  <p className="text-sm text-slate-400 mt-0.5">
+                    Profit % {m.profitPercent != null ? formatPct(m.profitPercent) : "—"}
+                    {m.dailyROI != null ? ` · Daily ROI ${formatPct(m.dailyROI)}` : ""}
+                  </p>
+                </>
+              );
+            })()}
           </div>
 
           {/* Volatility */}

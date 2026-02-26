@@ -144,9 +144,9 @@ export default function FundsPage() {
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
-              <dt className="text-slate-500">Used Margin</dt>
+              <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {binanceWallet ? formatUsd(binanceWallet.totalPositionInitialMargin) : "—"}
+                {binanceWallet ? formatUsd((binanceWallet.totalPositionInitialMargin ?? 0) * 10) : "—"}
               </dd>
             </div>
           </dl>
@@ -167,9 +167,9 @@ export default function FundsPage() {
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
-              <dt className="text-slate-500">Used Margin</dt>
+              <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {bybitWallet ? formatUsd(bybitWallet.totalPositionInitialMargin) : "—"}
+                {bybitWallet ? formatUsd((bybitWallet.totalPositionInitialMargin ?? 0) * 10) : "—"}
               </dd>
             </div>
           </dl>
