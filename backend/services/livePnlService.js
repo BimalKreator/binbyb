@@ -72,7 +72,12 @@ function refreshPositionCache() {
   }
 
   for (const symbol of Object.keys(positionCache)) {
-    if (!paired.includes(symbol)) delete positionCache[symbol];
+    if (!paired.includes(symbol)) {
+      delete positionCache[symbol];
+      if (io) {
+        io.emit("position_closed", { symbol });
+      }
+    }
   }
 }
 

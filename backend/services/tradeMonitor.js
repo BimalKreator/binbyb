@@ -20,15 +20,9 @@ const FUNDING_WINDOW_MS = 600000; // 10 minutes before next funding
 const ORPHAN_WAIT_MS = 10000; // 10 seconds before closing orphan (for timer-based orphan path)
 const ORPHAN_CLOSE_COOLDOWN_MS = 30000; // 30 seconds after a failed close before retry (no spam)
 const FAILED_CLOSE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes: strictly skip symbol after any close API error (avoid IP ban)
-const MISMATCH_WINDOW_MS = 60000; // 1 minute: only auto-fix after mismatch persists this long
-const MISMATCH_FIX_COOLDOWN_MS = 30000; // 30 seconds cooldown after fix attempt (success or fail)
 
 /** Orphan tracking: symbol -> { exchange: 'binance'|'bybit', firstSeen: number } */
 const orphanFirstSeen = {};
-/** Mismatch auto-fix: symbol -> first timestamp when qty mismatch was seen */
-const mismatchFirstSeen = {};
-/** Cooldown until (ms) after mismatch fix attempt before retrying same symbol */
-const mismatchFixCooldownUntil = {};
 /** Cooldown until (ms) after failed orphan close to avoid API spam */
 const orphanCloseCooldownUntil = {};
 /** Symbols that had a close API failure: skip for 10 minutes (no retries) */
@@ -383,100 +377,6 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
   console.log("[TradeMonitor] Orphan closed", exchange, sym);
 }
 
-/**
- * Auto-fix quantity mismatch for a paired symbol: either add on low side (if margin available)
- * or reduce on high side (reduceOnly). Called after mismatch has persisted > MISMATCH_WINDOW_MS.
- */
-async function fixQuantityMismatch(keys, settings, symbol, binancePos, bybitPos) {
-  const binanceQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
-  const bybitQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
-  const qtyDiff = Math.abs(binanceQty - bybitQty);
-  if (qtyDiff <= 0) return;
-
-  const lowExchange = binanceQty < bybitQty ? "binance" : "bybit";
-  const highExchange = binanceQty < bybitQty ? "bybit" : "binance";
-  const lowPos = lowExchange === "binance" ? binancePos : bybitPos;
-  const highPos = highExchange === "binance" ? binancePos : bybitPos;
-
-  const markPrice =
-    lowExchange === "binance"
-      ? binanceManager.getMarkPrice(symbol) ?? bybitManager.getMarkPrice(symbol)
-      : bybitManager.getMarkPrice(symbol) ?? binanceManager.getMarkPrice(symbol);
-  if (!markPrice || markPrice <= 0) {
-    console.warn("[TradeMonitor] Mismatch fix skipped: no mark price for", symbol);
-    return;
-  }
-
-  const leverage = Math.max(1, Number(lowPos?.leverage ?? lowPos?.leverageId ?? 1));
-  const requiredMargin = (qtyDiff * markPrice) / leverage;
-
-  let availableBalance = 0;
-  try {
-    if (lowExchange === "binance") {
-      const bal = binanceManager.getBalance(keys.binance);
-      availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? 0) || 0;
-    } else {
-      const bal = bybitManager.getBalance();
-      availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? bal?.equity ?? 0) || 0;
-    }
-  } catch (e) {
-    console.warn("[TradeMonitor] Mismatch fix: balance fetch failed", symbol, e?.message);
-    return;
-  }
-
-  if (!orderCircuitBreaker.canPlaceOrder()) {
-    return;
-  }
-
-  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
-  const sym = String(symbol).toUpperCase();
-
-  if (availableBalance > requiredMargin) {
-    // Add on low exchange (same direction as position, not reduceOnly)
-    const isLong = Number(lowPos?.positionAmt ?? lowPos?.size ?? 0) >= 0;
-    const side = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
-    const price =
-      lowExchange === "binance"
-        ? (binanceManager.getOrderbookPrice(sym, side, slippagePct) ?? markPrice)
-        : (bybitManager.getOrderbookPrice(sym, side, slippagePct) ?? markPrice);
-    try {
-      if (lowExchange === "binance") {
-        const positionSide = isLong ? "LONG" : "SHORT";
-        await binanceManager.placeIOCLimitOrder(keys.binance, sym, side, qtyDiff, price, { positionSide });
-      } else {
-        await bybitManager.placeIOCLimitOrder(keys.bybit, sym, side, qtyDiff, price, {});
-      }
-      orderCircuitBreaker.recordOrderPlaced();
-      console.log("[TradeMonitor] Mismatch fix: added", qtyDiff, "on", lowExchange, symbol);
-    } catch (e) {
-      console.warn("[TradeMonitor] Mismatch fix (add) failed", symbol, e?.message);
-    }
-  } else {
-    // Reduce on high exchange (reduceOnly, opposite side)
-    const isLong = Number(highPos?.positionAmt ?? highPos?.size ?? 0) >= 0;
-    const closeSide = highExchange === "binance" ? (isLong ? "SELL" : "BUY") : (isLong ? "Sell" : "Buy");
-    const price =
-      highExchange === "binance"
-        ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice)
-        : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice);
-    try {
-      if (highExchange === "binance") {
-        const positionSide = isLong ? "LONG" : "SHORT";
-        await binanceManager.placeIOCLimitOrder(keys.binance, sym, closeSide, qtyDiff, price, { positionSide, reduceOnly: true });
-      } else {
-        await bybitManager.placeIOCLimitOrder(keys.bybit, sym, closeSide, qtyDiff, price, { reduceOnly: true });
-      }
-      orderCircuitBreaker.recordOrderPlaced();
-      console.log("[TradeMonitor] Mismatch fix: reduced", qtyDiff, "on", highExchange, symbol);
-    } catch (e) {
-      console.warn("[TradeMonitor] Mismatch fix (reduce) failed", symbol, e?.message);
-    }
-  }
-
-  delete mismatchFirstSeen[symbol];
-  mismatchFixCooldownUntil[symbol] = Date.now() + MISMATCH_FIX_COOLDOWN_MS;
-}
-
 async function runMonitor() {
   const settings = await Setting.findOne().lean();
   if (!settings?.autoExitEnabled) return;
@@ -652,17 +552,50 @@ async function runMonitor() {
       }
     }
 
-    // Mismatch auto-fix: equalize quantities after 1 minute of persistent mismatch
-    const binanceQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
-    const bybitQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
-    if (binanceQty === bybitQty) {
-      delete mismatchFirstSeen[symbol];
-    } else {
-      if (mismatchFirstSeen[symbol] == null) {
+    // Mismatch auto-fix: equalize quantities after 1 minute of persistent mismatch (reduce on high side only)
+    const mismatchFirstSeen = (global.mismatchFirstSeen = global.mismatchFirstSeen || {});
+
+    const bQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
+    const byQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
+    const qtyDiff = Math.abs(bQty - byQty);
+
+    if (qtyDiff > 0.0001) {
+      if (!mismatchFirstSeen[symbol]) {
         mismatchFirstSeen[symbol] = now;
+        console.log(
+          `[TradeMonitor] Mismatch detected on ${symbol}: Binance ${bQty}, Bybit ${byQty}. Starting 60s timer.`
+        );
+      } else if (now - mismatchFirstSeen[symbol] > 60000) {
+        console.log(`[TradeMonitor] 60s elapsed for mismatch on ${symbol}. Attempting fix.`);
+
+        const lowExchange = bQty < byQty ? "binance" : "bybit";
+        const highExchange = bQty > byQty ? "binance" : "bybit";
+        const highPos = highExchange === "binance" ? binancePos : bybitPos;
+        const closeSide =
+          highExchange === "binance"
+            ? highPos.side === "BUY"
+              ? "SELL"
+              : "BUY"
+            : String(highPos.side || "").toLowerCase() === "buy"
+              ? "Sell"
+              : "Buy";
+
+        const posToReduce = { ...highPos, positionAmt: qtyDiff, size: qtyDiff };
+
+        try {
+          await closeOrphanPosition(keys, highExchange, symbol, posToReduce);
+          console.log(`[TradeMonitor] Mismatch fixed for ${symbol}: Reduced ${highExchange} by ${qtyDiff}`);
+          failedClosesUntil[symbol] = now + 30000;
+          delete mismatchFirstSeen[symbol];
+        } catch (e) {
+          console.error(`[TradeMonitor] Failed to fix mismatch for ${symbol}:`, e?.message ?? e);
+          failedClosesUntil[symbol] = now + 30000;
+        }
       }
-      if (now - mismatchFirstSeen[symbol] > MISMATCH_WINDOW_MS && now >= (mismatchFixCooldownUntil[symbol] || 0)) {
-        await fixQuantityMismatch(keys, settings, symbol, binancePos, bybitPos);
+    } else {
+      if (mismatchFirstSeen[symbol]) {
+        console.log(`[TradeMonitor] Mismatch resolved naturally for ${symbol}.`);
+        delete mismatchFirstSeen[symbol];
       }
     }
   }

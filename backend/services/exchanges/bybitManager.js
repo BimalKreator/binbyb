@@ -873,6 +873,17 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
   const sym = symbol.toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
 
+  if (opts.leverage != null) {
+    try {
+      await setLeverage(credentials, sym, opts.leverage);
+    } catch (e) {
+      console.log(
+        `[Bybit] Could not set leverage to ${opts.leverage} for ${sym}, proceeding anyway.`,
+        e?.message ?? e
+      );
+    }
+  }
+
   try {
     const data = await placeWSOrder(credentials, sym, sideNorm, qty, price, opts);
     return { result: data, retCode: 0, retMsg: "OK" };

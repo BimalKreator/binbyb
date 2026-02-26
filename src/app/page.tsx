@@ -228,6 +228,13 @@ export default function Home() {
       latestPnlRef.current[payload.symbol] = payload;
     });
 
+    socket.on("position_closed", (payload: { symbol: string }) => {
+      if (payload?.symbol) {
+        setPositions((prev) => prev.filter((row) => row.symbol !== payload.symbol));
+        setExpandedSymbol((prev) => (prev === payload.symbol ? null : prev));
+      }
+    });
+
     const renderInterval = setInterval(() => {
       const updates = latestPnlRef.current;
       if (Object.keys(updates).length > 0) {

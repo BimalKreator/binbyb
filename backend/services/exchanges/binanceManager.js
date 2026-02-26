@@ -839,8 +839,10 @@ async function placeIOCLimitOrder(credentials, symbol, side, quantity, price, op
     try {
       await setLeverage(credentials, sym, opts.leverage);
     } catch (e) {
-      console.error("[Binance] setLeverage failed", sym, "leverage", opts.leverage, "response:", e.response?.data);
-      throw e;
+      console.log(
+        `[Binance] Could not set leverage to ${opts.leverage} for ${sym}, proceeding anyway.`,
+        e?.message ?? e
+      );
     }
   }
 
