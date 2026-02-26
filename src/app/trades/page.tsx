@@ -26,7 +26,16 @@ type LogEntry = {
 };
 
 const LIMIT = 20;
-const apiOrigin = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+// Use HTTPS origin for production; WSS is used automatically over HTTPS
+function getSocketOrigin(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    if (window.location.hostname === "tradeictearner.online") return "https://tradeictearner.online";
+    return window.location.origin;
+  }
+  return "http://localhost:5000";
+}
+const apiOrigin = getSocketOrigin();
 
 function reasonColor(reason: string): string {
   switch (reason) {

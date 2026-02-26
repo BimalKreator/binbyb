@@ -1,7 +1,8 @@
 import axios, { type AxiosError } from "axios";
 
-const apiOrigin = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-const baseURL = `${apiOrigin.replace(/\/$/, "")}/api`;
+// Use relative "/api" when unset so Nginx can proxy on tradeictearner.online
+const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "";
+const baseURL = apiOrigin ? `${apiOrigin.replace(/\/$/, "")}/api` : "/api";
 
 export const api = axios.create({
   baseURL,

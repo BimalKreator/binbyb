@@ -27,15 +27,21 @@ const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/binbyb
 const app = express();
 const server = http.createServer(app);
 
+const CORS_ORIGINS = [
+  "https://tradeictearner.online",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+
 const io = new SocketServer(server, {
-  cors: { origin: true },
+  cors: { origin: CORS_ORIGINS },
   path: "/socket.io",
 });
 io.on("connection", (socket) => {
   socket.join("system-logs");
 });
 
-app.use(cors());
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
