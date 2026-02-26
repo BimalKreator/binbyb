@@ -10,10 +10,14 @@ const screener = require("./screener");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
 
 const ENTRY_BUFFER_MS = 60 * 1000; // 60 seconds per symbol before re-entry
+const STRICT_ENTRY_WINDOW_MS = 120000; // 2-minute window: only enter when countdown in [entryTimeMs - 2min, entryTimeMs]
 const DEFAULT_LEVERAGE = 5;
 
 /** Last entry timestamp per symbol to enforce buffer */
 const lastEntryTimeBySymbol = {};
+
+/** Cycle lock: symbol -> nextFundingTime. Prevents re-entry after exit until next funding. */
+const tradedCycles = {};
 
 /** Entry funding direction per symbol for funding-flip exit: { binanceHigher: boolean } */
 const entryFundingDirectionBySymbol = {};
@@ -152,13 +156,22 @@ async function runAutoEntry() {
   const nextFundingTime = top.nextFundingTime;
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return;
   const now = Date.now();
-  const timeRemaining = nextFundingTime - now;
-  if (timeRemaining <= 0) {
-    console.log(`[AutoTrader] Skipping: ${symbol} countdown expired (${timeRemaining}ms <= 0).`);
+  const countdownMs = nextFundingTime - now;
+
+  if (countdownMs > entryTimeMs) {
+    return; // Silently wait, too early
+  }
+  const windowEndMs = Math.max(0, entryTimeMs - STRICT_ENTRY_WINDOW_MS);
+  if (countdownMs < windowEndMs) {
+    console.log(`[AutoTrader] Skipped: ${symbol} missed the strict entry window. Waiting for next cycle.`);
     return;
   }
-  if (timeRemaining > entryTimeMs) {
-    console.log(`[AutoTrader] Waiting: ${symbol} countdown (${timeRemaining}ms) > Limit (${entryTimeMs}ms)`);
+  if (tradedCycles[symbol] === nextFundingTime) {
+    console.log(`[AutoTrader] Skipped: ${symbol} already traded for this cycle. Waiting for next funding.`);
+    return;
+  }
+  if (countdownMs <= 0) {
+    console.log(`[AutoTrader] Skipping: ${symbol} countdown expired (${countdownMs}ms <= 0).`);
     return;
   }
 
@@ -211,6 +224,8 @@ async function runAutoEntry() {
           return r;
         }),
       ]);
+      tradedCycles[symbol] = nextFundingTime;
+      console.log(`[AutoTrader] Locked ${symbol} for the current cycle. Will not re-enter until next funding time.`);
       lastEntryTimeBySymbol[top.symbol] = now;
       entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
       console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", qtyStr);
@@ -226,7 +241,7 @@ async function runAutoEntry() {
  */
 let intervalId = null;
 
-function start(intervalMs = 30000) {
+function start(intervalMs = 1000) {
   if (intervalId) return;
   intervalId = setInterval(runAutoEntry, intervalMs);
   console.log("[AutoTrader] Started, interval", intervalMs, "ms");

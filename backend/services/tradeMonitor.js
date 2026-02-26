@@ -410,8 +410,10 @@ async function runMonitor() {
     const bybitFunding = Number(token?.fundingBybit ?? bybitManager.getCachedFundingRate(symbol) ?? 0) || 0;
     const notionalBinance = Math.abs(Number(binancePos?.positionAmt ?? 0)) * (binanceManager.getMarkPrice(symbol) ?? 0);
     const notionalBybit = Math.abs(Number(bybitPos?.positionAmt ?? 0)) * (bybitManager.getMarkPrice(symbol) ?? 0);
-    const totalNextFundingAmount = notionalBinance * binanceFunding + notionalBybit * bybitFunding;
-    const isFundingFlipped = totalNextFundingAmount < 0;
+    const binanceFee = notionalBinance * binanceFunding;
+    const bybitFee = notionalBybit * bybitFunding;
+    const totalFundingIncome = -(binanceFee + bybitFee);
+    const isFundingFlipped = totalFundingIncome < 0;
     if (isFundingFlipped && nextFundingTime != null && Number.isFinite(nextFundingTime)) {
       const timeLeft = nextFundingTime - now;
       if (timeLeft <= FUNDING_WINDOW_MS) {

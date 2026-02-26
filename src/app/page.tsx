@@ -259,7 +259,11 @@ export default function Home() {
                   </div>
                   <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total Next Funding</p>
-                    <p className="text-lg font-semibold text-foreground">
+                    <p
+                      className={`text-lg font-semibold ${
+                        grandTotalNextFunding >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                      }`}
+                    >
                       {formatUsd(grandTotalNextFunding)}
                     </p>
                   </div>
@@ -305,7 +309,7 @@ export default function Home() {
                         >
                           {formatUsd(pnl)}
                         </span>
-                        <span className="text-slate-400 text-sm">
+                        <span className={`text-sm font-medium ${(totalFunding ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}>
                           Next fund: {formatUsd(totalFunding)}
                         </span>
                         <button
@@ -416,7 +420,11 @@ export default function Home() {
                                       >
                                         {formatUsd(safeLeg.unrealizedProfit ?? 0)}
                                       </td>
-                                      <td className="py-2 pr-2 text-right text-slate-300">
+                                      <td
+                                        className={`py-2 pr-2 text-right font-medium ${
+                                          (safeLeg.nextFundingAmount ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                                        }`}
+                                      >
                                         {formatUsd(safeLeg.nextFundingAmount ?? 0)}
                                       </td>
                                       <td className="py-2 pr-2 text-right text-slate-300">

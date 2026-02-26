@@ -168,9 +168,13 @@ router.get("/positions", async (req, res) => {
       const notionalBybit = Math.abs(bybitAmt) * (Number.isFinite(bybitMark) ? bybitMark : 0);
       const binanceFundingDecimal = Number(binanceFundingRate) || 0;
       const bybitFundingDecimal = Number(bybitFundingRate) || 0;
-      const binanceNextFundingAmount = notionalBinance * binanceFundingDecimal;
-      const bybitNextFundingAmount = notionalBybit * bybitFundingDecimal;
-      const totalNextFundingAmount = binanceNextFundingAmount + bybitNextFundingAmount;
+      const binanceFee = notionalBinance * binanceFundingDecimal;
+      const bybitFee = notionalBybit * bybitFundingDecimal;
+      const totalFundingIncome = -(binanceFee + bybitFee);
+      const isFundingFlipped = totalFundingIncome < 0;
+      const binanceNextFundingAmount = -binanceFee;
+      const bybitNextFundingAmount = -bybitFee;
+      const totalNextFundingAmount = totalFundingIncome;
 
       const combinedUnrealized =
         parseFloat(String(binancePos.unrealizedProfit ?? 0)) + parseFloat(String(bybitPos.unrealizedProfit ?? 0));
@@ -179,7 +183,7 @@ router.get("/positions", async (req, res) => {
       const combinedPnlPct = combinedMargin > 0 ? (combinedUnrealized / combinedMargin) * 100 : null;
 
       grandTotalPnl += combinedUnrealized;
-      grandTotalNextFundingAmount += totalNextFundingAmount;
+      grandTotalNextFundingAmount += totalFundingIncome;
 
       const token = rankedTokens.find((t) => String(t?.symbol || "").toUpperCase() === symbol);
       const nextFundingTime = token != null ? (token.nextFundingTime ?? null) : null;
@@ -190,7 +194,7 @@ router.get("/positions", async (req, res) => {
 
       positions.push({
         symbol,
-        isFundingFlipped: totalNextFundingAmount < 0,
+        isFundingFlipped,
         binance: {
           side: binancePos.side,
           positionSide: binancePos.positionSide,

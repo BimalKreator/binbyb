@@ -55,7 +55,7 @@ mongoose
       await new Promise((r) => setTimeout(r, 7000));
       const symbols = await startExchanges();
       screener.start(Array.isArray(symbols) ? symbols : undefined);
-      autoTrader.start(30000);
+      autoTrader.start(1000);
       tradeMonitor.start();
       server.listen(PORT, () => {
         console.log("Server running on port", PORT);
