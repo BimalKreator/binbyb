@@ -339,19 +339,18 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
           if (msg.topic.startsWith("tickers.") && d.symbol) {
             const sym = String(d.symbol).toUpperCase();
-            if (d.type === "snapshot") {
+            if (msg.type === "snapshot") {
               tickerStateBySymbol[sym] = { ...d };
-            } else if (d.type === "delta") {
-              if (!tickerStateBySymbol[sym]) tickerStateBySymbol[sym] = {};
-              Object.assign(tickerStateBySymbol[sym], d);
+            } else if (msg.type === "delta") {
+              Object.assign(tickerStateBySymbol[sym] || {}, d);
             } else {
               tickerStateBySymbol[sym] = { ...d };
             }
             const state = tickerStateBySymbol[sym];
             const mp =
-              state && state.markPrice != null
+              state && state.markPrice != null && state.markPrice !== ""
                 ? parseFloat(state.markPrice)
-                : state && state.lastPrice != null
+                : state && state.lastPrice != null && state.lastPrice !== ""
                   ? parseFloat(state.lastPrice)
                   : NaN;
             if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;

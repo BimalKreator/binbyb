@@ -116,14 +116,24 @@ async function computeQuantityChunks(allocatedMargin, leverage, currentTokenPric
 
 /**
  * Count symbols that have an open position on both exchanges (arbitrage pairs).
+ * Synchronous, in-memory only: uses getLivePositions() (no REST).
  */
-async function getOpenArbitrageCount(credentials) {
-  const [binanceSymbols, bybitSymbols] = await Promise.all([
-    binanceManager.getPositionSymbols(credentials.binance),
-    bybitManager.getPositionSymbols(credentials.bybit),
-  ]);
-  const bybitSet = new Set(bybitSymbols);
-  return binanceSymbols.filter((s) => bybitSet.has(s)).length;
+function getOpenArbitrageCount() {
+  const binanceList = binanceManager.getLivePositions() || [];
+  const bybitList = bybitManager.getLivePositions() || [];
+  const binanceSymbols = new Set(
+    binanceList
+      .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0) || 0) > 0)
+      .map((p) => String(p?.symbol ?? "").toUpperCase())
+      .filter(Boolean)
+  );
+  const bybitSymbols = new Set(
+    bybitList
+      .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0) || 0) > 0)
+      .map((p) => String(p?.symbol ?? "").toUpperCase())
+      .filter(Boolean)
+  );
+  return [...binanceSymbols].filter((s) => bybitSymbols.has(s)).length;
 }
 
 /**
@@ -158,7 +168,7 @@ async function runAutoEntry() {
   }
 
   const maxTrades = Math.max(0, Number(settings.maxTrades) || 0);
-  const openCount = await getOpenArbitrageCount(keys);
+  const openCount = getOpenArbitrageCount();
   if (openCount >= maxTrades) return;
 
   const rankedTokens = screener.getRankedTokens();
