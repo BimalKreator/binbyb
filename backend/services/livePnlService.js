@@ -72,7 +72,7 @@ function refreshPositionCache() {
     const bybitQty = Math.abs(parseFloat(bybitPos.positionAmt) || 0);
     if (binanceQty <= 0 && bybitQty <= 0) continue;
     const binanceEntry = parseFloat(String(binancePos.entryPrice ?? 0)) || 0;
-    const bybitEntry = parseFloat(String(bybitPos.entryPrice ?? 0)) || 0;
+    const bybitEntry = parseFloat(String(bybitPos.avgPrice ?? bybitPos.entryPrice ?? 0)) || 0;
     const binanceDirection = (parseFloat(String(binancePos.positionAmt ?? 0)) || 0) > 0 ? 1 : -1;
     const bybitSide = String(bybitPos.side ?? "").trim();
     const binanceNativePnL = parseFloat(binancePos.unRealizedProfit ?? binancePos.unrealizedProfit) || 0;

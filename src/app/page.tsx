@@ -201,22 +201,18 @@ export default function Home() {
     const { io } = require("socket.io-client");
     const apiUrl = getSocketOrigin();
 
-    // Connect to correct backend origin
     const socket = io(apiUrl, {
       path: "/socket.io",
       transports: ["websocket", "polling"],
     });
 
     socket.on("connect", () => console.log("🟢 Frontend WS Connected to Backend!"));
-    socket.on("connect_error", (err: any) => console.error("🔴 WS Connection Error:", err.message));
 
-    // 1. Listen and store payload silently (NO re-renders here)
     socket.on("live_pnl_update", (payload: any) => {
       if (!payload || !payload.symbol) return;
       latestPnlRef.current[payload.symbol] = payload;
     });
 
-    // 2. Throttle renders to 10 FPS (100ms)
     const renderInterval = setInterval(() => {
       const updates = latestPnlRef.current;
       if (Object.keys(updates).length > 0) {
@@ -240,7 +236,6 @@ export default function Home() {
             };
           })
         );
-        // Clear the queue after flushing to state
         latestPnlRef.current = {};
       }
     }, 100);
