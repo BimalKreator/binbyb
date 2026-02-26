@@ -864,7 +864,7 @@ function stop() {
   exchangeInfoAndLeverageLoadPromise = null;
   leverageBracketAttempted = false;
   fundingInfoLoadPromise = null;
-  cachedFundingInfo = null;
+  fundingInfoLoaded = false;
   Object.keys(fundingIntervalCache).forEach((k) => delete fundingIntervalCache[k]);
   Object.keys(lastFundingTimeCache).forEach((k) => delete lastFundingTimeCache[k]);
   cachedWalletBalance = 0;
@@ -1003,44 +1003,65 @@ async function getPerpetualSymbols() {
     .map((s) => s.symbol);
 }
 
-/** One-time load: full array from GET /fapi/v1/fundingInfo. No per-symbol REST. */
-let cachedFundingInfo = null;
+/** One-time load: single bulk GET /fapi/v1/fundingInfo. No per-symbol REST, no loop over API. */
+let fundingInfoLoaded = false;
 let fundingInfoLoadPromise = null;
-/** Symbol -> interval hours (1,2,4,8) derived from cachedFundingInfo. */
+/** Symbol -> interval hours (1,2,4,8). Populated by ensureFundingInfoLoaded and by WS markPriceUpdate. */
 let fundingIntervalCache = {};
 
+const FUNDING_INFO_RETRY_MAX = 3;
+const FUNDING_INFO_RETRY_DELAY_MS = 60000;
+
 /**
- * Make EXACTLY ONE unparameterized GET /fapi/v1/fundingInfo and store in cachedFundingInfo.
+ * Make EXACTLY ONE unparameterized GET /fapi/v1/fundingInfo. Single bulk call; iterate in memory only.
+ * Retry on 429/418 to avoid IP ban. Do NOT put the API call inside a loop.
  */
 async function ensureFundingInfoLoaded() {
-  if (cachedFundingInfo != null) return;
+  if (fundingInfoLoaded) return;
   if (fundingInfoLoadPromise) return fundingInfoLoadPromise;
   fundingInfoLoadPromise = (async () => {
-    try {
-      const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
-      const list = Array.isArray(data) ? data : [];
-      cachedFundingInfo = list;
-      for (const item of list) {
-        const sym = (item.symbol || "").toUpperCase();
-        if (!sym) continue;
-        const parsedHours = parseInt(item.fundingIntervalHours, 10);
-        fundingIntervalCache[sym] = !Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours) ? parsedHours : 8;
+    for (let attempt = 1; attempt <= FUNDING_INFO_RETRY_MAX; attempt++) {
+      try {
+        const response = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
+        const data = response?.data;
+        if (Array.isArray(data)) {
+          data.forEach((item) => {
+            const parsedHours = parseInt(item.fundingIntervalHours, 10);
+            if (!Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours)) {
+              fundingIntervalCache[item.symbol] = parsedHours;
+            }
+          });
+          fundingInfoLoaded = true;
+          return;
+        }
+      } catch (e) {
+        const status = e?.response?.status;
+        const isRetryable = status === 429 || status === 418;
+        if (isRetryable && attempt < FUNDING_INFO_RETRY_MAX) {
+          const delay = e?.response?.headers?.["retry-after"]
+            ? Math.min(120, parseInt(String(e.response.headers["retry-after"]), 10) || 60) * 1000
+            : FUNDING_INFO_RETRY_DELAY_MS;
+          console.warn("[Binance] fundingInfo rate limited (", status, "), retry in", delay / 1000, "s, attempt", attempt);
+          await new Promise((r) => setTimeout(r, delay));
+        } else {
+          console.warn("[Binance] One-time fundingInfo load failed:", e?.message || e);
+          break;
+        }
       }
-    } catch (e) {
-      console.warn("[Binance] One-time fundingInfo load failed:", e.message);
-    } finally {
-      fundingInfoLoadPromise = null;
     }
-  })();
+  })().finally(() => {
+    fundingInfoLoadPromise = null;
+  });
   return fundingInfoLoadPromise;
 }
 
 /**
- * Get funding interval hours (1, 2, 4, or 8) from WebSocket-updated cache only. No REST. Default 8 if symbol not found.
+ * Get funding interval hours (1, 2, 4, or 8) from cache (bulk fundingInfo + WS updates). Returns null if symbol not in cache.
  */
 function getFundingIntervalHours(symbol) {
   const sym = String(symbol || "").toUpperCase();
-  return fundingIntervalCache[sym] ?? 8;
+  const v = fundingIntervalCache[sym];
+  return v != null ? v : null;
 }
 
 /**
