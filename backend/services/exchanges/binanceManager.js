@@ -355,6 +355,8 @@ const lastFundingEmitBySymbol = {};
 const lastMarkPriceBySymbol = {};
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
+/** Previous nextFundingTime per symbol; used to compute interval = nextFundingTime - lastFundingTime when T changes. */
+const lastFundingTimeCache = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -426,9 +428,16 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             nextFundingTime,
           };
           if (nextFundingTime != null && Number.isFinite(nextFundingTime)) {
-            const intervalMs = nextFundingTime - Date.now();
-            const hoursUntilNext = intervalMs / (1000 * 60 * 60);
-            fundingIntervalCache[s] = intervalHoursFromHoursUntilNext(hoursUntilNext);
+            if (!lastFundingTimeCache[s]) {
+              lastFundingTimeCache[s] = nextFundingTime;
+            } else if (lastFundingTimeCache[s] !== nextFundingTime) {
+              const intervalMs = nextFundingTime - lastFundingTimeCache[s];
+              const calculatedHours = Math.round(intervalMs / 3600000);
+              if ([1, 2, 4, 8].includes(calculatedHours)) {
+                fundingIntervalCache[s] = calculatedHours;
+              }
+              lastFundingTimeCache[s] = nextFundingTime;
+            }
           }
         }
         if (!onFundingUpdate || !s) return;
@@ -851,6 +860,7 @@ function stop() {
   fundingInfoLoadPromise = null;
   cachedFundingInfo = null;
   Object.keys(fundingIntervalCache).forEach((k) => delete fundingIntervalCache[k]);
+  Object.keys(lastFundingTimeCache).forEach((k) => delete lastFundingTimeCache[k]);
   cachedWalletBalance = 0;
   Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
@@ -906,6 +916,7 @@ async function start(credentials, options = {}) {
   publicStopped = false;
   publicReconnectAttempts = 0;
   await ensureExchangeInfoAndLeverageLoaded(credentials);
+  await ensureFundingInfoLoaded();
   const symbols = options.symbols || DEFAULT_SYMBOLS;
   openPublicStreams(symbols);
   await startPrivateStream(credentials);
@@ -1045,7 +1056,8 @@ async function getPremiumIndex() {
       const nextFundingTime = item.nextFundingTime != null ? Number(item.nextFundingTime) : null;
       const lastFundingRate = item.lastFundingRate != null ? parseFloat(item.lastFundingRate) : 0;
       const markPrice = item.markPrice != null ? parseFloat(item.markPrice) : 0;
-      return { symbol, nextFundingTime, lastFundingRate, markPrice };
+      const eventTime = item.time != null ? Number(item.time) : null;
+      return { symbol, nextFundingTime, lastFundingRate, markPrice, eventTime };
     }).filter((r) => r.symbol);
   } catch (e) {
     console.warn("[Binance] getPremiumIndex failed", e.message);
@@ -1054,14 +1066,13 @@ async function getPremiumIndex() {
 }
 
 /**
- * Pure function: map (nextFundingTime - now) / 3600000 to interval bucket 1, 2, 4, or 8.
- * Uses 20% margin on each bucket for time drift (1.2, 2.4, 4.8).
+ * Pure function: map (nextFundingTime - eventTime) / 3600000 to interval bucket 1, 2, 4, or 8.
  */
 function intervalHoursFromHoursUntilNext(hoursUntilNext) {
   if (hoursUntilNext == null || !Number.isFinite(hoursUntilNext) || hoursUntilNext <= 0) return 8;
-  if (hoursUntilNext <= 1.2) return 1;   // 1h + 20%
-  if (hoursUntilNext <= 2.4) return 2;   // 2h + 20%
-  if (hoursUntilNext <= 4.8) return 4;   // 4h + 20%
+  if (hoursUntilNext <= 1.5) return 1;
+  if (hoursUntilNext <= 3.0) return 2;
+  if (hoursUntilNext <= 5.5) return 4;
   return 8;
 }
 

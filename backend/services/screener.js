@@ -48,18 +48,11 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Compute interval (1h, 2h, 4h, 8h) dynamically. When cache is 8 or null and nextFundingTime is present,
- * MUST return the calculated value immediately — never leads to Loading.
+ * Interval from manager cache only. No math in the screener.
  */
 function computeIntervalHours(symbol, nextFundingTime, source) {
-  if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return 8;
-  if (source === "binance") {
-    const fromCache = binanceManager.getFundingIntervalHours(symbol);
-    if (fromCache != null && fromCache !== 8) return fromCache;
-    const hoursUntilNext = (nextFundingTime - Date.now()) / 3600000;
-    return binanceManager.intervalHoursFromHoursUntilNext(hoursUntilNext);
-  }
-  return 8; // Bybit or fallback
+  if (source === "binance") return binanceManager.getFundingIntervalHours(symbol) || 8;
+  return 8;
 }
 
 async function fetchAndCacheMaxLeverage(symbol) {
@@ -164,8 +157,8 @@ async function runScreener() {
       let binanceIntervalHours = null;
       let bybitIntervalHours = null;
       try {
-        if (nextBin != null) binanceIntervalHours = await computeIntervalHours(symbol, nextBin, "binance");
-        if (nextByb != null) bybitIntervalHours = await computeIntervalHours(symbol, nextByb, "bybit");
+        if (nextBin != null) binanceIntervalHours = computeIntervalHours(symbol, nextBin, "binance");
+        if (nextByb != null) bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
       } catch (_) {
         // keep null → will become 'Loading'
       }
@@ -255,8 +248,7 @@ function onBybitFunding(data) {
 }
 
 /**
- * Hydrate Binance funding from ONE batch getPremiumIndex. Intervals are computed immediately
- * from nextFundingTime via intervalHoursFromHoursUntilNext — no position cache, no WS wait.
+ * Hydrate Binance funding from ONE batch getPremiumIndex. Intervals from manager cache (fundingInfo + WS).
  * @param {string[]} commonSymbols - Symbols that exist on both Binance and Bybit
  */
 async function hydrateBinanceDataFromPremiumIndex(commonSymbols) {
@@ -269,19 +261,14 @@ async function hydrateBinanceDataFromPremiumIndex(commonSymbols) {
       const sym = String(item.symbol || "").toUpperCase();
       if (!symbolSet.has(sym)) continue;
       const nextFundingTime = item.nextFundingTime ?? null;
-      const hours = nextFundingTime != null && Number.isFinite(nextFundingTime)
-        ? (nextFundingTime - now) / 3600000
-        : null;
-      const intervalHours = hours != null && Number.isFinite(hours)
-        ? binanceManager.intervalHoursFromHoursUntilNext(hours)
-        : 8;
+      const intervalHours = binanceManager.getFundingIntervalHours(sym) || 8;
       intervalHoursCache[sym] = intervalHours;
       intervalDisplayCache[sym] = intervalHoursToLabel(intervalHours);
       binanceData[sym] = {
         fundingRate: item.lastFundingRate ?? 0,
         nextFundingTime,
         markPrice: item.markPrice ?? 0,
-        eventTime: now,
+        eventTime: item.eventTime ?? item.time ?? now,
         intervalHours,
       };
     }
