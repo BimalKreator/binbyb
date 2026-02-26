@@ -159,17 +159,41 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   });
   if (binanceOk || bybitOk) {
     autoTrader.clearEntryFundingDirection(sym);
-    const entryPrice = fallbackMarkPrice;
     const exitPrice = fallbackMarkPrice;
-    TradeLog.create({
-      symbol: sym,
-      entryPrice,
-      exitPrice,
-      pnl: combinedPnl,
-      reason: reason === "SL" ? "SL" : "Target",
-      side: binancePos.side === "BUY" ? "long" : "short",
-      exchange: "binance+bybit",
-    }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));
+    const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const reasonStr = reason === "SL" ? "SL" : "Target";
+    const sideStr = binancePos.side === "BUY" ? "long" : "short";
+    const binancePnl = Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : combinedPnl / 2;
+    const bybitPnl = Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : combinedPnl / 2;
+    const legs = [
+      {
+        symbol: sym,
+        entryPrice: fallbackMarkPrice,
+        exitPrice,
+        pnl: binancePnl,
+        reason: reasonStr,
+        side: sideStr,
+        exchange: "Binance",
+        groupId,
+        requestedEntryPrice: binancePrice,
+        executedEntryPrice: exitPrice,
+        fee: 0,
+      },
+      {
+        symbol: sym,
+        entryPrice: fallbackMarkPrice,
+        exitPrice,
+        pnl: bybitPnl,
+        reason: reasonStr,
+        side: sideStr,
+        exchange: "Bybit",
+        groupId,
+        requestedEntryPrice: bybitPrice,
+        executedEntryPrice: exitPrice,
+        fee: 0,
+      },
+    ];
+    TradeLog.insertMany(legs).catch((e) => console.error("[TradeMonitor] TradeLog insertMany failed", e.message));
   }
   return { binanceOk, bybitOk };
 }
@@ -242,6 +266,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
 
   autoTrader.clearEntryFundingDirection(sym);
   const unrealized = Number.isFinite(pos?.unrealizedProfit) ? pos.unrealizedProfit : 0;
+  const exchangeName = exchange === "binance" ? "Binance" : "Bybit";
   TradeLog.create({
     symbol: sym,
     entryPrice: fallbackMarkPrice,
@@ -249,7 +274,11 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
     pnl: unrealized,
     reason: "Orphan",
     side: isLong ? "long" : "short",
-    exchange,
+    exchange: exchangeName,
+    groupId: null,
+    requestedEntryPrice: price,
+    executedEntryPrice: fallbackMarkPrice,
+    fee: 0,
   }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));
   console.log("[TradeMonitor] Orphan closed", exchange, sym);
 }

@@ -199,23 +199,49 @@ router.post("/close-all", async (req, res) => {
       }
     }
 
-    const totalUnrealized =
-      (binancePositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0) +
-      (bybitPositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
+    const binanceUnrealized = (binancePositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
+    const bybitUnrealized = (bybitPositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
     const snapshot = screener.getSnapshot();
     const token = (snapshot?.rankedTokens || []).find((t) => String(t?.symbol || "").toUpperCase() === sym);
     const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
     const entryPrice = markPrice > 0 ? markPrice : 0;
     const exitPrice = markPrice > 0 ? markPrice : 0;
-    TradeLog.create({
-      symbol: sym,
-      entryPrice,
-      exitPrice,
-      pnl: totalUnrealized,
-      reason: "Manual",
-      side: (binancePositions?.[0]?.side === "BUY" || bybitPositions?.[0]?.side?.toLowerCase() === "buy") ? "long" : "short",
-      exchange: "binance+bybit",
-    }).catch((e) => console.error("[Trade/close-all] TradeLog create failed", e.message));
+    const sideStr = (binancePositions?.[0]?.side === "BUY" || bybitPositions?.[0]?.side?.toLowerCase() === "buy") ? "long" : "short";
+    const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const legs = [];
+    if (binancePositions.length > 0) {
+      legs.push({
+        symbol: sym,
+        entryPrice,
+        exitPrice,
+        pnl: binanceUnrealized,
+        reason: "Manual",
+        side: sideStr,
+        exchange: "Binance",
+        groupId,
+        requestedEntryPrice: exitPrice,
+        executedEntryPrice: exitPrice,
+        fee: 0,
+      });
+    }
+    if (bybitPositions.length > 0) {
+      legs.push({
+        symbol: sym,
+        entryPrice,
+        exitPrice,
+        pnl: bybitUnrealized,
+        reason: "Manual",
+        side: sideStr,
+        exchange: "Bybit",
+        groupId,
+        requestedEntryPrice: exitPrice,
+        executedEntryPrice: exitPrice,
+        fee: 0,
+      });
+    }
+    if (legs.length > 0) {
+      TradeLog.insertMany(legs).catch((e) => console.error("[Trade/close-all] TradeLog insertMany failed", e.message));
+    }
 
     autoTrader.clearEntryFundingDirection(sym);
     await Promise.all([

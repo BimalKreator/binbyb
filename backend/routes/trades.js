@@ -35,6 +35,10 @@ router.get("/history", async (req, res) => {
       exitTime: t.exitTime,
       side: t.side || "",
       exchange: t.exchange || "",
+      groupId: t.groupId ?? null,
+      requestedEntryPrice: t.requestedEntryPrice ?? null,
+      executedEntryPrice: t.executedEntryPrice ?? null,
+      fee: t.fee ?? 0,
     }));
 
     return res.json({

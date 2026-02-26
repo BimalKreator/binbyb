@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
@@ -16,20 +16,65 @@ type FundLogRecord = {
   createdAt: string;
 };
 
+type WalletData = {
+  totalWalletBalance: number;
+  availableBalance: number;
+  totalPositionInitialMargin: number;
+};
+
+type MetricsData = {
+  binanceWallet?: WalletData;
+  bybitWallet?: WalletData;
+};
+
 const inputClass =
   "h-10 w-full rounded-lg border border-slate-600 bg-slate-800/50 px-3 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm";
 const labelClass = "text-sm text-slate-400 mb-1 block";
+
+const POLL_MS = 2000;
+
+function formatUsd(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
 
 export default function FundsPage() {
   const [fundLogs, setFundLogs] = useState<FundLogRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [metrics, setMetrics] = useState<MetricsData>({});
+
   const [type, setType] = useState<"deposit" | "withdrawal">("deposit");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USDT");
   const [exchange, setExchange] = useState("");
   const [txId, setTxId] = useState("");
+
+  const fetchMetrics = useCallback(() => {
+    api
+      .get<{ success: boolean; data: MetricsData }>("/dashboard/metrics")
+      .then(({ data }) => {
+        if (data.success && data.data) {
+          setMetrics({
+            binanceWallet: data.data.binanceWallet,
+            bybitWallet: data.data.bybitWallet,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, POLL_MS);
+    return () => clearInterval(interval);
+  }, [fetchMetrics]);
 
   useEffect(() => {
     api
@@ -71,12 +116,65 @@ export default function FundsPage() {
     }
   };
 
+  const binanceWallet = metrics.binanceWallet;
+  const bybitWallet = metrics.bybitWallet;
+
   return (
     <div className="flex flex-col flex-1 min-h-0 w-full max-w-[100vw] overflow-x-hidden px-4 py-4">
       <h2 className="text-lg font-semibold text-foreground mb-2 shrink-0">Fund Management</h2>
-      <p className="text-sm text-slate-400 mb-6 shrink-0">
+      <p className="text-sm text-slate-400 mb-4 shrink-0">
         Record manual deposits and withdrawals. History is loaded from the server.
       </p>
+
+      {/* Real-time wallet cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6 shrink-0">
+        <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+          <h3 className="text-sm font-medium text-amber-400/90 mb-3">Binance</h3>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Actual Balance</dt>
+              <dd className="font-medium text-foreground tabular-nums">
+                {binanceWallet ? formatUsd(binanceWallet.totalWalletBalance) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Available Balance</dt>
+              <dd className="font-medium text-emerald-400/90 tabular-nums">
+                {binanceWallet ? formatUsd(binanceWallet.availableBalance) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Used Margin</dt>
+              <dd className="font-medium text-slate-300 tabular-nums">
+                {binanceWallet ? formatUsd(binanceWallet.totalPositionInitialMargin) : "—"}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+          <h3 className="text-sm font-medium text-sky-400/90 mb-3">Bybit</h3>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Actual Balance</dt>
+              <dd className="font-medium text-foreground tabular-nums">
+                {bybitWallet ? formatUsd(bybitWallet.totalWalletBalance) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Available Balance</dt>
+              <dd className="font-medium text-emerald-400/90 tabular-nums">
+                {bybitWallet ? formatUsd(bybitWallet.availableBalance) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <dt className="text-slate-500">Used Margin</dt>
+              <dd className="font-medium text-slate-300 tabular-nums">
+                {bybitWallet ? formatUsd(bybitWallet.totalPositionInitialMargin) : "—"}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
 
       {/* Entry form */}
       <section className="mb-8 shrink-0">

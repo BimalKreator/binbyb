@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
@@ -16,6 +16,10 @@ type TradeRecord = {
   exitTime: string;
   side: string;
   exchange: string;
+  groupId?: string | null;
+  requestedEntryPrice?: number | null;
+  executedEntryPrice?: number | null;
+  fee?: number;
 };
 
 type LogEntry = {
@@ -66,6 +70,17 @@ export default function TradesPage() {
   const logsBottomRef = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+
+  /** Group trades by groupId; legacy/single-leg trades become a group of one. */
+  const tradeGroups = useMemo(() => {
+    const map = new Map<string, TradeRecord[]>();
+    for (const t of trades) {
+      const key = t.groupId ?? `${t.symbol}-${t.exitTime}-${t._id}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(t);
+    }
+    return Array.from(map.values());
+  }, [trades]);
 
   useEffect(() => {
     if (tradesTab !== "history") return;
@@ -200,45 +215,86 @@ export default function TradesPage() {
         <Receipt className="w-5 h-5" />
         Trade History
       </h2>
-      <p className="text-sm text-slate-400 mb-4">Closed trades with reason and PnL.</p>
+      <p className="text-sm text-slate-400 mb-4">Arbitrage legs grouped by trade. Combined PnL and fees per group.</p>
 
       {loading ? (
         <div className="flex justify-center py-8">
           <Loader />
         </div>
-      ) : trades.length === 0 ? (
+      ) : tradeGroups.length === 0 ? (
         <p className="text-sm text-slate-500 py-6">No trades yet.</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-slate-700">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-700 bg-slate-800/50">
-                  <th className="text-left py-2 px-3 text-slate-400 font-medium">Symbol</th>
-                  <th className="text-right py-2 px-3 text-slate-400 font-medium">Entry</th>
-                  <th className="text-right py-2 px-3 text-slate-400 font-medium">Exit</th>
-                  <th className="text-left py-2 px-3 text-slate-400 font-medium">Reason</th>
-                  <th className="text-right py-2 px-3 text-slate-400 font-medium">PnL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map((t) => (
-                  <tr key={t._id} className="border-b border-slate-700/50 hover:bg-slate-800/30">
-                    <td className="py-2 px-3 text-foreground">{t.symbol}</td>
-                    <td className="py-2 px-3 text-right text-slate-300">{t.entryPrice != null ? Number(t.entryPrice).toFixed(4) : "—"}</td>
-                    <td className="py-2 px-3 text-right text-slate-300">{t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : "—"}</td>
-                    <td className="py-2 px-3">
-                      <span className={`inline-block px-2 py-0.5 rounded ${reasonColor(t.reason || "Manual")}`}>
-                        {t.reason || "Manual"}
+          <div className="space-y-4">
+            {tradeGroups.map((group) => {
+              const first = group[0];
+              const symbol = first?.symbol ?? "";
+              const reason = first?.reason ?? "Manual";
+              const exitTime = first?.exitTime ? new Date(first.exitTime).toLocaleString() : "";
+              const combinedPnl = group.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
+              const totalFees = group.reduce((s, t) => s + (Number(t.fee) ?? 0), 0);
+              const isLegacy = group.length === 1 && (first?.exchange === "binance+bybit" || !first?.groupId);
+
+              return (
+                <div key={group.map((t) => t._id).join("-")} className="rounded-lg border border-slate-700 bg-slate-800/30 overflow-hidden">
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-700 bg-slate-800/50">
+                    <span className="font-medium text-foreground">{symbol}</span>
+                    <span className="text-slate-500 text-xs">{exitTime}</span>
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs ${reasonColor(reason)}`}>{reason}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-700/70">
+                          <th className="text-left py-1.5 px-3 text-slate-500 font-medium text-xs">Exchange</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Requested</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Executed</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Exit</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">PnL</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Fee</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.map((t) => (
+                          <tr key={t._id} className="border-b border-slate-700/50 last:border-b-0">
+                            <td className="py-1.5 px-3 text-foreground">
+                              {isLegacy ? (t.exchange || "—") : t.exchange}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
+                              {t.requestedEntryPrice != null ? Number(t.requestedEntryPrice).toFixed(4) : "—"}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
+                              {t.executedEntryPrice != null ? Number(t.executedEntryPrice).toFixed(4) : "—"}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
+                              {t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : "—"}
+                            </td>
+                            <td className={`py-1.5 px-3 text-right font-medium tabular-nums ${t.pnl != null && t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-400 tabular-nums">
+                              {t.fee != null && t.fee !== 0 ? Number(t.fee).toFixed(4) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end gap-6 px-3 py-2 border-t border-slate-700 bg-slate-800/50 text-sm">
+                    <span>
+                      <span className="text-slate-500">Combined PnL: </span>
+                      <span className={combinedPnl >= 0 ? "text-emerald-400 font-medium" : "text-red-400 font-medium"}>
+                        {combinedPnl >= 0 ? `+${combinedPnl.toFixed(2)}` : combinedPnl.toFixed(2)}
                       </span>
-                    </td>
-                    <td className={`py-2 px-3 text-right font-medium ${t.pnl != null && t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                      {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </span>
+                    <span>
+                      <span className="text-slate-500">Total Fees: </span>
+                      <span className="text-slate-300 font-medium">{totalFees.toFixed(4)}</span>
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex items-center justify-between mt-4">

@@ -62,6 +62,22 @@ router.get("/metrics", async (req, res) => {
     const val = bybitManager.getBalance();
     const bybitBalance = Number.isFinite(val) ? val : 0;
 
+    // Wallet details for Funds page: Actual (total), Available, Used Margin per exchange
+    const binancePositions = keys?.binance?.apiKey ? binanceManager.getLivePositions() || [] : [];
+    const bybitPositions = keys?.bybit?.apiKey ? bybitManager.getLivePositions() || [] : [];
+    const binanceUsedMargin = binancePositions.reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+    const bybitUsedMargin = bybitPositions.reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+    const binanceWallet = {
+      totalWalletBalance: Number.isFinite(binanceBalance) ? binanceBalance : 0,
+      availableBalance: Math.max(0, (Number(binanceBalance) || 0) - binanceUsedMargin),
+      totalPositionInitialMargin: binanceUsedMargin,
+    };
+    const bybitWallet = {
+      totalWalletBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
+      availableBalance: Math.max(0, (Number(bybitBalance) || 0) - bybitUsedMargin),
+      totalPositionInitialMargin: bybitUsedMargin,
+    };
+
     const totalCapital = binanceBalance + bybitBalance;
     const currentBalance = totalCapital;
 
@@ -90,6 +106,8 @@ router.get("/metrics", async (req, res) => {
       data: {
         binanceBalance: Number.isFinite(binanceBalance) ? binanceBalance : 0,
         bybitBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
+        binanceWallet,
+        bybitWallet,
         totalCapital,
         currentBalance,
         openingBalance,
