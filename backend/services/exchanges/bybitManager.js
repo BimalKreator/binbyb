@@ -789,6 +789,46 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
   return res.data;
 }
 
+/**
+ * Set leverage for a symbol via Bybit V5 REST. Used before entry so orders use correct leverage.
+ * Ignores 110043 (leverage not modified) so it doesn't block the trade.
+ */
+async function setLeverage(credentials, symbol, leverage) {
+  if (!credentials?.apiKey || !credentials?.apiSecret) return;
+  const sym = String(symbol || "").toUpperCase();
+  const levStr = String(Math.max(1, Math.min(125, Number(leverage) || 1)));
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const body = {
+    category: "linear",
+    symbol: sym,
+    buyLeverage: levStr,
+    sellLeverage: levStr,
+  };
+  const rawBody = JSON.stringify(body);
+  const signStr = String(timestamp) + credentials.apiKey + String(recvWindow) + rawBody;
+  const signature = signMessage(signStr, credentials.apiSecret);
+  try {
+    const res = await bybitPrivateAxios.post(`${REST_BASE}/v5/position/set-leverage`, body, {
+      headers: {
+        "X-BAPI-API-KEY": credentials.apiKey,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+      },
+    });
+    const retCode = res.data?.retCode;
+    if (retCode === 110043) return;
+    if (retCode !== 0 && retCode != null) {
+      console.warn("[Bybit] setLeverage", sym, "retCode", retCode, res.data?.retMsg);
+    }
+  } catch (e) {
+    const code = e.response?.data?.retCode;
+    if (code === 110043) return;
+    console.warn("[Bybit] setLeverage failed", sym, e.response?.data?.retMsg || e.message);
+  }
+}
+
 function stop() {
   publicStopped = true;
   if (publicReconnectTimer) {
@@ -992,6 +1032,7 @@ module.exports = {
   start,
   stop,
   placeIOCLimitOrder,
+  setLeverage,
   placeWSOrder,
   placeMarketCloseOrder,
   getCredentials: () => privateCredentials,

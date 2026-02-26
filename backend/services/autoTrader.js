@@ -212,7 +212,7 @@ async function runAutoEntry() {
 
   isExecutingTrade = true;
   try {
-    // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
+    await bybitManager.setLeverage(keys.bybit, top.symbol, levInt);
     for (const qtyStr of chunks) {
       if (!orderCircuitBreaker.canPlaceOrder()) {
         console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);

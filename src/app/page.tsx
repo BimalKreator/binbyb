@@ -368,7 +368,6 @@ export default function Home() {
                                   <th className="py-2 pr-2 font-medium text-right">Liq. Price</th>
                                   <th className="py-2 pr-2 font-medium text-right">PnL</th>
                                   <th className="py-2 pr-2 font-medium text-right">Next Fund</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Margin</th>
                                   <th className="py-2 font-medium text-right">Fees</th>
                                 </tr>
                               </thead>
@@ -450,9 +449,6 @@ export default function Home() {
                                         }`}
                                       >
                                         {formatUsd(safeLeg.nextFundingAmount ?? 0)}
-                                      </td>
-                                      <td className="py-2 pr-2 text-right text-slate-300">
-                                        {formatUsd(safeLeg.marginUsed ?? 0)}
                                       </td>
                                       <td className="py-2 text-right text-slate-400">
                                         {formatUsd(safeLeg.exchangeFees ?? 0)}
