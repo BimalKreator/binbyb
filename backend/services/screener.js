@@ -157,15 +157,9 @@ async function runScreener() {
       let bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
 
       const binanceIntervalString = intervalHoursToLabel(binanceIntervalHours);
-      const bybitIntervalString = intervalHoursToLabel(bybitIntervalHours);
-
-      const bothMatch = binanceIntervalString === bybitIntervalString;
-      if (!bothMatch) {
-        continue; // only drop when both resolved and different
-      }
-
+      // Use Binance as authoritative interval source. Bybit usually matches Binance's schedule.
       const intervalDisplay = binanceIntervalString;
-      const intervalHours = binanceIntervalHours ?? bybitIntervalHours ?? 8;
+      const intervalHours = binanceIntervalHours ?? 8;
 
       intervalHoursCache[symbol] = intervalHours;
       intervalDisplayCache[symbol] = intervalDisplay;
