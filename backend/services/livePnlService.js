@@ -23,6 +23,7 @@ const positionCache = Object.create(null);
 const markPriceCache = Object.create(null);
 
 let positionCacheIntervalId = null;
+let heartbeatIntervalId = null;
 
 function toUpperSymbol(value) {
   return String(value || "").toUpperCase();
@@ -90,19 +91,13 @@ function refreshPositionCache() {
 }
 
 /**
- * Mark price tick handler: ONLY local math, ZERO network, ZERO manager reads.
- * - Updates markPriceCache from the tick payload.
- * - Reads position from positionCache.
- * - Computes PnL and emits.
+ * Compute PnL from cached entry prices and mark prices, then emit live_pnl_update.
+ * Synchronous; uses only positionCache and markPriceCache (and manager getMarkPrice fallback).
+ * Reused by both the tick handler and the heartbeat.
  */
-function onMarkPriceTick(symbol, markPrice, source) {
-  if (!io || !symbol || markPrice == null || !Number.isFinite(markPrice)) return;
-
+function computeAndEmitPnL(symbol) {
+  if (!io) return;
   const sym = toUpperSymbol(symbol);
-  if (!markPriceCache[sym]) markPriceCache[sym] = { binance: 0, bybit: 0 };
-  if (source === "binance") markPriceCache[sym].binance = markPrice;
-  else if (source === "bybit") markPriceCache[sym].bybit = markPrice;
-
   const pos = positionCache[sym];
   if (!pos) return;
 
@@ -140,6 +135,20 @@ function onMarkPriceTick(symbol, markPrice, source) {
   });
 }
 
+/**
+ * Mark price tick handler: update markPriceCache from the tick payload, then compute and emit PnL.
+ */
+function onMarkPriceTick(symbol, markPrice, source) {
+  if (!symbol || markPrice == null || !Number.isFinite(markPrice)) return;
+
+  const sym = toUpperSymbol(symbol);
+  if (!markPriceCache[sym]) markPriceCache[sym] = { binance: 0, bybit: 0 };
+  if (source === "binance") markPriceCache[sym].binance = markPrice;
+  else if (source === "bybit") markPriceCache[sym].bybit = markPrice;
+
+  computeAndEmitPnL(sym);
+}
+
 function init(socketServer, binance, bybit) {
   io = socketServer;
   binanceManager = binance;
@@ -154,10 +163,14 @@ function init(socketServer, binance, bybit) {
 
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
 
+  heartbeatIntervalId = setInterval(() => {
+    Object.keys(positionCache).forEach((sym) => computeAndEmitPnL(sym));
+  }, 500);
+
   console.log(
-    "[LivePnl] Started: tick handler is local math only; position cache refreshed every",
+    "[LivePnl] Started: tick handler + 500ms heartbeat; position cache refreshed every",
     POSITION_CACHE_INTERVAL_MS / 1000,
-    "s (no API in tick path)."
+    "s."
   );
 }
 
@@ -165,6 +178,10 @@ function stop() {
   if (positionCacheIntervalId) {
     clearInterval(positionCacheIntervalId);
     positionCacheIntervalId = null;
+  }
+  if (heartbeatIntervalId) {
+    clearInterval(heartbeatIntervalId);
+    heartbeatIntervalId = null;
   }
   if (binanceManager) binanceManager.setOnMarkPriceUpdate(null);
   if (bybitManager) bybitManager.setOnMarkPriceUpdate(null);

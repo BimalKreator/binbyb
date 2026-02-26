@@ -274,6 +274,8 @@ let publicStopped = false;
 const lastFundingEmitBySymbol = {};
 /** markPrice per symbol from public tickers (for getOrderbookPrice without REST). */
 const lastMarkPriceBySymbol = {};
+/** Merged ticker state per symbol (snapshot + delta) so markPrice is never lost on delta-only updates. */
+const tickerStateBySymbol = {};
 /** Funding rate and nextFundingTime from public tickers stream. No REST /funding/history. */
 const cachedFundingRates = {};
 
@@ -337,7 +339,21 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
           if (msg.topic.startsWith("tickers.") && d.symbol) {
             const sym = String(d.symbol).toUpperCase();
-            const mp = parseFloat(d.markPrice || d.lastPrice || 0);
+            if (d.type === "snapshot") {
+              tickerStateBySymbol[sym] = { ...d };
+            } else if (d.type === "delta") {
+              if (!tickerStateBySymbol[sym]) tickerStateBySymbol[sym] = {};
+              Object.assign(tickerStateBySymbol[sym], d);
+            } else {
+              tickerStateBySymbol[sym] = { ...d };
+            }
+            const state = tickerStateBySymbol[sym];
+            const mp =
+              state && state.markPrice != null
+                ? parseFloat(state.markPrice)
+                : state && state.lastPrice != null
+                  ? parseFloat(state.lastPrice)
+                  : NaN;
             if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
             if (onMarkPriceUpdate && Number.isFinite(mp) && mp > 0) {
               try {
@@ -347,8 +363,8 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               }
             }
             cachedFundingRates[sym] = {
-              fundingRate: Number.isFinite(parseFloat(d.fundingRate)) ? parseFloat(d.fundingRate) : 0,
-              nextFundingTime: d.nextFundingTime != null ? Number(d.nextFundingTime) : null,
+              fundingRate: Number.isFinite(parseFloat(state?.fundingRate ?? d.fundingRate)) ? parseFloat(state?.fundingRate ?? d.fundingRate) : 0,
+              nextFundingTime: (state?.nextFundingTime ?? d.nextFundingTime) != null ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
             };
             if (!onFundingUpdate) continue;
             const now = Date.now();
@@ -357,10 +373,10 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             lastFundingEmitBySymbol[sym] = now;
             onFundingUpdate({
               symbol: d.symbol,
-              fundingRate: parseFloat(d.fundingRate || 0),
-              nextFundingTime: d.nextFundingTime ? Number(d.nextFundingTime) : null,
+              fundingRate: parseFloat(state?.fundingRate ?? d.fundingRate || 0),
+              nextFundingTime: (state?.nextFundingTime ?? d.nextFundingTime) != null ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
               markPrice: mp,
-              eventTime: d.timestamp ? Number(d.timestamp) : msg.ts,
+              eventTime: (state?.timestamp ?? d.timestamp) ? Number(state?.timestamp ?? d.timestamp) : msg.ts,
             });
           }
         }
@@ -953,6 +969,7 @@ function stop() {
   Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
+  Object.keys(tickerStateBySymbol).forEach((k) => delete tickerStateBySymbol[k]);
   console.log("[Bybit] Manager stopped");
 }
 
