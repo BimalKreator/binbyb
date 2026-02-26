@@ -121,11 +121,10 @@ function computeAndEmitPnL(symbol) {
     const byEntry = parseFloat(pos.bybitEntry || 0);
 
     // 2. Get Mark Prices safely (Cache -> Manager Fallback -> 0)
-    const binanceMark = parseFloat(markPriceCache[sym]?.binance) || (binanceManager && typeof binanceManager.getMarkPrice === 'function' ? parseFloat(binanceManager.getMarkPrice(sym)) : 0) || 0;
-    const bybitMark = parseFloat(markPriceCache[sym]?.bybit) ||
-      (typeof bybitManager.getMarkPrice === "function" && bybitManager.getMarkPrice(sym) > 0 ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) ||
-      parseFloat(markPriceCache[sym]?.binance) ||
-      0;
+    const binanceMark = parseFloat(markPriceCache[sym]?.binance) || parseFloat(markPriceCache[sym]?.binance) || 0;
+
+    // Proxy Bybit's mark to Binance's fast tick for a perfectly synced Arbitrage UI
+    const bybitMark = binanceMark > 0 ? binanceMark : (parseFloat(markPriceCache[sym]?.bybit) || parseFloat(markPriceCache[sym]?.bybit) || 0);
 
     // 3. Get Directions safely
     const bDir = parseFloat(pos.binanceDirection || 0) >= 0 ? 1 : -1;
