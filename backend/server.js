@@ -41,7 +41,7 @@ io.on("connection", (socket) => {
   socket.join("system-logs");
 });
 
-app.use(cors({ origin: CORS_ORIGINS }));
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

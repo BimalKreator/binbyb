@@ -1,11 +1,12 @@
 import axios, { type AxiosError } from "axios";
 
-// Use relative "/api" when unset so Nginx can proxy on tradeictearner.online
+// Use relative "/api" when unset so Nginx can proxy on tradeictearner.online (no trailing slash)
 const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "";
 const baseURL = apiOrigin ? `${apiOrigin.replace(/\/$/, "")}/api` : "/api";
 
 export const api = axios.create({
   baseURL,
+  withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
 
