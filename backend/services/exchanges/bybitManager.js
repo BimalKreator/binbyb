@@ -342,13 +342,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             if (msg.type === "snapshot") {
               tickerStateBySymbol[sym] = { ...d };
             } else if (msg.type === "delta") {
-              const existing = tickerStateBySymbol[sym] || {};
-              const merged = { ...existing };
-              for (const k of Object.keys(d)) {
-                const v = d[k];
-                if (v != null && v !== "") merged[k] = v;
-              }
-              tickerStateBySymbol[sym] = merged;
+              tickerStateBySymbol[sym] = Object.assign(tickerStateBySymbol[sym] || {}, d);
             } else {
               tickerStateBySymbol[sym] = { ...d };
             }

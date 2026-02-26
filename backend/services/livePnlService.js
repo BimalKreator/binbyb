@@ -12,8 +12,9 @@ let bybitManager = null;
 /** Background position cache refresh interval. NOT in tick handler. 3–5s. */
 const POSITION_CACHE_INTERVAL_MS = 3000;
 
-/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitSide, binanceNativePnL, bybitNativePnL }.
+/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitSide, totalMargin, binanceRaw, bybitRaw }.
  *  Updated ONLY by refreshPositionCache() (called from setInterval). Tick handler ONLY reads this.
+ *  Native PnL fallback uses binanceRaw.unRealizedProfit (Binance) and bybitRaw.unrealisedPnl (Bybit).
  */
 const positionCache = Object.create(null);
 
@@ -74,8 +75,6 @@ function refreshPositionCache() {
     const bybitEntry = parseFloat(String(bybitPos.entryPrice ?? 0)) || 0;
     const binanceDirection = (parseFloat(String(binancePos.positionAmt ?? 0)) || 0) > 0 ? 1 : -1;
     const bybitSide = String(bybitPos.side ?? "").trim();
-    const binanceNativePnL = parseFloat(binancePos.unrealizedProfit) || 0;
-    const bybitNativePnL = parseFloat(bybitPos.unrealizedProfit) || 0;
     const totalMargin =
       (Number.isFinite(binancePos.marginUsed) ? Number(binancePos.marginUsed) : 0) +
       (Number.isFinite(bybitPos.marginUsed) ? Number(bybitPos.marginUsed) : 0);
@@ -86,9 +85,9 @@ function refreshPositionCache() {
       bybitQty,
       binanceDirection,
       bybitSide,
-      binanceNativePnL,
-      bybitNativePnL,
       totalMargin,
+      binanceRaw: binancePos,
+      bybitRaw: bybitPos,
     };
   }
   // Remove symbols no longer paired
@@ -127,12 +126,14 @@ function computeAndEmitPnL(symbol) {
     const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
     const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
 
+    const binanceNative = parseFloat(pos.binanceRaw?.unRealizedProfit ?? 0);
+    const bybitNative = parseFloat(pos.bybitRaw?.unrealisedPnl ?? 0);
     const binancePnL =
       binanceMark > 0 && bEntry > 0
         ? binanceDirection * (binanceMark - bEntry) * bQty
-        : parseFloat(pos.binanceNativePnL) || 0;
+        : binanceNative;
     const bybitPnL =
-      bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : parseFloat(pos.bybitNativePnL) || 0;
+      bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : bybitNative;
     const combinedPnL = binancePnL + bybitPnL;
     const totalMargin = parseFloat(pos.totalMargin) || 0;
     const combinedPnlPercent =

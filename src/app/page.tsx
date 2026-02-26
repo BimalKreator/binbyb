@@ -205,17 +205,17 @@ export default function Home() {
           if (row.symbol !== symbol) return row;
           const nextBinance = {
             ...row.binance,
-            unrealizedProfit: Number.isFinite(binancePnL) ? binancePnL : row.binance.unrealizedProfit,
+            unrealizedProfit: (payload.binancePnL != null && !Number.isNaN(Number(payload.binancePnL))) ? payload.binancePnL : row.binance.unrealizedProfit,
             ...(binanceMarkPrice != null && Number.isFinite(binanceMarkPrice) ? { markPrice: binanceMarkPrice } : {}),
           };
           const nextBybit = {
             ...row.bybit,
-            unrealizedProfit: Number.isFinite(bybitPnL) ? bybitPnL : row.bybit.unrealizedProfit,
+            unrealizedProfit: (payload.bybitPnL != null && !Number.isNaN(Number(payload.bybitPnL))) ? payload.bybitPnL : row.bybit.unrealizedProfit,
             ...(bybitMarkPrice != null && Number.isFinite(bybitMarkPrice) ? { markPrice: bybitMarkPrice } : {}),
           };
           return {
             ...row,
-            combinedUnrealizedProfit: Number.isFinite(combinedPnL) ? combinedPnL : row.combinedUnrealizedProfit,
+            combinedUnrealizedProfit: (payload.combinedPnL != null && !Number.isNaN(Number(payload.combinedPnL))) ? payload.combinedPnL : row.combinedUnrealizedProfit,
             binance: nextBinance,
             bybit: nextBybit,
           };
