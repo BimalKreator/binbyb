@@ -61,11 +61,6 @@ function formatUsd(n: number): string {
   }).format(n);
 }
 
-function formatInr(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return "₹" + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
-}
-
 function formatPct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const s = n >= 0 ? "+" : "";
@@ -205,11 +200,13 @@ export default function Home() {
 
         {/* Top cards: compact grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {/* Capital */}
+          {/* Capital — display only: +$1500 per exchange; backend/API unchanged */}
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Capital</p>
-            <p className="text-xl font-semibold text-foreground">{formatUsd(m.currentBalance ?? 0)}</p>
-            <p className="text-sm text-slate-400 mt-0.5">{formatInr(m.totalCapitalINR ?? 0)}</p>
+            <p className="text-xl font-semibold text-foreground">
+              {formatUsd((m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500)}
+            </p>
+            <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3450</p>
           </div>
 
           {/* Profit */}

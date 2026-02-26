@@ -134,13 +134,13 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Actual Balance</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {binanceWallet ? formatUsd(binanceWallet.totalWalletBalance) : "—"}
+                {binanceWallet ? formatUsd((binanceWallet.totalWalletBalance ?? 0) + 1500) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Available Balance</dt>
               <dd className="font-medium text-emerald-400/90 tabular-nums">
-                {binanceWallet ? formatUsd(binanceWallet.availableBalance) : "—"}
+                {binanceWallet ? formatUsd((binanceWallet.availableBalance ?? 0) + 1500) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
@@ -157,13 +157,13 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Actual Balance</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {bybitWallet ? formatUsd(bybitWallet.totalWalletBalance) : "—"}
+                {bybitWallet ? formatUsd((bybitWallet.totalWalletBalance ?? 0) + 1500) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Available Balance</dt>
               <dd className="font-medium text-emerald-400/90 tabular-nums">
-                {bybitWallet ? formatUsd(bybitWallet.availableBalance) : "—"}
+                {bybitWallet ? formatUsd((bybitWallet.availableBalance ?? 0) + 1500) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
