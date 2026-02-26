@@ -332,14 +332,14 @@ function buildRankedTokensFromCurrentData() {
       fundingBybit,
       cachedUserMinSpread
     );
-    const intervalHours = intervalHoursCache[symbol] ?? null;
-    const intervalDisplay = intervalDisplayCache[symbol] ?? "8h";
+    const exactHours = binanceManager.getFundingIntervalHours(symbol) || 8;
+    const intervalDisplay = exactHours + "h";
     return {
       symbol,
       fundingBinance,
       fundingBybit,
       nextFundingTime,
-      intervalHours: intervalHours ?? undefined,
+      intervalHours: exactHours,
       intervalDisplay,
       grossPct,
       netPct,

@@ -248,6 +248,9 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
   };
   if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
   if (opts.reduceOnly === true) params.reduceOnly = "true";
+  if (params.positionSide && (params.positionSide.toUpperCase() === "LONG" || params.positionSide.toUpperCase() === "SHORT")) {
+    delete params.reduceOnly; // Binance forbids reduceOnly when positionSide is used (Hedge Mode)
+  }
 
   const queryString = Object.keys(params)
     .sort()
@@ -795,6 +798,9 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, quantity, pric
   };
   if (opts.newClientOrderId != null) params.newClientOrderId = opts.newClientOrderId;
   if (opts.reduceOnly === true) params.reduceOnly = "true";
+  if (params.positionSide && (params.positionSide.toUpperCase() === "LONG" || params.positionSide.toUpperCase() === "SHORT")) {
+    delete params.reduceOnly; // Binance forbids reduceOnly when positionSide is used (Hedge Mode)
+  }
 
   const queryString = Object.keys(params)
     .sort()
