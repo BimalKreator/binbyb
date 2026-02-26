@@ -412,8 +412,6 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
 
   publicStreamSymbols = symbols;
-  const list = symbols.slice(0, MAX_STREAMS_PER_CONNECTION);
-  const streams = list.map((s) => `${s.toLowerCase()}@markPrice@1s`);
   const url = `${PUBLIC_WS_BASE}/ws`;
 
   const ws = new WebSocket(url, { family: 4 });
@@ -422,21 +420,61 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   ws.on("open", () => {
     publicReconnectAttempts = 0;
     console.log("[Binance] Public WebSocket connected");
-    const chunkSize = 100;
-    for (let i = 0; i < streams.length; i += chunkSize) {
-      ws.send(JSON.stringify({
-        method: "SUBSCRIBE",
-        params: streams.slice(i, i + chunkSize),
-        id: Date.now() + i,
-      }));
-    }
+    ws.send(JSON.stringify({
+      method: "SUBSCRIBE",
+      params: ["!markPrice@arr@1s"],
+      id: 1,
+    }));
   });
 
   ws.on("message", (data) => {
     try {
-      const raw = JSON.parse(data.toString());
-      const stream = raw.stream || "";
-      const payload = raw.data || raw;
+      const parsed = JSON.parse(data.toString());
+
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => {
+          if (item.e === "markPriceUpdate") {
+            const s = item.s;
+            const mp = parseFloat(item.p);
+            const fr = parseFloat(item.r);
+            const nextTime = item.T != null ? parseInt(item.T, 10) : null;
+
+            if (s && mp > 0) {
+              const sym = String(s).toUpperCase();
+              lastMarkPriceBySymbol[sym] = mp;
+              cachedFundingRates[sym] = {
+                fundingRate: Number.isFinite(fr) ? fr : 0,
+                nextFundingTime: nextTime,
+              };
+              if (onMarkPriceUpdate) {
+                try {
+                  onMarkPriceUpdate(sym, mp, "binance");
+                } catch (e) {
+                  console.error("[Binance-WS-Error]", e.message);
+                }
+              }
+              if (onFundingUpdate) {
+                const now = Date.now();
+                const last = lastFundingEmitBySymbol[sym];
+                if (last == null || now - last >= FUNDING_THROTTLE_MS) {
+                  lastFundingEmitBySymbol[sym] = now;
+                  onFundingUpdate({
+                    symbol: sym,
+                    fundingRate: fr,
+                    nextFundingTime: nextTime,
+                    markPrice: mp,
+                    eventTime: item.E,
+                  });
+                }
+              }
+            }
+          }
+        });
+        return;
+      }
+
+      const stream = parsed.stream || "";
+      const payload = parsed.data || parsed;
 
       if (payload.E) {
         logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
@@ -460,18 +498,20 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             nextFundingTime,
           };
         }
-        if (!onFundingUpdate || !sym) return;
-        const now = Date.now();
-        const last = lastFundingEmitBySymbol[sym];
-        if (last != null && now - last < FUNDING_THROTTLE_MS) return;
-        lastFundingEmitBySymbol[sym] = now;
-        onFundingUpdate({
-          symbol: sym,
-          fundingRate: parseFloat(r),
-          nextFundingTime: T,
-          markPrice: parseFloat(p),
-          eventTime: E,
-        });
+        if (onFundingUpdate && sym) {
+          const now = Date.now();
+          const last = lastFundingEmitBySymbol[sym];
+          if (last == null || now - last >= FUNDING_THROTTLE_MS) {
+            lastFundingEmitBySymbol[sym] = now;
+            onFundingUpdate({
+              symbol: sym,
+              fundingRate: parseFloat(r),
+              nextFundingTime: T,
+              markPrice: parseFloat(p),
+              eventTime: E,
+            });
+          }
+        }
       }
     } catch (err) {
       console.error("[Binance-WS-Error]", err.message);

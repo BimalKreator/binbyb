@@ -320,7 +320,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   const ws = new WebSocket(PUBLIC_WS_URL, { family: 4 });
   publicWs = ws;
 
-  ws.on("open", () => {
+  ws.on("open", async () => {
     publicReconnectAttempts = 0;
     console.log("[Bybit] Public WebSocket connected");
     const subscribe_args = symbols.map((s) => `tickers.${s}`);
@@ -328,6 +328,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
     for (let i = 0; i < subscribe_args.length; i += chunkSize) {
       const chunk = subscribe_args.slice(i, i + chunkSize);
       ws.send(JSON.stringify({ op: "subscribe", args: chunk }));
+      await new Promise((res) => setTimeout(res, 250));
     }
   });
 
