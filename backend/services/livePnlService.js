@@ -12,7 +12,7 @@ let bybitManager = null;
 /** Background position cache refresh interval. NOT in tick handler. 3–5s. */
 const POSITION_CACHE_INTERVAL_MS = 3000;
 
-/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitSide }.
+/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitSide, binanceNativePnL, bybitNativePnL }.
  *  Updated ONLY by refreshPositionCache() (called from setInterval). Tick handler ONLY reads this.
  */
 const positionCache = Object.create(null);
@@ -70,6 +70,8 @@ function refreshPositionCache() {
     const bybitEntry = parseFloat(String(bybitPos.entryPrice ?? 0)) || 0;
     const binanceDirection = (parseFloat(String(binancePos.positionAmt ?? 0)) || 0) > 0 ? 1 : -1;
     const bybitSide = String(bybitPos.side ?? "").trim();
+    const binanceNativePnL = parseFloat(binancePos.unrealizedProfit) || 0;
+    const bybitNativePnL = parseFloat(bybitPos.unrealizedProfit) || 0;
     positionCache[symbol] = {
       binanceEntry,
       bybitEntry,
@@ -77,6 +79,8 @@ function refreshPositionCache() {
       bybitQty,
       binanceDirection,
       bybitSide,
+      binanceNativePnL,
+      bybitNativePnL,
     };
   }
   // Remove symbols no longer paired
@@ -102,8 +106,15 @@ function onMarkPriceTick(symbol, markPrice, source) {
   const pos = positionCache[sym];
   if (!pos) return;
 
-  const binanceMark = parseFloat(markPriceCache[sym].binance) || 0;
-  const bybitMark = parseFloat(markPriceCache[sym].bybit) || 0;
+  const cachedBinanceMark = parseFloat(markPriceCache[sym]?.binance);
+  const cachedBybitMark = parseFloat(markPriceCache[sym]?.bybit);
+  const binanceMark =
+    cachedBinanceMark > 0
+      ? cachedBinanceMark
+      : (typeof binanceManager.getMarkPrice === "function" ? parseFloat(binanceManager.getMarkPrice(sym)) : 0) || 0;
+  const bybitMark =
+    cachedBybitMark > 0 ? cachedBybitMark : (typeof bybitManager.getMarkPrice === "function" ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) || 0;
+
   const bEntry = parseFloat(pos.binanceEntry);
   const bQty = parseFloat(pos.binanceQty);
   const byEntry = parseFloat(pos.bybitEntry);
@@ -111,8 +122,12 @@ function onMarkPriceTick(symbol, markPrice, source) {
   const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
   const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
 
-  const binancePnL = binanceDirection * (binanceMark - bEntry) * bQty;
-  const bybitPnL = bybitDirection * (bybitMark - byEntry) * byQty;
+  const binancePnL =
+    binanceMark > 0 && bEntry > 0
+      ? binanceDirection * (binanceMark - bEntry) * bQty
+      : parseFloat(pos.binanceNativePnL) || 0;
+  const bybitPnL =
+    bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : parseFloat(pos.bybitNativePnL) || 0;
   const combinedPnL = binancePnL + bybitPnL;
 
   io.emit("live_pnl_update", {

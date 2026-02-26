@@ -71,26 +71,34 @@ function upsertLivePosition(raw) {
   const side = sideRaw === "buy" ? "Buy" : sideRaw === "sell" ? "Sell" : "";
   const idx = raw?.positionIdx != null ? String(raw.positionIdx) : "0";
   const key = `${sym}:${side || "NONE"}:${idx}`;
-  const size = parseFloat(raw?.size ?? 0);
+  const existing = livePositionsByKey[key];
+  const rawSize = raw?.size;
+  const size = rawSize != null ? parseFloat(rawSize) : (existing != null ? parseFloat(existing.positionAmt) : NaN);
   if (!Number.isFinite(size) || Math.abs(size) <= 0) {
     delete livePositionsByKey[key];
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "bybit");
     return;
   }
   const now = Date.now();
-  const existing = livePositionsByKey[key];
-  const entryPrice = parseFloat(raw?.avgPrice ?? raw?.entryPrice ?? 0) || null;
-  const leverage = raw?.leverage != null ? Number(raw.leverage) : null;
-  const liquidationPrice = parseFloat(raw?.liqPrice ?? raw?.liquidationPrice ?? 0) || null;
+  const rawEntry = raw?.avgPrice ?? raw?.entryPrice;
+  const entryPrice = rawEntry != null ? parseFloat(rawEntry) : (existing?.entryPrice ?? null);
+  const rawPnl = raw?.unrealisedPnl;
+  const unrealizedProfit = rawPnl != null ? parseFloat(rawPnl) : (existing?.unrealizedProfit ?? 0);
+  const rawIM = raw?.positionIM ?? raw?.positionIMByMp;
+  const marginUsed = rawIM != null ? parseFloat(rawIM) : (existing?.marginUsed ?? 0);
+  const rawLev = raw?.leverage;
+  const leverage = rawLev != null ? Number(rawLev) : (existing?.leverage ?? null);
+  const rawLiq = raw?.liqPrice ?? raw?.liquidationPrice;
+  const liquidationPrice = rawLiq != null ? parseFloat(rawLiq) : (existing?.liquidationPrice ?? null);
   livePositionsByKey[key] = {
     symbol: sym,
-    unrealizedProfit: parseFloat(raw?.unrealisedPnl ?? 0) || 0,
-    marginUsed: parseFloat(raw?.positionIM ?? raw?.positionIMByMp ?? 0) || 0,
+    unrealizedProfit: Number.isFinite(unrealizedProfit) ? unrealizedProfit : 0,
+    marginUsed: Number.isFinite(marginUsed) ? marginUsed : 0,
     positionAmt: size,
-    side: side || "Sell",
-    entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
-    leverage: Number.isFinite(leverage) ? leverage : null,
-    liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
+    side: side || existing?.side || "Sell",
+    entryPrice: entryPrice != null && Number.isFinite(entryPrice) ? entryPrice : null,
+    leverage: leverage != null && Number.isFinite(leverage) ? leverage : null,
+    liquidationPrice: liquidationPrice != null && Number.isFinite(liquidationPrice) ? liquidationPrice : null,
     createdTime: existing?.createdTime ?? now,
     updatedTime: now,
   };
