@@ -6,15 +6,6 @@ import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
 import { XCircle, ChevronDown, ChevronRight } from "lucide-react";
 
-function getSocketOrigin(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== "undefined") {
-    if (window.location.hostname === "tradeictearner.online") return "https://tradeictearner.online";
-    return window.location.origin;
-  }
-  return "http://localhost:5000";
-}
-
 type VolatilityMeter = { level: string; count?: number };
 
 type MetricsData = {
@@ -199,20 +190,25 @@ export default function Home() {
 
   useEffect(() => {
     const { io } = require("socket.io-client");
-    const apiUrl = getSocketOrigin();
+
+    const apiUrl = "https://tradeictearner.online";
+    console.log(`🔌 Attempting secure socket connection to: ${apiUrl}`);
 
     const socket = io(apiUrl, {
       path: "/socket.io",
       transports: ["websocket", "polling"],
+      secure: true,
     });
 
     socket.on("connect", () => console.log("🟢 Frontend WS Connected to Backend!"));
 
+    socket.on("connect_error", (err: any) => {
+      console.error("🔴 WS Connection Error:", err.message);
+    });
+
     socket.on("live_pnl_update", (payload: any) => {
       if (!payload || !payload.symbol) return;
-
       console.log(`[WS-RECEIVE] ⚡ ${payload.symbol} | PnL: ${payload.combinedPnL}`);
-
       latestPnlRef.current[payload.symbol] = payload;
     });
 

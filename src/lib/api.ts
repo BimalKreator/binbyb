@@ -11,6 +11,17 @@ export const api = axios.create({
 
 const TOKEN_KEY = "binbyb_jwt";
 
+/** Socket origin: never return raw IP; use HTTPS domain when page is secure to avoid Mixed Content. */
+export function getSocketOrigin(): string {
+  if (typeof window !== "undefined") {
+    if (window.location.protocol === "https:") {
+      return "https://tradeictearner.online";
+    }
+    return window.location.origin;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "https://tradeictearner.online";
+}
+
 export function getStoredToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);
