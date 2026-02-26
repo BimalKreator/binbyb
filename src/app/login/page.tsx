@@ -28,7 +28,7 @@ export default function LoginPage() {
         token?: string;
         user?: { email: string; role: string };
         message?: string;
-      }>("/login", { email: email.trim(), password });
+      }>("/login", { email: email.trim(), password: password.trim() });
       if (data.success && data.token) {
         setStoredToken(data.token);
         useAuthStore.getState().setAuth(data.token, data.user ?? null);

@@ -14,7 +14,7 @@ function getCookieOptions(req) {
     httpOnly: true,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     sameSite: "lax",
-    secure: req.secure || (req.headers["x-forwarded-proto"] === "https"),
+    secure: req.secure || req.headers["x-forwarded-proto"] === "https",
   };
 }
 
