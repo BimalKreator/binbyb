@@ -116,27 +116,31 @@ function computeAndEmitPnL(symbol) {
     const byQty = Math.abs(parseFloat(pos.bybitQty || pos.bybit?.size || pos.bybitRaw?.size || 0));
     if (bQty === 0 && byQty === 0) return;
 
-    // 1. Get Entry Prices safely (Using fields that actually exist in positionCache)
-    const bEntry = parseFloat(pos.binanceEntry || 0);
-    const byEntry = parseFloat(pos.bybitEntry || 0);
+    // 1. Safely extract raw marks directly from cache (No throw)
+    const rawBinanceMark = (markPriceCache[sym] && markPriceCache[sym].binance) ? parseFloat(markPriceCache[sym].binance) : 0;
+    const rawBybitMark = (markPriceCache[sym] && markPriceCache[sym].bybit) ? parseFloat(markPriceCache[sym].bybit) : 0;
 
-    // 2. Get Mark Prices safely (Cache -> Manager Fallback -> 0)
-    const binanceMark = parseFloat(markPriceCache[sym]?.binance) || parseFloat(markPriceCache[sym]?.binance) || 0;
+    // 2. Assign Safe Binance Mark
+    const binanceMark = rawBinanceMark > 0 ? rawBinanceMark : 0;
 
-    // Proxy Bybit's mark to Binance's fast tick for a perfectly synced Arbitrage UI
-    const bybitMark = binanceMark > 0 ? binanceMark : (parseFloat(markPriceCache[sym]?.bybit) || parseFloat(markPriceCache[sym]?.bybit) || 0);
+    // 3. ULTRA-FAST UI SYNC: Bind Bybit to Binance if available, else raw Bybit
+    const bybitMark = binanceMark > 0 ? binanceMark : rawBybitMark;
 
-    // 3. Get Directions safely
-    const bDir = parseFloat(pos.binanceDirection || 0) >= 0 ? 1 : -1;
-    const byDir = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
+    // 4. Safe Math (Fallback to 0 if variables are missing, NO crashes)
+    const bEntry = parseFloat(pos.binanceEntry) || 0;
+    const byEntry = parseFloat(pos.bybitEntry) || 0;
 
-    // 4. Get Native REST Fallbacks
-    const binanceNative = parseFloat(pos.binanceNativePnL || 0);
-    const bybitNative = parseFloat(pos.bybitNativePnL || 0);
+    const binanceDirection = parseFloat(pos.binanceDirection || 0) >= 0 ? 1 : -1;
+    const bybitDirection = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
 
-    // 5. Calculate Live PnL (Uses bQty and byQty already declared at the top of the function)
-    const binancePnL = (bEntry > 0 && binanceMark > 0) ? bDir * (binanceMark - bEntry) * bQty : binanceNative;
-    const bybitPnL = (byEntry > 0 && bybitMark > 0) ? byDir * (bybitMark - byEntry) * byQty : bybitNative;
+    const binancePnL = (binanceMark > 0 && bEntry > 0)
+      ? binanceDirection * (binanceMark - bEntry) * bQty
+      : (parseFloat(pos.binanceNativePnL) || 0);
+
+    const bybitPnL = (bybitMark > 0 && byEntry > 0)
+      ? bybitDirection * (bybitMark - byEntry) * byQty
+      : (parseFloat(pos.bybitNativePnL) || 0);
+
     const combinedPnL = binancePnL + bybitPnL;
 
     const totalMargin = parseFloat(pos.totalMargin) || 0;
