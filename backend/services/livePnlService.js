@@ -6,7 +6,7 @@ let io = null;
 let binanceManager = null;
 let bybitManager = null;
 
-const POSITION_CACHE_INTERVAL_MS = 3000;
+const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
 const markPriceCache = Object.create(null);
 let positionCacheIntervalId = null;

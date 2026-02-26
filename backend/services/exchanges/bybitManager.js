@@ -72,8 +72,14 @@ function upsertLivePosition(raw) {
   const idx = raw?.positionIdx != null ? String(raw.positionIdx) : "0";
   const key = `${sym}:${side || "NONE"}:${idx}`;
   const existing = livePositionsByKey[key];
+  // Bybit sends delta updates: when size is present, strictly overwrite local size/positionAmt
   const rawSize = raw?.size;
-  const size = rawSize != null ? parseFloat(rawSize) : (existing != null ? parseFloat(existing.positionAmt) : NaN);
+  const size =
+    rawSize !== undefined
+      ? parseFloat(rawSize)
+      : existing != null
+        ? parseFloat(existing.positionAmt ?? existing.size ?? 0)
+        : NaN;
   if (!Number.isFinite(size) || Math.abs(size) <= 0) {
     delete livePositionsByKey[key];
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "bybit");
@@ -90,11 +96,13 @@ function upsertLivePosition(raw) {
   const leverage = rawLev != null ? Number(rawLev) : (existing?.leverage ?? null);
   const rawLiq = raw?.liqPrice ?? raw?.liquidationPrice;
   const liquidationPrice = rawLiq != null ? parseFloat(rawLiq) : (existing?.liquidationPrice ?? null);
+  const sizeNum = Number(size);
   livePositionsByKey[key] = {
     symbol: sym,
     unrealizedProfit: Number.isFinite(unrealizedProfit) ? unrealizedProfit : 0,
     marginUsed: Number.isFinite(marginUsed) ? marginUsed : 0,
-    positionAmt: size,
+    size: sizeNum,
+    positionAmt: sizeNum,
     side: side || existing?.side || "Sell",
     entryPrice: entryPrice != null && Number.isFinite(entryPrice) ? entryPrice : null,
     leverage: leverage != null && Number.isFinite(leverage) ? leverage : null,

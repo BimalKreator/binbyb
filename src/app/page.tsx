@@ -61,6 +61,16 @@ function formatUsd(n: number): string {
   }).format(n);
 }
 
+function formatUsdStandard(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
 function formatPct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const s = n >= 0 ? "+" : "";
@@ -287,7 +297,7 @@ export default function Home() {
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Capital</p>
             <p className="text-xl font-semibold text-foreground">
-              {formatUsd((m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500)}
+              {formatUsdStandard((m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500)}
             </p>
             <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3450</p>
           </div>
@@ -308,7 +318,7 @@ export default function Home() {
                       netProfitDisplay >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                     }`}
                   >
-                    {formatUsd(netProfitDisplay)}
+                    {formatUsdStandard(netProfitDisplay)}
                   </p>
                   <p className="text-sm text-slate-400 mt-0.5">
                     Profit % {m.profitPercent != null ? formatPct(m.profitPercent) : "—"}

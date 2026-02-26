@@ -575,7 +575,27 @@ async function startPrivateStream(credentials) {
       if (msg.e === "ACCOUNT_UPDATE") {
         const positions = msg?.a?.P;
         if (Array.isArray(positions)) {
-          for (const p of positions) upsertLivePosition(p);
+          for (const p of positions) {
+            const sym = String(p?.s ?? p?.symbol ?? "").toUpperCase();
+            const positionSideRaw = String(p?.ps ?? p?.positionSide ?? "BOTH").toUpperCase();
+            const positionSide =
+              positionSideRaw === "LONG" || positionSideRaw === "SHORT" ? positionSideRaw : "BOTH";
+            if (!sym) continue;
+            const key = `${sym}:${positionSide}`;
+            const pa = parseFloat(p?.pa ?? p?.positionAmt ?? 0);
+            if (!Number.isFinite(pa) || pa === 0) {
+              delete livePositionsByKey[key];
+              if (typeof onPositionClosed === "function") onPositionClosed(sym, "binance");
+              continue;
+            }
+            const existing = livePositionsByKey[key];
+            if (existing) {
+              existing.positionAmt = pa;
+              existing.updatedTime = Date.now();
+            } else {
+              upsertLivePosition(p);
+            }
+          }
           emitPositionUpdate();
         }
         // Wallet balance: msg.a.B = balances array; USDT = walletBalance (wb) or asset (a)
