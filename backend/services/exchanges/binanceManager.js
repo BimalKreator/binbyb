@@ -63,6 +63,11 @@ let onFundingUpdate = null;
 function setOnFundingUpdate(fn) {
   onFundingUpdate = fn;
 }
+/** Called on every mark price tick (no throttle). (symbol, markPrice, 'binance') */
+let onMarkPriceUpdate = null;
+function setOnMarkPriceUpdate(fn) {
+  onMarkPriceUpdate = fn;
+}
 let onPositionUpdate = null;
 function setOnPositionUpdate(fn) {
   onPositionUpdate = fn;
@@ -431,6 +436,13 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       if (payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
         if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
+        if (onMarkPriceUpdate && s && p != null) {
+          try {
+            onMarkPriceUpdate(s, parseFloat(p), "binance");
+          } catch (e) {
+            console.error("[Binance] onMarkPriceUpdate error", e.message);
+          }
+        }
         if (s != null) {
           const nextFundingTime = T != null ? Number(T) : null;
           cachedFundingRates[s] = {
@@ -1175,6 +1187,7 @@ module.exports = {
   placeMarketCloseOrder,
   getCredentials: () => privateCredentials,
   setOnFundingUpdate,
+  setOnMarkPriceUpdate,
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,

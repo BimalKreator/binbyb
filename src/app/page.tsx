@@ -1,10 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
 import { XCircle, ChevronDown, ChevronRight } from "lucide-react";
+
+function getSocketOrigin(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    if (window.location.hostname === "tradeictearner.online") return "https://tradeictearner.online";
+    return window.location.origin;
+  }
+  return "http://localhost:5000";
+}
 
 type VolatilityMeter = { level: string; count?: number };
 
@@ -126,9 +135,12 @@ type PositionsResponse = { success: boolean; data?: PositionRow[]; grandTotalPnl
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
-  const [grandTotalPnl, setGrandTotalPnl] = useState<number>(0);
   const [grandTotalNextFunding, setGrandTotalNextFunding] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const grandTotalPnl = useMemo(
+    () => positions.reduce((s, p) => s + (p.combinedUnrealizedProfit ?? 0), 0),
+    [positions]
+  );
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
@@ -152,7 +164,6 @@ export default function Home() {
           )
         : [];
       setPositions(list);
-      setGrandTotalPnl(Number(res.data?.grandTotalPnl) || 0);
       setGrandTotalNextFunding(Number(res.data?.grandTotalNextFundingAmount) || 0);
     } catch {
       toast.error("Failed to load positions");
@@ -183,6 +194,31 @@ export default function Home() {
       clearInterval(intervalId);
     };
   }, [fetchMetrics, fetchPositions]);
+
+  useEffect(() => {
+    const origin = getSocketOrigin().replace(/\/$/, "");
+    const { io } = require("socket.io-client");
+    const socket = io(origin, { path: "/socket.io", transports: ["websocket", "polling"] });
+    socket.on("live_pnl_update", (payload: { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number }) => {
+      const { symbol, binancePnL, bybitPnL, combinedPnL } = payload ?? {};
+      if (!symbol) return;
+      setPositions((prev) =>
+        prev.map((row) =>
+          row.symbol === symbol
+            ? {
+                ...row,
+                combinedUnrealizedProfit: combinedPnL ?? row.combinedUnrealizedProfit,
+                binance: { ...row.binance, unrealizedProfit: binancePnL ?? row.binance.unrealizedProfit },
+                bybit: { ...row.bybit, unrealizedProfit: bybitPnL ?? row.bybit.unrealizedProfit },
+              }
+            : row
+        )
+      );
+    });
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   const handleCloseTrade = async (symbol: string) => {
     setClosingSymbol(symbol);
@@ -274,7 +310,7 @@ export default function Home() {
                   <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total PnL</p>
                     <p
-                      className={`text-lg font-semibold ${
+                      className={`text-lg font-semibold transition-colors duration-150 ${
                         grandTotalPnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                       }`}
                     >
@@ -327,7 +363,7 @@ export default function Home() {
                           </span>
                         )}
                         <span
-                          className={`font-medium ${
+                          className={`font-medium transition-colors duration-150 ${
                             pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                           }`}
                         >
@@ -435,7 +471,7 @@ export default function Home() {
                                           : "—"}
                                       </td>
                                       <td
-                                        className={`py-2 pr-2 text-right font-medium ${
+                                        className={`py-2 pr-2 text-right font-medium transition-colors duration-150 ${
                                           (safeLeg.unrealizedProfit ?? 0) >= 0
                                             ? "text-[var(--profit)]"
                                             : "text-[var(--loss)]"

@@ -15,11 +15,12 @@ const mongoose = require("mongoose");
 const { Server: SocketServer } = require("socket.io");
 
 const routes = require("./routes");
-const { startExchanges } = require("./services/exchanges");
+const { startExchanges, binanceManager, bybitManager } = require("./services/exchanges");
 const screener = require("./services/screener");
 const autoTrader = require("./services/autoTrader");
 const tradeMonitor = require("./services/tradeMonitor");
 const logService = require("./services/logService");
+const livePnlService = require("./services/livePnlService");
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/binbyb";
@@ -73,6 +74,7 @@ mongoose
       screener.start(Array.isArray(symbols) ? symbols : undefined);
       autoTrader.start(1000);
       tradeMonitor.start();
+      livePnlService.init(io, binanceManager, bybitManager);
       server.listen(PORT, () => {
         console.log("Server running on port", PORT);
       });

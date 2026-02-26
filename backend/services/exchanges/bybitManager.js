@@ -23,6 +23,11 @@ let onFundingUpdate = null;
 function setOnFundingUpdate(fn) {
   onFundingUpdate = fn;
 }
+/** Called on every mark price tick (no throttle). (symbol, markPrice, 'bybit') */
+let onMarkPriceUpdate = null;
+function setOnMarkPriceUpdate(fn) {
+  onMarkPriceUpdate = fn;
+}
 let onPositionUpdate = null;
 function setOnPositionUpdate(fn) {
   onPositionUpdate = fn;
@@ -326,6 +331,13 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             const sym = String(d.symbol).toUpperCase();
             const mp = parseFloat(d.markPrice || d.lastPrice || 0);
             if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
+            if (onMarkPriceUpdate && Number.isFinite(mp) && mp > 0) {
+              try {
+                onMarkPriceUpdate(sym, mp, "bybit");
+              } catch (e) {
+                console.error("[Bybit] onMarkPriceUpdate error", e.message);
+              }
+            }
             cachedFundingRates[sym] = {
               fundingRate: Number.isFinite(parseFloat(d.fundingRate)) ? parseFloat(d.fundingRate) : 0,
               nextFundingTime: d.nextFundingTime != null ? Number(d.nextFundingTime) : null,
@@ -1075,6 +1087,7 @@ module.exports = {
   placeMarketCloseOrder,
   getCredentials: () => privateCredentials,
   setOnFundingUpdate,
+  setOnMarkPriceUpdate,
   setOnPositionUpdate,
   setOnPositionClosed,
   getLivePositions,
