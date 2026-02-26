@@ -9,7 +9,7 @@ import { Search, X } from "lucide-react";
 type RankedToken = {
   symbol: string;
   intervalHours?: number;
-  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' | 'Loading' (from backend premium index / WS)
+  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' (from backend)
   netPct: number;
   spreadPctAbs?: number; // combined funding spread (used for backend sort: interval then spread desc)
   nextFundingTime?: number;
@@ -31,7 +31,7 @@ function formatCountdownHms(ms: number): string {
 }
 
 function formatFundingRate(val: number | undefined | null): string {
-  if (val == null || Number.isNaN(Number(val))) return "Loading...";
+  if (val == null || Number.isNaN(Number(val))) return "—";
   return (Number(val) * 100).toFixed(4) + "%";
 }
 
@@ -41,7 +41,7 @@ function formatFundingWithDirection(
   label: string,
   isLong: boolean
 ): string {
-  if (rate == null || Number.isNaN(Number(rate))) return `${label}: Loading...`;
+  if (rate == null || Number.isNaN(Number(rate))) return `${label}: —`;
   const n = Number(rate) * 100;
   const sign = n >= 0 ? "+" : "";
   const dir = isLong ? " (Long)" : " (Short)";
@@ -258,7 +258,7 @@ export default function ScreenerPage() {
                           </span>
                         </>
                       ) : (
-                        "Loading..."
+                        "8h"
                       )}
                     </td>
                     <td className="py-1 px-2 text-right">
@@ -313,7 +313,7 @@ export default function ScreenerPage() {
               <p className="text-xs text-slate-400">
                 Mark price: {popupToken.markPrice != null && !Number.isNaN(Number(popupToken.markPrice))
                   ? Number(popupToken.markPrice).toFixed(2)
-                  : "Loading..."}
+                  : "—"}
               </p>
               {(() => {
                 const bin = Number(popupToken.fundingBinance);

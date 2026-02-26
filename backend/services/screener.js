@@ -15,7 +15,7 @@ const INTERVAL_PRIORITY_BY_LABEL = { "1h": 1, "2h": 1, "4h": 2, "8h": 3 };
 const binanceData = {};
 const bybitData = {};
 const intervalHoursCache = {};
-const intervalDisplayCache = {}; // '1h' | '2h' | '4h' | '8h' | 'Loading'
+const intervalDisplayCache = {}; // '1h' | '2h' | '4h' | '8h'
 const maxLeverageCache = {};
 let rankedTokens = [];
 let volatilityMeter = { level: "Low", count: 0 };
@@ -36,15 +36,15 @@ function intervalMsToHours(intervalMs) {
   return 8;
 }
 
-/** Resolve numeric interval to display string. NaN/undefined → 'Loading'. */
+/** Resolve numeric interval to display string. NaN/undefined → '8h'. */
 function intervalHoursToLabel(hours) {
-  if (hours == null || (typeof hours === "number" && Number.isNaN(hours))) return "Loading";
+  if (hours == null || (typeof hours === "number" && Number.isNaN(hours))) return "8h";
   const h = Number(hours);
   if (h === 1) return "1h";
   if (h === 2) return "2h";
   if (h === 4) return "4h";
   if (h === 8) return "8h";
-  return "Loading";
+  return "8h";
 }
 
 /**
@@ -153,30 +153,19 @@ async function runScreener() {
       const nextBin = bin?.nextFundingTime ?? null;
       const nextByb = byb?.nextFundingTime ?? null;
 
-      // Resolve intervals to strings '1h', '2h', '4h', '8h', or 'Loading' (no raw math comparison)
-      let binanceIntervalHours = null;
-      let bybitIntervalHours = null;
-      try {
-        if (nextBin != null) binanceIntervalHours = computeIntervalHours(symbol, nextBin, "binance");
-        if (nextByb != null) bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
-      } catch (_) {
-        // keep null → will become 'Loading'
-      }
+      let binanceIntervalHours = computeIntervalHours(symbol, nextBin, "binance");
+      let bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
 
       const binanceIntervalString = intervalHoursToLabel(binanceIntervalHours);
       const bybitIntervalString = intervalHoursToLabel(bybitIntervalHours);
 
-      // Include token: either interval is Loading (don't drop), or both strings match
-      const eitherLoading = binanceIntervalString === "Loading" || bybitIntervalString === "Loading";
       const bothMatch = binanceIntervalString === bybitIntervalString;
-      if (!eitherLoading && !bothMatch) {
+      if (!bothMatch) {
         continue; // only drop when both resolved and different
       }
 
-      const intervalDisplay = eitherLoading ? "Loading" : binanceIntervalString;
-      const intervalHours = binanceIntervalString !== "Loading" && bybitIntervalString !== "Loading"
-        ? binanceIntervalHours
-        : null;
+      const intervalDisplay = binanceIntervalString;
+      const intervalHours = binanceIntervalHours ?? bybitIntervalHours ?? 8;
 
       intervalHoursCache[symbol] = intervalHours;
       intervalDisplayCache[symbol] = intervalDisplay;
@@ -243,6 +232,7 @@ function onBybitFunding(data) {
     nextFundingTime: data.nextFundingTime,
     markPrice: data.markPrice,
     eventTime: data.eventTime,
+    intervalHours: 8,
   };
   runScreener();
 }
@@ -322,7 +312,7 @@ function getMaxLeverage(symbol) {
 
 /**
  * Build ranked tokens synchronously from current in-memory data (no await).
- * Includes ALL matched symbols; interval from cache or 'Loading' (never drop for missing interval).
+ * Includes ALL matched symbols; interval from cache or '8h' (never drop for missing interval).
  */
 function buildRankedTokensFromCurrentData() {
   const binanceKeys = Object.keys(binanceData);
@@ -343,7 +333,7 @@ function buildRankedTokensFromCurrentData() {
       cachedUserMinSpread
     );
     const intervalHours = intervalHoursCache[symbol] ?? null;
-    const intervalDisplay = intervalDisplayCache[symbol] ?? "Loading";
+    const intervalDisplay = intervalDisplayCache[symbol] ?? "8h";
     return {
       symbol,
       fundingBinance,

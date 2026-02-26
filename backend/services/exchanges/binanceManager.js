@@ -1017,13 +1017,8 @@ async function ensureFundingInfoLoaded() {
       for (const item of list) {
         const sym = (item.symbol || "").toUpperCase();
         if (!sym) continue;
-        const hours = item.fundingIntervalHours;
-        const h = hours != null ? Number(hours) : null;
-        if (h === 1 || h === 2 || h === 4 || h === 8) {
-          fundingIntervalCache[sym] = h;
-        } else if (Number.isFinite(h) && h > 0) {
-          fundingIntervalCache[sym] = h <= 1 ? 1 : h <= 2 ? 2 : h <= 4 ? 4 : 8;
-        }
+        const parsedHours = parseInt(item.fundingIntervalHours, 10);
+        fundingIntervalCache[sym] = !Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours) ? parsedHours : 8;
       }
     } catch (e) {
       console.warn("[Binance] One-time fundingInfo load failed:", e.message);
