@@ -9,7 +9,7 @@ import { Search, X } from "lucide-react";
 type RankedToken = {
   symbol: string;
   intervalHours?: number;
-  intervalDisplay?: string; // '1h' | '2h' | '4h' | '8h' (from backend)
+  intervalDisplay?: "1h" | "2h" | "4h" | "8h";
   netPct: number;
   spreadPctAbs?: number; // combined funding spread (used for backend sort: interval then spread desc)
   nextFundingTime?: number;
@@ -247,18 +247,23 @@ export default function ScreenerPage() {
                             {formatCountdownHms(countdownMs)}
                           </span>
                           <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                            {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
+                            {row.intervalDisplay ?? "8h"}
                           </span>
                         </>
                       ) : row.nextFundingTime != null ? (
                         <>
                           <span className="block font-medium tabular-nums leading-tight">—</span>
                           <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                            {row.intervalDisplay ?? (row.intervalHours != null ? `${row.intervalHours}h` : "—")}
+                            {row.intervalDisplay ?? "8h"}
                           </span>
                         </>
                       ) : (
-                        "8h"
+                        <>
+                          <span className="block font-medium tabular-nums leading-tight">—</span>
+                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
+                            8h
+                          </span>
+                        </>
                       )}
                     </td>
                     <td className="py-1 px-2 text-right">

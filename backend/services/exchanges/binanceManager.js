@@ -1026,10 +1026,9 @@ async function ensureFundingInfoLoaded() {
         const data = response?.data;
         if (Array.isArray(data)) {
           data.forEach((item) => {
+            const sym = (item.symbol || "").toUpperCase();
             const parsedHours = parseInt(item.fundingIntervalHours, 10);
-            if (!Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours)) {
-              fundingIntervalCache[item.symbol] = parsedHours;
-            }
+            fundingIntervalCache[sym] = !Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours) ? parsedHours : 8;
           });
           fundingInfoLoaded = true;
           return;
@@ -1056,12 +1055,11 @@ async function ensureFundingInfoLoaded() {
 }
 
 /**
- * Get funding interval hours (1, 2, 4, or 8) from cache (bulk fundingInfo + WS updates). Returns null if symbol not in cache.
+ * Get funding interval hours (1, 2, 4, or 8) from cache (bulk fundingInfo + WS updates). Default 8 if symbol not in cache.
  */
 function getFundingIntervalHours(symbol) {
   const sym = String(symbol || "").toUpperCase();
-  const v = fundingIntervalCache[sym];
-  return v != null ? v : null;
+  return fundingIntervalCache[sym] ?? 8;
 }
 
 /**

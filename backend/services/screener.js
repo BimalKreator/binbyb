@@ -48,23 +48,10 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Interval from manager cache, with fallback inference from nextFundingTime when cache returns null or 8.
- * Always returns a number (1, 2, 4, or 8). Never returns the string "Loading".
+ * Interval from manager cache only. No math fallbacks. Fallback is always 8 (display "8h").
  */
-function computeIntervalHours(symbol, nextFundingTime, source) {
-  if (source !== "binance") return 8;
-
-  const cached = binanceManager.getFundingIntervalHours(symbol);
-  if (cached != null && cached !== 8) return cached;
-
-  if (nextFundingTime != null && Number.isFinite(nextFundingTime)) {
-    const hours = Math.ceil((nextFundingTime - Date.now()) / 3600000);
-    if (hours <= 1) return 1;
-    if (hours <= 2) return 2;
-    if (hours <= 4) return 4;
-    return 8;
-  }
-
+function computeIntervalHours(symbol, _nextFundingTime, source) {
+  if (source === "binance") return binanceManager.getFundingIntervalHours(symbol) || 8;
   return 8;
 }
 
