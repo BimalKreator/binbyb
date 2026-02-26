@@ -29,6 +29,7 @@ const server = http.createServer(app);
 
 const CORS_ORIGINS = [
   "https://tradeictearner.online",
+  "http://tradeictearner.online",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ];
@@ -41,7 +42,13 @@ io.on("connection", (socket) => {
   socket.join("system-logs");
 });
 
-app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+app.use(
+  cors({
+    origin: CORS_ORIGINS,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
