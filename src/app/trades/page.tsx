@@ -257,6 +257,8 @@ export default function TradesPage() {
           </div>
         </>
       )}
+        </>
+      )}
     </div>
   );
 }
