@@ -89,6 +89,10 @@ let apiWsConnectPromise = null;
 let apiWsReconnectAttempts = 0;
 let apiWsReconnectTimer = null;
 
+/** Global cache: symbol -> funding interval hours (1, 2, 4, 8). Filled by syncFundingIntervals(); never cleared. */
+let fundingIntervalCache = {};
+let fundingIntervalRefreshTimerId = null;
+
 function getLivePositions() {
   return Object.values(livePositionsByKey);
 }
@@ -360,8 +364,6 @@ const lastFundingEmitBySymbol = {};
 const lastMarkPriceBySymbol = {};
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
-/** Previous nextFundingTime per symbol; used to compute interval = nextFundingTime - lastFundingTime when T changes. */
-const lastFundingTimeCache = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -427,24 +429,11 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         const { s, p, r, T, E } = payload;
         if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
         if (s != null) {
-          const sym = (s || "").toString().toUpperCase().trim();
           const nextFundingTime = T != null ? Number(T) : null;
           cachedFundingRates[s] = {
             fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
             nextFundingTime,
           };
-          if (nextFundingTime != null && Number.isFinite(nextFundingTime)) {
-            if (!lastFundingTimeCache[s]) {
-              lastFundingTimeCache[s] = nextFundingTime;
-            } else if (lastFundingTimeCache[s] !== nextFundingTime) {
-              const intervalMs = nextFundingTime - lastFundingTimeCache[s];
-              const calculatedHours = Math.round(intervalMs / 3600000);
-              if ([1, 2, 4, 8].includes(calculatedHours)) {
-                fundingIntervalCache[sym] = calculatedHours;
-              }
-              lastFundingTimeCache[s] = nextFundingTime;
-            }
-          }
         }
         if (!onFundingUpdate || !s) return;
         const now = Date.now();
@@ -864,10 +853,10 @@ function stop() {
   exchangeInfoFetchPromise = null;
   exchangeInfoAndLeverageLoadPromise = null;
   leverageBracketAttempted = false;
-  fundingInfoLoadPromise = null;
-  fundingInfoLoaded = false;
-  /* fundingIntervalCache is never cleared so interval survives reconnect and avoids UI reset to 8h */
-  Object.keys(lastFundingTimeCache).forEach((k) => delete lastFundingTimeCache[k]);
+  if (fundingIntervalRefreshTimerId != null) {
+    clearInterval(fundingIntervalRefreshTimerId);
+    fundingIntervalRefreshTimerId = null;
+  }
   cachedWalletBalance = 0;
   Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
@@ -922,8 +911,10 @@ async function hydratePositionsFromRest(credentials) {
 async function start(credentials, options = {}) {
   publicStopped = false;
   publicReconnectAttempts = 0;
+  await syncFundingIntervals();
   await ensureExchangeInfoAndLeverageLoaded(credentials);
-  await ensureFundingInfoLoaded();
+  if (fundingIntervalRefreshTimerId != null) clearInterval(fundingIntervalRefreshTimerId);
+  fundingIntervalRefreshTimerId = setInterval(syncFundingIntervals, 15 * 60 * 1000);
   const symbols = options.symbols || DEFAULT_SYMBOLS;
   openPublicStreams(symbols);
   await startPrivateStream(credentials);
@@ -1004,64 +995,32 @@ async function getPerpetualSymbols() {
     .map((s) => s.symbol);
 }
 
-/** One-time load: single bulk GET /fapi/v1/fundingInfo. No per-symbol REST, no loop over API. */
-let fundingInfoLoaded = false;
-let fundingInfoLoadPromise = null;
-/** Symbol -> interval hours (1,2,4,8). Populated by ensureFundingInfoLoaded and by WS markPriceUpdate. */
-let fundingIntervalCache = {};
-
-const FUNDING_INFO_RETRY_MAX = 3;
-const FUNDING_INFO_RETRY_DELAY_MS = 60000;
-
 /**
- * Make EXACTLY ONE unparameterized GET /fapi/v1/fundingInfo. Single bulk call; iterate in memory only.
- * Retry on 429/418 to avoid IP ban. Do NOT put the API call inside a loop.
+ * Single bulk GET /fapi/v1/fundingInfo (weight 1). Populates fundingIntervalCache. Safe from bans.
+ * Called at start() and every 15 minutes to keep intervals immortal.
  */
-async function ensureFundingInfoLoaded() {
-  if (fundingInfoLoaded) return;
-  if (fundingInfoLoadPromise) return fundingInfoLoadPromise;
-  fundingInfoLoadPromise = (async () => {
-    for (let attempt = 1; attempt <= FUNDING_INFO_RETRY_MAX; attempt++) {
-      try {
-        const response = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
-        const data = response?.data;
-        if (Array.isArray(data)) {
-          data.forEach((item) => {
-            const sym = (item.symbol || "").toString().toUpperCase().trim();
-            const parsedHours = parseInt(item.fundingIntervalHours, 10);
-            fundingIntervalCache[sym] = !Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours) ? parsedHours : 8;
-          });
-          fundingInfoLoaded = true;
-          return;
-        }
-      } catch (e) {
-        const status = e?.response?.status;
-        const isRetryable = status === 429 || status === 418;
-        if (isRetryable && attempt < FUNDING_INFO_RETRY_MAX) {
-          const delay = e?.response?.headers?.["retry-after"]
-            ? Math.min(120, parseInt(String(e.response.headers["retry-after"]), 10) || 60) * 1000
-            : FUNDING_INFO_RETRY_DELAY_MS;
-          console.warn("[Binance] fundingInfo rate limited (", status, "), retry in", delay / 1000, "s, attempt", attempt);
-          await new Promise((r) => setTimeout(r, delay));
-        } else {
-          console.warn("[Binance] One-time fundingInfo load failed:", e?.message || e);
-          break;
-        }
+async function syncFundingIntervals() {
+  try {
+    const response = await binanceAxios.get(`${REST_BASE}/fapi/v1/fundingInfo`);
+    const data = response?.data;
+    if (!Array.isArray(data)) return;
+    data.forEach((item) => {
+      const sym = (item.symbol || "").toUpperCase().trim();
+      const parsed = parseInt(item.fundingIntervalHours, 10);
+      if (!Number.isNaN(parsed) && [1, 2, 4, 8].includes(parsed)) {
+        fundingIntervalCache[sym] = parsed;
       }
-    }
-  })().finally(() => {
-    fundingInfoLoadPromise = null;
-  });
-  return fundingInfoLoadPromise;
+    });
+  } catch (err) {
+    console.error("[Binance] Failed to sync funding intervals:", err?.message || err);
+  }
 }
 
 /**
- * Get funding interval hours (1, 2, 4, or 8) from cache (bulk fundingInfo + WS updates). Default 8 if symbol not in cache.
- * Key is sanitized to prevent cache misses from whitespace or case.
+ * Get funding interval hours (1, 2, 4, or 8) from cache. Default 8 if symbol not in cache.
  */
 function getFundingIntervalHours(symbol) {
-  const sym = (symbol || "").toString().toUpperCase().trim();
-  return fundingIntervalCache[sym] ?? 8;
+  return fundingIntervalCache[(symbol || "").toUpperCase().trim()] || 8;
 }
 
 /**

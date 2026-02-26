@@ -94,9 +94,17 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
     (Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : 0);
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
-  const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
-  if (!markPrice || markPrice <= 0) {
-    console.error("[TradeMonitor] No mark price for", sym, ", skipping closePair");
+  const markPriceFromToken = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
+  const fallbackMarkPrice =
+    parseFloat(markPriceFromToken) ||
+    parseFloat(binancePos?.markPrice) ||
+    parseFloat(bybitPos?.markPrice) ||
+    parseFloat(binancePos?.entryPrice) ||
+    parseFloat(bybitPos?.entryPrice) ||
+    binanceManager.getMarkPrice(sym) ||
+    bybitManager.getMarkPrice(sym);
+  if (!fallbackMarkPrice || Number.isNaN(fallbackMarkPrice)) {
+    console.error("[TradeMonitor] CRITICAL: Cannot determine any price for", sym, "exit. Missing all price data.");
     return { binanceOk: false, bybitOk: false };
   }
 
@@ -111,11 +119,11 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
         : "SHORT";
 
   const { computeQuantityChunks } = autoTrader;
-  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * markPrice, markPrice, sym)).chunks : [];
-  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * markPrice, markPrice, sym)).chunks : [];
+  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks : [];
+  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks : [];
 
-  const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? markPrice;
-  const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? markPrice;
+  const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? fallbackMarkPrice;
+  const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? fallbackMarkPrice;
 
   const binancePromises = binanceChunks.map((qtyStr) => {
     const qty = parseFloat(qtyStr);
@@ -151,8 +159,8 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   });
   if (binanceOk || bybitOk) {
     autoTrader.clearEntryFundingDirection(sym);
-    const entryPrice = markPrice;
-    const exitPrice = markPrice;
+    const entryPrice = fallbackMarkPrice;
+    const exitPrice = fallbackMarkPrice;
     TradeLog.create({
       symbol: sym,
       entryPrice,
@@ -198,9 +206,14 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
 
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
-  const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
-  if (!markPrice || markPrice <= 0) {
-    console.error("[TradeMonitor] No mark price for", sym, ", skipping closeOrphan");
+  const markPriceFromToken = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
+  const fallbackMarkPrice =
+    parseFloat(markPriceFromToken) ||
+    parseFloat(pos?.markPrice) ||
+    parseFloat(pos?.entryPrice) ||
+    (exchange === "binance" ? binanceManager.getMarkPrice(sym) : bybitManager.getMarkPrice(sym));
+  if (!fallbackMarkPrice || Number.isNaN(fallbackMarkPrice)) {
+    console.error("[TradeMonitor] CRITICAL: Cannot determine any price for", sym, "orphan exit. Missing all price data.");
     return;
   }
 
@@ -208,10 +221,10 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
   const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
 
   const { computeQuantityChunks } = autoTrader;
-  const chunks = (await computeQuantityChunks(qty * markPrice, markPrice, sym)).chunks;
+  const chunks = (await computeQuantityChunks(qty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks;
   const price = exchange === "binance"
-    ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice)
-    : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice);
+    ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice)
+    : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice);
 
   for (const qtyStr of chunks) {
     const q = parseFloat(qtyStr);
@@ -231,8 +244,8 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
   const unrealized = Number.isFinite(pos?.unrealizedProfit) ? pos.unrealizedProfit : 0;
   TradeLog.create({
     symbol: sym,
-    entryPrice: markPrice,
-    exitPrice: markPrice,
+    entryPrice: fallbackMarkPrice,
+    exitPrice: fallbackMarkPrice,
     pnl: unrealized,
     reason: "Orphan",
     side: isLong ? "long" : "short",

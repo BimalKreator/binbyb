@@ -48,10 +48,10 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Interval from manager cache only. No math fallbacks. Fallback is always 8 (display "8h").
+ * Interval from manager cache only. No mathematical fallbacks; manager returns 8 when missing.
  */
 function computeIntervalHours(symbol, _nextFundingTime, source) {
-  if (source === "binance") return binanceManager.getFundingIntervalHours(symbol) || 8;
+  if (source === "binance") return binanceManager.getFundingIntervalHours(symbol);
   return 8;
 }
 
