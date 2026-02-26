@@ -37,7 +37,7 @@ function setOnPositionClosed(fn) {
   onPositionClosed = fn;
 }
 
-let publicWs = null;
+let publicWsArray = [];
 let privateWs = null;
 let tradeWs = null;
 let privateCredentials = null;
@@ -314,21 +314,39 @@ function schedulePrivateReconnect() {
 
 function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicStopped) return;
-  if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
 
+  publicWsArray.forEach((ws) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.removeAllListeners?.();
+      ws.close();
+    }
+  });
+  publicWsArray = [];
   publicStreamSymbols = symbols;
+
+  const MAX_TOPICS_PER_CONN = 300;
+  for (let i = 0; i < symbols.length; i += MAX_TOPICS_PER_CONN) {
+    const symbolChunk = symbols.slice(i, i + MAX_TOPICS_PER_CONN);
+    const chunkIndex = Math.floor(i / MAX_TOPICS_PER_CONN);
+    connectBybitPublicChunk(symbolChunk, chunkIndex);
+  }
+}
+
+function connectBybitPublicChunk(symbolsChunk, chunkIndex) {
   const ws = new WebSocket(PUBLIC_WS_URL, { family: 4 });
-  publicWs = ws;
+  publicWsArray.push(ws);
 
   ws.on("open", async () => {
     publicReconnectAttempts = 0;
-    console.log("[Bybit] Public WebSocket connected");
-    const subscribe_args = symbols.map((s) => `tickers.${s}`);
+    console.log(`[Bybit] Public WS [Chunk ${chunkIndex}] connected. Subscribing to ${symbolsChunk.length} symbols...`);
+
+    const subscribe_args = symbolsChunk.map((s) => `tickers.${s}`);
     const chunkSize = 10;
     for (let i = 0; i < subscribe_args.length; i += chunkSize) {
+      if (ws.readyState !== WebSocket.OPEN) break;
       const chunk = subscribe_args.slice(i, i + chunkSize);
       ws.send(JSON.stringify({ op: "subscribe", args: chunk }));
-      await new Promise((res) => setTimeout(res, 250));
+      await new Promise((res) => setTimeout(res, 200));
     }
   });
 
@@ -347,7 +365,12 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             if (msg.type === "snapshot") {
               tickerStateBySymbol[sym] = { ...d };
             } else if (msg.type === "delta") {
-              tickerStateBySymbol[sym] = Object.assign(tickerStateBySymbol[sym] || {}, d);
+              if (!tickerStateBySymbol[sym]) tickerStateBySymbol[sym] = {};
+              const merged = { ...tickerStateBySymbol[sym] };
+              Object.keys(d).forEach((k) => {
+                if (d[k] != null && d[k] !== "") merged[k] = d[k];
+              });
+              tickerStateBySymbol[sym] = merged;
             } else {
               tickerStateBySymbol[sym] = { ...d };
             }
@@ -387,20 +410,20 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       } else if (msg.op === "pong" || msg.success) {
         // ping/pong or subscribe ack
       }
-    } catch (err) {
-      console.error("[Bybit-WS-Error]", err.message);
+    } catch (e) {
+      console.error(`[Bybit] Public chunk ${chunkIndex} message parse error`, e.message);
     }
   });
 
   ws.on("close", (code, reason) => {
-    publicWs = null;
     ws.removeAllListeners?.();
-    console.log("[Bybit] Public WebSocket closed", code, reason?.toString());
-    if (!publicStopped) schedulePublicReconnect();
+    publicWsArray = publicWsArray.filter((w) => w !== ws);
+    console.log(`[Bybit] Public WS [Chunk ${chunkIndex}] closed`, code, reason?.toString());
+    if (!publicStopped && publicWsArray.length === 0) schedulePublicReconnect();
   });
 
   ws.on("error", (err) => {
-    console.error("[Bybit] Public WebSocket error", err.message);
+    console.error(`[Bybit] Public WS [Chunk ${chunkIndex}] error`, err.message);
   });
 }
 
@@ -961,10 +984,14 @@ function stop() {
     privateWs.close();
     privateWs = null;
   }
-  if (publicWs) {
-    publicWs.removeAllListeners?.();
-    publicWs.close();
-    publicWs = null;
+  if (publicWsArray && publicWsArray.length > 0) {
+    publicWsArray.forEach((ws) => {
+      if (ws) {
+        ws.removeAllListeners?.();
+        ws.close();
+      }
+    });
+    publicWsArray = [];
   }
   privateCredentials = null;
   tradeWsCredentials = null;
