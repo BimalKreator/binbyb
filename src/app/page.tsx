@@ -202,24 +202,25 @@ export default function Home() {
       const { symbol, binancePnL, bybitPnL, combinedPnL, binanceMarkPrice, bybitMarkPrice } = payload ?? {};
       if (!symbol) return;
       setPositions((prev) =>
-        prev.map((row) =>
-          row.symbol === symbol
-            ? {
-                ...row,
-                combinedUnrealizedProfit: combinedPnL ?? row.combinedUnrealizedProfit,
-                binance: {
-                  ...row.binance,
-                  unrealizedProfit: binancePnL ?? row.binance.unrealizedProfit,
-                  ...(binanceMarkPrice != null && Number.isFinite(binanceMarkPrice) ? { markPrice: binanceMarkPrice } : {}),
-                },
-                bybit: {
-                  ...row.bybit,
-                  unrealizedProfit: bybitPnL ?? row.bybit.unrealizedProfit,
-                  ...(bybitMarkPrice != null && Number.isFinite(bybitMarkPrice) ? { markPrice: bybitMarkPrice } : {}),
-                },
-              }
-            : row
-        )
+        prev.map((row) => {
+          if (row.symbol !== symbol) return row;
+          const nextBinance = {
+            ...row.binance,
+            unrealizedProfit: Number.isFinite(binancePnL) ? binancePnL : row.binance.unrealizedProfit,
+            ...(binanceMarkPrice != null && Number.isFinite(binanceMarkPrice) ? { markPrice: binanceMarkPrice } : {}),
+          };
+          const nextBybit = {
+            ...row.bybit,
+            unrealizedProfit: Number.isFinite(bybitPnL) ? bybitPnL : row.bybit.unrealizedProfit,
+            ...(bybitMarkPrice != null && Number.isFinite(bybitMarkPrice) ? { markPrice: bybitMarkPrice } : {}),
+          };
+          return {
+            ...row,
+            combinedUnrealizedProfit: Number.isFinite(combinedPnL) ? combinedPnL : row.combinedUnrealizedProfit,
+            binance: nextBinance,
+            bybit: nextBybit,
+          };
+        })
       );
     });
     return () => {

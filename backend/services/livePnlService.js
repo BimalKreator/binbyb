@@ -9,11 +9,11 @@ let io = null;
 let binanceManager = null;
 let bybitManager = null;
 
-/** Slow interval for position cache refresh (decoupled from ticks). 5–10s. */
-const POSITION_CACHE_INTERVAL_MS = 5000;
+/** Background position cache refresh interval. NOT in tick handler. 3–5s. */
+const POSITION_CACHE_INTERVAL_MS = 3000;
 
-/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitDirection }.
- *  Updated ONLY by refreshPositionCache() (called from setInterval).
+/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitSide }.
+ *  Updated ONLY by refreshPositionCache() (called from setInterval). Tick handler ONLY reads this.
  */
 const positionCache = Object.create(null);
 
@@ -46,9 +46,8 @@ function buildPrimaryBySymbol(positions) {
 }
 
 /**
- * Refresh position cache from managers' in-memory state (fed by User Data Streams).
- * Called ONLY from: (1) slow setInterval, (2) onPositionUpdate callback.
- * NEVER called from the mark-price tick handler.
+ * Refresh position cache from managers' in-memory state (WS User Data / position streams).
+ * Called ONLY from setInterval. NEVER called from the mark-price tick handler.
  */
 function refreshPositionCache() {
   if (!binanceManager || !bybitManager) return;
@@ -67,17 +66,17 @@ function refreshPositionCache() {
     const binanceQty = Math.abs(parseFloat(binancePos.positionAmt) || 0);
     const bybitQty = Math.abs(parseFloat(bybitPos.positionAmt) || 0);
     if (binanceQty <= 0 && bybitQty <= 0) continue;
-    const binanceEntry = parseFloat(binancePos.entryPrice) || 0;
-    const bybitEntry = parseFloat(bybitPos.entryPrice) || 0;
-    const binanceDirection = (parseFloat(binancePos.positionAmt) || 0) > 0 ? 1 : -1;
-    const bybitDirection = String(bybitPos.side || "").toLowerCase() === "buy" ? 1 : -1;
+    const binanceEntry = parseFloat(String(binancePos.entryPrice ?? 0)) || 0;
+    const bybitEntry = parseFloat(String(bybitPos.entryPrice ?? 0)) || 0;
+    const binanceDirection = (parseFloat(String(binancePos.positionAmt ?? 0)) || 0) > 0 ? 1 : -1;
+    const bybitSide = String(bybitPos.side ?? "").trim();
     positionCache[symbol] = {
       binanceEntry,
       bybitEntry,
       binanceQty,
       bybitQty,
       binanceDirection,
-      bybitDirection,
+      bybitSide,
     };
   }
   // Remove symbols no longer paired
@@ -103,12 +102,17 @@ function onMarkPriceTick(symbol, markPrice, source) {
   const pos = positionCache[sym];
   if (!pos) return;
 
-  const binanceMark = markPriceCache[sym].binance || 0;
-  const bybitMark = markPriceCache[sym].bybit || 0;
-  const { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitDirection } = pos;
+  const binanceMark = parseFloat(markPriceCache[sym].binance) || 0;
+  const bybitMark = parseFloat(markPriceCache[sym].bybit) || 0;
+  const bEntry = parseFloat(pos.binanceEntry);
+  const bQty = parseFloat(pos.binanceQty);
+  const byEntry = parseFloat(pos.bybitEntry);
+  const byQty = parseFloat(pos.bybitQty);
+  const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
+  const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
 
-  const binancePnL = binanceDirection * (binanceMark - binanceEntry) * binanceQty;
-  const bybitPnL = bybitDirection * (bybitMark - bybitEntry) * bybitQty;
+  const binancePnL = binanceDirection * (binanceMark - bEntry) * bQty;
+  const bybitPnL = bybitDirection * (bybitMark - byEntry) * byQty;
   const combinedPnL = binancePnL + bybitPnL;
 
   io.emit("live_pnl_update", {
@@ -127,18 +131,18 @@ function init(socketServer, binance, bybit) {
   bybitManager = bybit;
 
   refreshPositionCache();
+  setTimeout(refreshPositionCache, 800);
 
   const tickHandler = (symbol, markPrice, source) => onMarkPriceTick(symbol, markPrice, source);
   binanceManager.setOnMarkPriceUpdate(tickHandler);
   bybitManager.setOnMarkPriceUpdate(tickHandler);
 
-  // Position cache: updated ONLY by slow interval. (Do not use setOnPositionUpdate here—tradeMonitor owns that callback.)
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
 
   console.log(
-    "[LivePnl] Started: tick handler is pure local math; position cache refreshed every",
+    "[LivePnl] Started: tick handler is local math only; position cache refreshed every",
     POSITION_CACHE_INTERVAL_MS / 1000,
-    "s (no REST in tick path)."
+    "s (no API in tick path)."
   );
 }
 
