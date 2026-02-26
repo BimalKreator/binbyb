@@ -194,6 +194,7 @@ router.get("/positions", async (req, res) => {
       const bybitNextFundingAmount = -bybitFee;
       const totalNextFundingAmount = totalFundingIncome;
 
+      // Exchange-native unrealized PnL only (Binance: unRealizedProfit, Bybit: unrealisedPnl → normalized to unrealizedProfit)
       const combinedUnrealized =
         parseFloat(String(binancePos.unrealizedProfit ?? 0)) + parseFloat(String(bybitPos.unrealizedProfit ?? 0));
       const combinedMargin =

@@ -60,17 +60,30 @@ function buildPrimaryBySymbol(positions) {
 }
 
 /**
- * Combined PnL % = (Binance_Unrealized + Bybit_Unrealized) / Total_Margin * 100
+ * Exchange-native unrealized PnL only. Do NOT calculate (markPrice - entryPrice) * size.
+ * Binance: unRealizedProfit from position payload. Bybit: unrealisedPnl from position payload.
+ * Managers normalize both to unrealizedProfit.
  */
-function combinedPnlPercent(binancePos, bybitPos) {
-  const totalUnrealized =
-    (Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : 0) +
-    (Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : 0);
-  const totalMargin =
+function getNativeUnrealizedPnl(binancePos, bybitPos) {
+  const binanceNativePnL =
+    Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : 0;
+  const bybitNativePnL =
+    Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : 0;
+  const combinedUnrealizedPnL = parseFloat(binanceNativePnL) + parseFloat(bybitNativePnL);
+  const combinedMargin =
     (Number.isFinite(binancePos?.marginUsed) ? binancePos.marginUsed : 0) +
     (Number.isFinite(bybitPos?.marginUsed) ? bybitPos.marginUsed : 0);
-  if (totalMargin <= 0) return null;
-  return (totalUnrealized / totalMargin) * 100;
+  return { combinedUnrealizedPnL, combinedMargin };
+}
+
+/**
+ * Combined PnL % for TP/SL: (Binance native + Bybit native unrealized) / total margin * 100.
+ * Trigger TP/SL based ONLY on this combinedUnrealizedPnL (no local math).
+ */
+function combinedPnlPercent(binancePos, bybitPos) {
+  const { combinedUnrealizedPnL, combinedMargin } = getNativeUnrealizedPnl(binancePos, bybitPos);
+  if (combinedMargin <= 0) return null;
+  return (combinedUnrealizedPnL / combinedMargin) * 100;
 }
 
 /**
@@ -89,9 +102,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   const binancePositionSide = binancePos.positionSide || undefined;
   const bybitCloseSide = String(bybitPos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
 
-  const combinedPnl =
-    (Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : 0) +
-    (Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : 0);
+  const { combinedUnrealizedPnL } = getNativeUnrealizedPnl(binancePos, bybitPos);
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
   const markPriceFromToken = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
@@ -157,39 +168,73 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
       console.error("[TradeMonitor] Close order failed", sym, i < binanceChunks.length ? "binance" : "bybit", r.reason?.message || r.reason);
     }
   });
+
+  // Execution prices: entry from position (before close), exit from order response
+  const binanceExecEntry = parseFloat(binancePos?.entryPrice) || fallbackMarkPrice;
+  const bybitExecEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || fallbackMarkPrice;
+  let binanceExecExit = null;
+  let bybitExecExit = null;
+  for (let i = 0; i < binanceChunks.length && i < results.length; i++) {
+    if (results[i].status !== "fulfilled") continue;
+    const val = results[i].value;
+    const ap = val?.avgPrice;
+    if (ap != null && String(ap).length > 0) {
+      const p = parseFloat(ap);
+      if (Number.isFinite(p) && p > 0) {
+        binanceExecExit = p;
+        break;
+      }
+    }
+  }
+  for (let i = 0; i < bybitChunks.length; i++) {
+    const idx = binanceChunks.length + i;
+    if (idx >= results.length || results[idx].status !== "fulfilled") continue;
+    const val = results[idx].value;
+    const orderId = val?.result?.orderId ?? val?.orderId;
+    if (orderId) {
+      bybitExecExit = await bybitManager.getOrderFillPrice(credentials.bybit, orderId);
+      break;
+    }
+  }
+  if (binanceExecExit == null || !Number.isFinite(binanceExecExit)) binanceExecExit = fallbackMarkPrice;
+  if (bybitExecExit == null || !Number.isFinite(bybitExecExit)) bybitExecExit = fallbackMarkPrice;
+
   if (binanceOk || bybitOk) {
     autoTrader.clearEntryFundingDirection(sym);
-    const exitPrice = fallbackMarkPrice;
     const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const reasonStr = reason === "SL" ? "SL" : "Target";
     const sideStr = binancePos.side === "BUY" ? "long" : "short";
-    const binancePnl = Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : combinedPnl / 2;
-    const bybitPnl = Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : combinedPnl / 2;
+    const binancePnl = Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : combinedUnrealizedPnL / 2;
+    const bybitPnl = Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : combinedUnrealizedPnL / 2;
     const legs = [
       {
         symbol: sym,
-        entryPrice: fallbackMarkPrice,
-        exitPrice,
+        entryPrice: binanceExecEntry,
+        exitPrice: binanceExecExit,
         pnl: binancePnl,
         reason: reasonStr,
         side: sideStr,
         exchange: "Binance",
         groupId,
-        requestedEntryPrice: binancePrice,
-        executedEntryPrice: exitPrice,
+        requestedEntryPrice: null,
+        executedEntryPrice: binanceExecEntry,
+        reqExit: binancePrice,
+        execExit: binanceExecExit,
         fee: 0,
       },
       {
         symbol: sym,
-        entryPrice: fallbackMarkPrice,
-        exitPrice,
+        entryPrice: bybitExecEntry,
+        exitPrice: bybitExecExit,
         pnl: bybitPnl,
         reason: reasonStr,
         side: sideStr,
         exchange: "Bybit",
         groupId,
-        requestedEntryPrice: bybitPrice,
-        executedEntryPrice: exitPrice,
+        requestedEntryPrice: null,
+        executedEntryPrice: bybitExecEntry,
+        reqExit: bybitPrice,
+        execExit: bybitExecExit,
         fee: 0,
       },
     ];
@@ -250,34 +295,51 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
     ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice)
     : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice);
 
+  let execExitPrice = fallbackMarkPrice;
   for (const qtyStr of chunks) {
     const q = parseFloat(qtyStr);
     if (q <= 0) continue;
-    if (exchange === "binance") {
-      await binanceManager.placeIOCLimitOrder(credentials.binance, sym, closeSide, q, price, {
-        positionSide: binancePositionSide,
-        reduceOnly: true,
-      });
-    } else {
-      await bybitManager.placeIOCLimitOrder(credentials.bybit, sym, closeSide, q, price, { reduceOnly: true });
+    try {
+      if (exchange === "binance") {
+        const res = await binanceManager.placeIOCLimitOrder(credentials.binance, sym, closeSide, q, price, {
+          positionSide: binancePositionSide,
+          reduceOnly: true,
+        });
+        const ap = res?.avgPrice;
+        if (ap != null && String(ap).length > 0) {
+          const p = parseFloat(ap);
+          if (Number.isFinite(p) && p > 0) execExitPrice = p;
+        }
+      } else {
+        const res = await bybitManager.placeIOCLimitOrder(credentials.bybit, sym, closeSide, q, price, { reduceOnly: true });
+        const orderId = res?.result?.orderId ?? res?.orderId;
+        if (orderId) {
+          const bybitAvg = await bybitManager.getOrderFillPrice(credentials.bybit, orderId);
+          if (bybitAvg != null && Number.isFinite(bybitAvg)) execExitPrice = bybitAvg;
+        }
+      }
+    } finally {
+      orderCircuitBreaker.recordOrderPlaced();
     }
-    orderCircuitBreaker.recordOrderPlaced();
   }
 
   autoTrader.clearEntryFundingDirection(sym);
   const unrealized = Number.isFinite(pos?.unrealizedProfit) ? pos.unrealizedProfit : 0;
   const exchangeName = exchange === "binance" ? "Binance" : "Bybit";
+  const execEntryPrice = parseFloat(pos?.entryPrice ?? pos?.avgPrice) || fallbackMarkPrice;
   TradeLog.create({
     symbol: sym,
-    entryPrice: fallbackMarkPrice,
-    exitPrice: fallbackMarkPrice,
+    entryPrice: execEntryPrice,
+    exitPrice: execExitPrice,
     pnl: unrealized,
     reason: "Orphan",
     side: isLong ? "long" : "short",
     exchange: exchangeName,
     groupId: null,
-    requestedEntryPrice: price,
-    executedEntryPrice: fallbackMarkPrice,
+    requestedEntryPrice: null,
+    executedEntryPrice: execEntryPrice,
+    reqExit: price,
+    execExit: execExitPrice,
     fee: 0,
   }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));
   console.log("[TradeMonitor] Orphan closed", exchange, sym);

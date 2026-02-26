@@ -19,6 +19,10 @@ type TradeRecord = {
   groupId?: string | null;
   requestedEntryPrice?: number | null;
   executedEntryPrice?: number | null;
+  reqEntry?: number | null;
+  execEntry?: number | null;
+  reqExit?: number | null;
+  execExit?: number | null;
   fee?: number;
 };
 
@@ -300,16 +304,16 @@ export default function TradesPage() {
                             <td className="py-1.5 px-3 text-foreground">{exchange}</td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">—</td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
-                              {t.requestedEntryPrice != null ? Number(t.requestedEntryPrice).toFixed(4) : "—"}
+                              {(t.reqEntry ?? t.requestedEntryPrice) != null ? Number(t.reqEntry ?? t.requestedEntryPrice).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
-                              {t.executedEntryPrice != null ? Number(t.executedEntryPrice).toFixed(4) : "—"}
+                              {(t.execEntry ?? t.executedEntryPrice ?? t.entryPrice) != null ? Number(t.execEntry ?? t.executedEntryPrice ?? t.entryPrice).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
-                              {t.requestedEntryPrice != null ? Number(t.requestedEntryPrice).toFixed(4) : "—"}
+                              {t.reqExit != null ? Number(t.reqExit).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
-                              {t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : "—"}
+                              {(t.execExit ?? t.exitPrice) != null ? Number(t.execExit ?? t.exitPrice).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-400 tabular-nums">
                               {t.fee != null && t.fee !== 0 ? Number(t.fee).toFixed(4) : "—"}

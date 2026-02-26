@@ -38,6 +38,10 @@ router.get("/history", async (req, res) => {
       groupId: t.groupId ?? null,
       requestedEntryPrice: t.requestedEntryPrice ?? null,
       executedEntryPrice: t.executedEntryPrice ?? null,
+      reqEntry: t.requestedEntryPrice ?? null,
+      execEntry: t.executedEntryPrice ?? t.entryPrice ?? null,
+      reqExit: t.reqExit ?? null,
+      execExit: t.execExit ?? t.exitPrice ?? null,
       fee: t.fee ?? 0,
     }));
 

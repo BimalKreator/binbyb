@@ -4,6 +4,7 @@
  */
 
 const Setting = require("../models/Setting");
+const TradeLog = require("../models/TradeLog");
 const { getDecryptedApiKeys } = require("./apiKeys");
 const { binanceManager, bybitManager } = require("./exchanges");
 const screener = require("./screener");
@@ -181,6 +182,12 @@ async function runAutoEntry() {
   }
   if (tradedCycles[symbol] === nextFundingTime) {
     console.log(`[AutoTrader] Skipped: ${symbol} already traded for this cycle. Waiting for next funding.`);
+    return;
+  }
+  // Persistent cycle lock: survive PM2 restart — skip if symbol had a closed trade in last 4h
+  const lastTrade = await TradeLog.findOne({ symbol }).sort({ exitTime: -1 }).lean();
+  if (lastTrade?.exitTime && (Date.now() - new Date(lastTrade.exitTime).getTime()) < 14400000) {
+    console.log(`[AutoTrader] Persistent Lock: ${symbol} recently traded. Waiting for next cycle.`);
     return;
   }
   if (countdownMs <= 0) {

@@ -1028,10 +1028,48 @@ async function getPerpetualSymbols() {
     .map((item) => item.symbol);
 }
 
+/**
+ * Get average fill price for a closed/filled order (e.g. after placeIOCLimitOrder).
+ * Waits briefly then GET /v5/order/history to read avgPrice. Used for trade history execExit.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} orderId - order ID from create response
+ * @returns {Promise<number|null>} avgPrice or null
+ */
+async function getOrderFillPrice(credentials, orderId) {
+  if (!credentials?.apiKey || !credentials?.apiSecret || !orderId) return null;
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+    const qs = `category=linear&orderId=${encodeURIComponent(orderId)}`;
+    const signStr = timestamp + credentials.apiKey + recvWindow + qs;
+    const signature = signMessage(signStr, credentials.apiSecret);
+    const { data } = await bybitPrivateAxios.get(`${REST_BASE}/v5/order/history?${qs}`, {
+      headers: {
+        "X-BAPI-API-KEY": credentials.apiKey,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "X-BAPI-SIGN": signature,
+      },
+    });
+    const list = data?.result?.list || [];
+    const order = list[0];
+    const avg = order?.avgPrice;
+    if (avg != null && String(avg).length > 0) {
+      const p = parseFloat(avg);
+      if (Number.isFinite(p) && p > 0) return p;
+    }
+  } catch (e) {
+    console.warn("[Bybit] getOrderFillPrice", orderId, e.message || e);
+  }
+  return null;
+}
+
 module.exports = {
   start,
   stop,
   placeIOCLimitOrder,
+  getOrderFillPrice,
   setLeverage,
   placeWSOrder,
   placeMarketCloseOrder,

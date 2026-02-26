@@ -795,6 +795,7 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, quantity, pric
     quantity: qtyStr,
     price: priceStr,
     timestamp,
+    newOrderRespType: "RESULT", // get avgPrice/executedQty in response when order fills
   };
   if (opts.newClientOrderId != null) params.newClientOrderId = opts.newClientOrderId;
   if (opts.reduceOnly === true) params.reduceOnly = "true";
