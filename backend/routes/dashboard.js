@@ -190,6 +190,7 @@ router.get("/positions", async (req, res) => {
 
       positions.push({
         symbol,
+        isFundingFlipped: totalNextFundingAmount < 0,
         binance: {
           side: binancePos.side,
           positionSide: binancePos.positionSide,

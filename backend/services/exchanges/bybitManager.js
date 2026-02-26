@@ -72,6 +72,8 @@ function upsertLivePosition(raw) {
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "bybit");
     return;
   }
+  const now = Date.now();
+  const existing = livePositionsByKey[key];
   const entryPrice = parseFloat(raw?.avgPrice ?? raw?.entryPrice ?? 0) || null;
   const leverage = raw?.leverage != null ? Number(raw.leverage) : null;
   const liquidationPrice = parseFloat(raw?.liqPrice ?? raw?.liquidationPrice ?? 0) || null;
@@ -84,6 +86,8 @@ function upsertLivePosition(raw) {
     entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
     leverage: Number.isFinite(leverage) ? leverage : null,
     liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
+    createdTime: existing?.createdTime ?? now,
+    updatedTime: now,
   };
 }
 

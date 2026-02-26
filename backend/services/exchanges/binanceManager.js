@@ -112,6 +112,8 @@ function upsertLivePosition(raw) {
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "binance");
     return;
   }
+  const now = Date.now();
+  const existing = livePositionsByKey[key];
   const side = positionSide === "LONG" ? "BUY" : positionSide === "SHORT" ? "SELL" : amt > 0 ? "BUY" : "SELL";
   const entryPrice = parseFloat(raw?.ep ?? raw?.entryPrice ?? 0) || null;
   const leverage = raw?.l != null ? Number(raw.l) : raw?.leverage != null ? Number(raw.leverage) : null;
@@ -126,6 +128,8 @@ function upsertLivePosition(raw) {
     entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
     leverage: Number.isFinite(leverage) ? leverage : null,
     liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
+    createdTime: existing?.createdTime ?? now,
+    updatedTime: now,
   };
 }
 
@@ -239,6 +243,7 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
     timestamp,
   };
   if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
+  if (opts.reduceOnly === true) params.reduceOnly = "true";
 
   const queryString = Object.keys(params)
     .sort()
@@ -799,6 +804,7 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, quantity, pric
     timestamp,
   };
   if (opts.newClientOrderId != null) params.newClientOrderId = opts.newClientOrderId;
+  if (opts.reduceOnly === true) params.reduceOnly = "true";
 
   const queryString = Object.keys(params)
     .sort()

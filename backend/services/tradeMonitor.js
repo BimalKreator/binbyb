@@ -13,6 +13,8 @@ const screener = require("./screener");
 const autoTrader = require("./autoTrader");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
 
+const ORPHAN_GRACE_MS = 10000; // 10 seconds: only close orphan if position age > this (avoids false orphan from leg latency)
+
 const FUNDING_WINDOW_MS = 600000; // 10 minutes before next funding
 const ORPHAN_WAIT_MS = 10000; // 10 seconds before closing orphan (for timer-based orphan path)
 const ORPHAN_CLOSE_COOLDOWN_MS = 30000; // 30 seconds after a failed close before retry (no spam)
@@ -71,6 +73,9 @@ function combinedPnlPercent(binancePos, bybitPos) {
   return (totalUnrealized / totalMargin) * 100;
 }
 
+/**
+ * Close paired positions using split IOC limit orders (getOrderbookPrice slippage). No REST polling.
+ */
 async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   if (!orderCircuitBreaker.canPlaceOrder()) {
     console.error("[TradeMonitor] Order circuit breaker: trading paused, skipping closePair", toUpperSymbol(symbol));
@@ -90,6 +95,13 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
   const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
+  if (!markPrice || markPrice <= 0) {
+    console.error("[TradeMonitor] No mark price for", sym, ", skipping closePair");
+    return { binanceOk: false, bybitOk: false };
+  }
+
+  const settings = await Setting.findOne().lean();
+  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
 
   const binancePositionSideForClose =
     binancePositionSide === "LONG" || binancePositionSide === "SHORT"
@@ -97,35 +109,50 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
       : binanceCloseSide === "SELL"
         ? "LONG"
         : "SHORT";
-  const results = await Promise.allSettled([
-    binanceQty > 0
-      ? binanceManager.placeMarketCloseOrder(credentials.binance, sym, binanceCloseSide, binanceQty, {
-          positionSide: binancePositionSideForClose,
-        }).then((r) => {
-          orderCircuitBreaker.recordOrderPlaced();
-          return r;
-        })
-      : Promise.resolve(),
-    bybitQty > 0
-      ? bybitManager.placeMarketCloseOrder(credentials.bybit, sym, bybitCloseSide, bybitQty).then((r) => {
-          orderCircuitBreaker.recordOrderPlaced();
-          return r;
-        })
-      : Promise.resolve(),
-  ]);
 
-  const binanceOk = results[0].status === "fulfilled";
-  const bybitOk = results[1].status === "fulfilled";
-  if (!binanceOk && results[0].reason) {
-    console.error("[TradeMonitor] Binance close failed", sym, results[0].reason?.message || results[0].reason);
-  }
-  if (!bybitOk && results[1].reason) {
-    console.error("[TradeMonitor] Bybit close failed", sym, results[1].reason?.message || results[1].reason);
-  }
+  const { computeQuantityChunks } = autoTrader;
+  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * markPrice, markPrice, sym)).chunks : [];
+  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * markPrice, markPrice, sym)).chunks : [];
+
+  const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? markPrice;
+  const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? markPrice;
+
+  const binancePromises = binanceChunks.map((qtyStr) => {
+    const qty = parseFloat(qtyStr);
+    if (qty <= 0) return Promise.resolve();
+    return binanceManager
+      .placeIOCLimitOrder(credentials.binance, sym, binanceCloseSide, qty, binancePrice, {
+        positionSide: binancePositionSideForClose,
+        reduceOnly: true,
+      })
+      .then((r) => {
+        orderCircuitBreaker.recordOrderPlaced();
+        return r;
+      });
+  });
+  const bybitPromises = bybitChunks.map((qtyStr) => {
+    const qty = parseFloat(qtyStr);
+    if (qty <= 0) return Promise.resolve();
+    return bybitManager
+      .placeIOCLimitOrder(credentials.bybit, sym, bybitCloseSide, qty, bybitPrice, { reduceOnly: true })
+      .then((r) => {
+        orderCircuitBreaker.recordOrderPlaced();
+        return r;
+      });
+  });
+
+  const results = await Promise.allSettled([...binancePromises, ...bybitPromises]);
+  const binanceOk = binanceChunks.length === 0 || results.slice(0, binanceChunks.length).every((r) => r.status === "fulfilled");
+  const bybitOk = bybitChunks.length === 0 || results.slice(binanceChunks.length).every((r) => r.status === "fulfilled");
+  results.forEach((r, i) => {
+    if (r.status === "rejected") {
+      console.error("[TradeMonitor] Close order failed", sym, i < binanceChunks.length ? "binance" : "bybit", r.reason?.message || r.reason);
+    }
+  });
   if (binanceOk || bybitOk) {
     autoTrader.clearEntryFundingDirection(sym);
-    const entryPrice = markPrice > 0 ? markPrice : 0;
-    const exitPrice = markPrice > 0 ? markPrice : 0;
+    const entryPrice = markPrice;
+    const exitPrice = markPrice;
     TradeLog.create({
       symbol: sym,
       entryPrice,
@@ -139,6 +166,9 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   return { binanceOk, bybitOk };
 }
 
+/**
+ * Close orphan position using split IOC limit orders (getOrderbookPrice). No REST polling.
+ */
 async function closeOrphanPosition(credentials, exchange, symbol, pos) {
   if (!orderCircuitBreaker.canPlaceOrder()) {
     console.error("[TradeMonitor] Order circuit breaker: trading paused, skipping closeOrphan", toUpperSymbol(symbol), exchange);
@@ -165,26 +195,47 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
       : closeSide === "SELL"
         ? "LONG"
         : "SHORT";
-  if (exchange === "binance") {
-    await binanceManager.placeMarketCloseOrder(credentials.binance, sym, closeSide, qty, {
-      positionSide: binancePositionSide,
-    });
-  } else {
-    await bybitManager.placeMarketCloseOrder(credentials.bybit, sym, closeSide, qty);
-  }
-  orderCircuitBreaker.recordOrderPlaced();
-  autoTrader.clearEntryFundingDirection(sym);
+
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
   const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
+  if (!markPrice || markPrice <= 0) {
+    console.error("[TradeMonitor] No mark price for", sym, ", skipping closeOrphan");
+    return;
+  }
+
+  const settings = await Setting.findOne().lean();
+  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+
+  const { computeQuantityChunks } = autoTrader;
+  const chunks = (await computeQuantityChunks(qty * markPrice, markPrice, sym)).chunks;
+  const price = exchange === "binance"
+    ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice)
+    : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? markPrice);
+
+  for (const qtyStr of chunks) {
+    const q = parseFloat(qtyStr);
+    if (q <= 0) continue;
+    if (exchange === "binance") {
+      await binanceManager.placeIOCLimitOrder(credentials.binance, sym, closeSide, q, price, {
+        positionSide: binancePositionSide,
+        reduceOnly: true,
+      });
+    } else {
+      await bybitManager.placeIOCLimitOrder(credentials.bybit, sym, closeSide, q, price, { reduceOnly: true });
+    }
+    orderCircuitBreaker.recordOrderPlaced();
+  }
+
+  autoTrader.clearEntryFundingDirection(sym);
   const unrealized = Number.isFinite(pos?.unrealizedProfit) ? pos.unrealizedProfit : 0;
   TradeLog.create({
     symbol: sym,
-    entryPrice: markPrice > 0 ? markPrice : 0,
-    exitPrice: markPrice > 0 ? markPrice : 0,
+    entryPrice: markPrice,
+    exitPrice: markPrice,
     pnl: unrealized,
     reason: "Orphan",
-    side: (exchange === "binance" && pos.side === "BUY") || (exchange === "bybit" && String(pos.side || "").toLowerCase() === "buy") ? "long" : "short",
+    side: isLong ? "long" : "short",
     exchange,
   }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));
   console.log("[TradeMonitor] Orphan closed", exchange, sym);
@@ -199,8 +250,8 @@ async function runMonitor() {
     return;
   }
 
-  const slPercent = Number(settings?.slPercent ?? settings?.stopLoss ?? 0);
-  const tpPercent = Number(settings?.tpPercent ?? settings?.takeProfit ?? 0);
+  const stopLoss = Number(settings?.stopLoss ?? settings?.slPercent ?? 0);
+  const takeProfit = Number(settings?.takeProfit ?? settings?.tpPercent ?? 0);
   const now = Date.now();
 
   // Exit loops read from local position state (Binance: ACCOUNT_UPDATE, Bybit: position topic)
@@ -251,10 +302,9 @@ async function runMonitor() {
     }
   }
 
-  // 10-second orphan rule; skip symbols in failedCloses cooldown (10 min) to avoid IP ban
+  // Orphan exit with 10-second grace: only close if position age > ORPHAN_GRACE_MS (avoids false orphan from leg latency)
   for (const symbol of Object.keys(orphanFirstSeen)) {
     const rec = orphanFirstSeen[symbol];
-    if (now - rec.firstSeen < ORPHAN_WAIT_MS) continue;
     if (now < (orphanCloseCooldownUntil[symbol] || 0)) continue;
     if (now < (failedClosesUntil[symbol] || 0)) continue;
 
@@ -264,6 +314,8 @@ async function runMonitor() {
     if (stillOnlyBinance) {
       const pos = binanceBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
+        const posAge = now - (pos.createdTime ?? pos.updatedTime ?? now);
+        if (posAge <= ORPHAN_GRACE_MS) continue;
         try {
           await closeOrphanPosition(keys, "binance", symbol, pos);
           delete orphanFirstSeen[symbol];
@@ -281,6 +333,8 @@ async function runMonitor() {
     } else if (stillOnlyBybit) {
       const pos = bybitBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
+        const posAge = now - (pos.createdTime ?? pos.updatedTime ?? now);
+        if (posAge <= ORPHAN_GRACE_MS) continue;
         try {
           await closeOrphanPosition(keys, "bybit", symbol, pos);
           delete orphanFirstSeen[symbol];
@@ -313,8 +367,8 @@ async function runMonitor() {
 
     const pnlPct = combinedPnlPercent(binancePos, bybitPos);
     if (pnlPct != null) {
-      if (slPercent !== 0 && pnlPct <= slPercent) {
-        console.log("[TradeMonitor] SL exit", symbol, "PnL%", pnlPct.toFixed(2), "slPercent", slPercent);
+      if (stopLoss > 0 && pnlPct <= -stopLoss) {
+        console.log("[TradeMonitor] SL exit", symbol, "PnL%", pnlPct.toFixed(2), "stopLoss", stopLoss);
         try {
           await closePair(keys, symbol, binancePos, bybitPos, "SL");
           delete failedClosesUntil[symbol];
@@ -324,8 +378,8 @@ async function runMonitor() {
         }
         continue;
       }
-      if (tpPercent !== 0 && pnlPct >= tpPercent) {
-        console.log("[TradeMonitor] TP exit", symbol, "PnL%", pnlPct.toFixed(2), "tpPercent", tpPercent);
+      if (takeProfit > 0 && pnlPct >= takeProfit) {
+        console.log("[TradeMonitor] TP exit", symbol, "PnL%", pnlPct.toFixed(2), "takeProfit", takeProfit);
         try {
           await closePair(keys, symbol, binancePos, bybitPos, "Target");
           delete failedClosesUntil[symbol];
@@ -338,20 +392,23 @@ async function runMonitor() {
     }
 
     const token = rankedTokens.find((t) => toUpperSymbol(t?.symbol) === symbol);
-    const nextFundingTime = token?.nextFundingTime;
-    if (nextFundingTime != null && Number.isFinite(nextFundingTime) && nextFundingTime - now < FUNDING_WINDOW_MS) {
-      const entryDir = autoTrader.getEntryFundingDirection(symbol);
-      if (entryDir) {
-        const currentBinanceHigher = Number(token?.fundingBinance ?? 0) > Number(token?.fundingBybit ?? 0);
-        if (currentBinanceHigher !== entryDir.binanceHigher) {
-          console.log("[TradeMonitor] Funding flip exit", symbol);
-          try {
-            await closePair(keys, symbol, binancePos, bybitPos, "Target");
-            delete failedClosesUntil[symbol];
-          } catch (e) {
-            console.error("[TradeMonitor] closePair (funding flip) failed", symbol, e.message || e);
-            failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
-          }
+    const nextFundingTime = token?.nextFundingTime ?? null;
+    const binanceFunding = Number(token?.fundingBinance ?? binanceManager.getCachedFundingRate(symbol) ?? 0) || 0;
+    const bybitFunding = Number(token?.fundingBybit ?? bybitManager.getCachedFundingRate(symbol) ?? 0) || 0;
+    const notionalBinance = Math.abs(Number(binancePos?.positionAmt ?? 0)) * (binanceManager.getMarkPrice(symbol) ?? 0);
+    const notionalBybit = Math.abs(Number(bybitPos?.positionAmt ?? 0)) * (bybitManager.getMarkPrice(symbol) ?? 0);
+    const totalNextFundingAmount = notionalBinance * binanceFunding + notionalBybit * bybitFunding;
+    const isFundingFlipped = totalNextFundingAmount < 0;
+    if (isFundingFlipped && nextFundingTime != null && Number.isFinite(nextFundingTime)) {
+      const timeLeft = nextFundingTime - now;
+      if (timeLeft <= FUNDING_WINDOW_MS) {
+        console.log("[TradeMonitor] Funding flip exit (within 10 min)", symbol);
+        try {
+          await closePair(keys, symbol, binancePos, bybitPos, "Target");
+          delete failedClosesUntil[symbol];
+        } catch (e) {
+          console.error("[TradeMonitor] closePair (funding flip) failed", symbol, e.message || e);
+          failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
         }
       }
     }
@@ -401,6 +458,8 @@ function handlePositionClosed(symbol, closedExchange) {
       const forSymbol = (positions || []).filter((p) => toUpperSymbol(p?.symbol) === sym && Math.abs(Number(p?.positionAmt) || 0) > 0);
       const primary = forSymbol.length ? forSymbol.reduce((a, b) => (Math.abs(Number(b?.positionAmt) || 0) > Math.abs(Number(a?.positionAmt) || 0) ? b : a)) : null;
       if (!primary) return;
+      const posAge = Date.now() - (primary.createdTime ?? primary.updatedTime ?? Date.now());
+      if (posAge <= ORPHAN_GRACE_MS) return;
       return closeOrphanPosition(keys, otherExchange, sym, primary).then(
         () => {
           delete orphanCloseCooldownUntil[sym];

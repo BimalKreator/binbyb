@@ -41,6 +41,7 @@ type PositionLeg = {
 
 type PositionRow = {
   symbol: string;
+  isFundingFlipped?: boolean;
   binance: PositionLeg;
   bybit: PositionLeg;
   combinedUnrealizedProfit: number;
@@ -287,6 +288,11 @@ export default function Home() {
                           )}
                         </span>
                         <span className="font-medium text-foreground min-w-[80px]">{row.symbol}</span>
+                        {row.isFundingFlipped && (
+                          <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/40" title="Next funding will be a payment (negative); consider exiting before funding.">
+                            ⚠️ Funding Flipped
+                          </span>
+                        )}
                         <span
                           className={`font-medium ${
                             pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
