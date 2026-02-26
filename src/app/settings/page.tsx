@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { Loader } from "@/components/Loader";
+import { KeyRound, Sliders } from "lucide-react";
 
 type SettingRecord = {
   _id: string;
@@ -21,9 +22,14 @@ type SettingRecord = {
   entrySlippagePct?: number;
   userMinSpread?: number;
 };
+
+type ApiKeyRecord = { _id: string; exchange: string; label?: string };
+
 export default function SettingsPage() {
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
+  const [settingsTab, setSettingsTab] = useState<"bot" | "exchange">("bot");
+
   const [settings, setSettings] = useState<SettingRecord | null>(null);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -38,6 +44,17 @@ export default function SettingsPage() {
   const [autoExitEnabled, setAutoExitEnabled] = useState(false);
   const [entryTimeMs, setEntryTimeMs] = useState(1000);
   const [entrySlippagePct, setEntrySlippagePct] = useState(2);
+
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
+  const [loadingApiKeys, setLoadingApiKeys] = useState(false);
+  const [savingApiKey, setSavingApiKey] = useState<string | null>(null);
+  const [binanceKey, setBinanceKey] = useState("");
+  const [binanceSecret, setBinanceSecret] = useState("");
+  const [binanceLabel, setBinanceLabel] = useState("");
+  const [bybitKey, setBybitKey] = useState("");
+  const [bybitSecret, setBybitSecret] = useState("");
+  const [bybitPassphrase, setBybitPassphrase] = useState("");
+  const [bybitLabel, setBybitLabel] = useState("");
 
   useEffect(() => {
     api
@@ -61,6 +78,59 @@ export default function SettingsPage() {
       .catch(() => toast.error("Failed to load settings"))
       .finally(() => setLoadingSettings(false));
   }, []);
+
+  useEffect(() => {
+    if (settingsTab !== "exchange") return;
+    setLoadingApiKeys(true);
+    api
+      .get<{ success: boolean; data: ApiKeyRecord[] }>("/api-keys")
+      .then(({ data }) => {
+        if (data.success && data.data) setApiKeys(data.data);
+      })
+      .catch(() => toast.error("Failed to load API keys"))
+      .finally(() => setLoadingApiKeys(false));
+  }, [settingsTab]);
+
+  const saveApiKey = async (exchange: "binance" | "bybit") => {
+    const payload =
+      exchange === "binance"
+        ? { exchange: "binance", apiKey: binanceKey, apiSecret: binanceSecret, label: binanceLabel }
+        : {
+            exchange: "bybit",
+            apiKey: bybitKey,
+            apiSecret: bybitSecret,
+            passphrase: bybitPassphrase || undefined,
+            label: bybitLabel,
+          };
+    if (!payload.apiKey?.trim() || !payload.apiSecret?.trim()) {
+      toast.error("API Key and Secret are required.");
+      return;
+    }
+    setSavingApiKey(exchange);
+    try {
+      await api.post("/api-keys", payload);
+      toast.success(`${exchange === "binance" ? "Binance" : "Bybit"} keys saved.`);
+      setApiKeys((prev) => {
+        const rest = prev.filter((k) => k.exchange !== exchange);
+        return [...rest, { _id: "", exchange, label: payload.label }];
+      });
+      if (exchange === "binance") {
+        setBinanceKey("");
+        setBinanceSecret("");
+        setBinanceLabel("");
+      } else {
+        setBybitKey("");
+        setBybitSecret("");
+        setBybitPassphrase("");
+        setBybitLabel("");
+      }
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(msg || "Failed to save API keys.");
+    } finally {
+      setSavingApiKey(null);
+    }
+  };
 
   const saveSettings = async () => {
     setSavingSettings(true);
@@ -94,8 +164,99 @@ export default function SettingsPage() {
 
   return (
     <div className="w-full min-w-0 max-w-[100vw] overflow-x-hidden px-4 py-4">
-      <h2 className="text-lg font-semibold text-foreground mb-4">Settings</h2>
+      <h2 className="text-lg font-semibold text-foreground mb-3">Settings</h2>
 
+      <div className="flex gap-1 p-1 rounded-lg bg-slate-800/50 border border-slate-700 mb-4">
+        <button
+          type="button"
+          onClick={() => setSettingsTab("bot")}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors ${
+            settingsTab === "bot"
+              ? "bg-[var(--primary)] text-white"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          Bot Settings
+        </button>
+        <button
+          type="button"
+          onClick={() => setSettingsTab("exchange")}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors ${
+            settingsTab === "exchange"
+              ? "bg-[var(--primary)] text-white"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <KeyRound className="w-4 h-4" />
+          Exchange APIs
+        </button>
+      </div>
+
+      {settingsTab === "exchange" ? (
+        <>
+          <p className="text-sm text-slate-400 mb-6">
+            Add API keys for Binance and Bybit. Keys are encrypted and stored securely.
+          </p>
+          {loadingApiKeys ? (
+            <Loader size="small" label="Loading..." />
+          ) : (
+            <div className="space-y-6">
+              <section className="rounded-xl border border-slate-700 bg-slate-800/30 p-4">
+                <h3 className="text-base font-medium text-foreground mb-3">Binance</h3>
+                {apiKeys.some((k) => k.exchange === "binance") && (
+                  <p className="text-xs text-[var(--profit)] mb-3">Keys configured</p>
+                )}
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className={labelClass}>API Key</span>
+                    <input type="password" value={binanceKey} onChange={(e) => setBinanceKey(e.target.value)} placeholder="••••••••" className={inputClass} />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>API Secret</span>
+                    <input type="password" value={binanceSecret} onChange={(e) => setBinanceSecret(e.target.value)} placeholder="••••••••" className={inputClass} />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Label (optional)</span>
+                    <input type="text" value={binanceLabel} onChange={(e) => setBinanceLabel(e.target.value)} placeholder="e.g. Main" className={inputClass} />
+                  </label>
+                  <button type="button" onClick={() => saveApiKey("binance")} disabled={savingApiKey === "binance"} className="h-10 px-4 rounded-lg font-medium text-white disabled:opacity-60" style={{ backgroundColor: "var(--primary)" }}>
+                    {savingApiKey === "binance" ? "Saving..." : "Save Binance Keys"}
+                  </button>
+                </div>
+              </section>
+              <section className="rounded-xl border border-slate-700 bg-slate-800/30 p-4">
+                <h3 className="text-base font-medium text-foreground mb-3">Bybit</h3>
+                {apiKeys.some((k) => k.exchange === "bybit") && (
+                  <p className="text-xs text-[var(--profit)] mb-3">Keys configured</p>
+                )}
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className={labelClass}>API Key</span>
+                    <input type="password" value={bybitKey} onChange={(e) => setBybitKey(e.target.value)} placeholder="••••••••" className={inputClass} />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>API Secret</span>
+                    <input type="password" value={bybitSecret} onChange={(e) => setBybitSecret(e.target.value)} placeholder="••••••••" className={inputClass} />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Passphrase (optional)</span>
+                    <input type="password" value={bybitPassphrase} onChange={(e) => setBybitPassphrase(e.target.value)} placeholder="••••••••" className={inputClass} />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Label (optional)</span>
+                    <input type="text" value={bybitLabel} onChange={(e) => setBybitLabel(e.target.value)} placeholder="e.g. Main" className={inputClass} />
+                  </label>
+                  <button type="button" onClick={() => saveApiKey("bybit")} disabled={savingApiKey === "bybit"} className="h-10 px-4 rounded-lg font-medium text-white disabled:opacity-60" style={{ backgroundColor: "var(--primary)" }}>
+                    {savingApiKey === "bybit" ? "Saving..." : "Save Bybit Keys"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
       {/* Master toggles - very top */}
       <section className={`${sectionClass} rounded-xl border-2 border-slate-600 bg-slate-800/50 p-5`}>
         <h3 className="text-base font-semibold text-foreground mb-4">Auto Trade & Exit</h3>
@@ -264,6 +425,8 @@ export default function SettingsPage() {
           Log out
         </button>
       </section>
+        </>
+      )}
     </div>
   );
 }

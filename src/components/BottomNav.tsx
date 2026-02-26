@@ -2,15 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { KeyRound, LayoutDashboard, LineChart, Receipt, Settings, Terminal, Wallet } from "lucide-react";
+import { LayoutDashboard, LineChart, Receipt, Settings, Wallet } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/screener", label: "Screener", icon: LineChart },
-  { href: "/exchange", label: "Exchange", icon: KeyRound },
   { href: "/funds", label: "Funds", icon: Wallet },
   { href: "/trades", label: "Trades", icon: Receipt },
-  { href: "/logs", label: "Logs", icon: Terminal },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

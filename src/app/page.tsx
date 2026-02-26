@@ -163,8 +163,13 @@ export default function Home() {
         if (!cancelled) setLoading(false);
       }
     })();
+    const intervalId = setInterval(() => {
+      fetchMetrics();
+      fetchPositions();
+    }, 2000);
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
   }, [fetchMetrics, fetchPositions]);
 
