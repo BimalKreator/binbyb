@@ -241,30 +241,12 @@ export default function ScreenerPage() {
                       </span>
                     </td>
                     <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
-                      {countdownMs != null && countdownMs > 0 ? (
-                        <>
-                          <span className="block font-medium tabular-nums leading-tight">
-                            {formatCountdownHms(countdownMs)}
-                          </span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                            {row.intervalDisplay ?? "8h"}
-                          </span>
-                        </>
-                      ) : row.nextFundingTime != null ? (
-                        <>
-                          <span className="block font-medium tabular-nums leading-tight">—</span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                            {row.intervalDisplay ?? "8h"}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="block font-medium tabular-nums leading-tight">—</span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                            8h
-                          </span>
-                        </>
-                      )}
+                      <span className="block font-medium tabular-nums leading-tight">
+                        {countdownMs != null && countdownMs > 0 ? formatCountdownHms(countdownMs) : "—"}
+                      </span>
+                      <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
+                        {row.intervalDisplay || "8h"}
+                      </span>
                     </td>
                     <td className="py-1 px-2 text-right">
                       <button

@@ -427,6 +427,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         const { s, p, r, T, E } = payload;
         if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
         if (s != null) {
+          const sym = (s || "").toString().toUpperCase().trim();
           const nextFundingTime = T != null ? Number(T) : null;
           cachedFundingRates[s] = {
             fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
@@ -439,7 +440,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               const intervalMs = nextFundingTime - lastFundingTimeCache[s];
               const calculatedHours = Math.round(intervalMs / 3600000);
               if ([1, 2, 4, 8].includes(calculatedHours)) {
-                fundingIntervalCache[s] = calculatedHours;
+                fundingIntervalCache[sym] = calculatedHours;
               }
               lastFundingTimeCache[s] = nextFundingTime;
             }
@@ -865,7 +866,7 @@ function stop() {
   leverageBracketAttempted = false;
   fundingInfoLoadPromise = null;
   fundingInfoLoaded = false;
-  Object.keys(fundingIntervalCache).forEach((k) => delete fundingIntervalCache[k]);
+  /* fundingIntervalCache is never cleared so interval survives reconnect and avoids UI reset to 8h */
   Object.keys(lastFundingTimeCache).forEach((k) => delete lastFundingTimeCache[k]);
   cachedWalletBalance = 0;
   Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
@@ -1026,7 +1027,7 @@ async function ensureFundingInfoLoaded() {
         const data = response?.data;
         if (Array.isArray(data)) {
           data.forEach((item) => {
-            const sym = (item.symbol || "").toUpperCase();
+            const sym = (item.symbol || "").toString().toUpperCase().trim();
             const parsedHours = parseInt(item.fundingIntervalHours, 10);
             fundingIntervalCache[sym] = !Number.isNaN(parsedHours) && [1, 2, 4, 8].includes(parsedHours) ? parsedHours : 8;
           });
@@ -1056,9 +1057,10 @@ async function ensureFundingInfoLoaded() {
 
 /**
  * Get funding interval hours (1, 2, 4, or 8) from cache (bulk fundingInfo + WS updates). Default 8 if symbol not in cache.
+ * Key is sanitized to prevent cache misses from whitespace or case.
  */
 function getFundingIntervalHours(symbol) {
-  const sym = String(symbol || "").toUpperCase();
+  const sym = (symbol || "").toString().toUpperCase().trim();
   return fundingIntervalCache[sym] ?? 8;
 }
 
