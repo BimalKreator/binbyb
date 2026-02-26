@@ -168,8 +168,8 @@ function connectTradeWs(credentials) {
             pending.reject(err);
           }
         }
-      } catch (e) {
-        console.error("[Bybit] Trade WS message parse error", e.message);
+      } catch (err) {
+        console.error("[Bybit-WS-Error]", err.message);
       }
     });
     ws.on("close", (code, reason) => {
@@ -342,7 +342,13 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             if (msg.type === "snapshot") {
               tickerStateBySymbol[sym] = { ...d };
             } else if (msg.type === "delta") {
-              Object.assign(tickerStateBySymbol[sym] || {}, d);
+              const existing = tickerStateBySymbol[sym] || {};
+              const merged = { ...existing };
+              for (const k of Object.keys(d)) {
+                const v = d[k];
+                if (v != null && v !== "") merged[k] = v;
+              }
+              tickerStateBySymbol[sym] = merged;
             } else {
               tickerStateBySymbol[sym] = { ...d };
             }
@@ -358,7 +364,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               try {
                 onMarkPriceUpdate(sym, mp, "bybit");
               } catch (e) {
-                console.error("[Bybit] onMarkPriceUpdate error", e.message);
+                console.error("[Bybit-WS-Error] onMarkPriceUpdate", e.message);
               }
             }
             cachedFundingRates[sym] = {
@@ -382,8 +388,8 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       } else if (msg.op === "pong" || msg.success) {
         // ping/pong or subscribe ack
       }
-    } catch (e) {
-      console.error("[Bybit] Public message parse error", e.message);
+    } catch (err) {
+      console.error("[Bybit-WS-Error]", err.message);
     }
   });
 

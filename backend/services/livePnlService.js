@@ -103,53 +103,59 @@ function refreshPositionCache() {
  * Reused by both the tick handler and the heartbeat.
  */
 function computeAndEmitPnL(symbol) {
-  if (!io) return;
-  const sym = toUpperSymbol(symbol);
-  const pos = positionCache[sym];
-  if (!pos) return;
+  try {
+    if (!io) return;
+    const sym = toUpperSymbol(symbol);
+    // Debug: enable to confirm tick-by-tick runs; comment out once verified
+    console.log(`[COMPUTE-PNL] ${sym} | Mark: ${JSON.stringify(markPriceCache[sym])} | Time: ${Date.now()}`);
+    const pos = positionCache[sym];
+    if (!pos) return;
 
-  const cachedBinanceMark = parseFloat(markPriceCache[sym]?.binance);
-  const cachedBybitMark = parseFloat(markPriceCache[sym]?.bybit);
-  const binanceMark =
-    cachedBinanceMark > 0
-      ? cachedBinanceMark
-      : (typeof binanceManager.getMarkPrice === "function" ? parseFloat(binanceManager.getMarkPrice(sym)) : 0) || 0;
-  const bybitMark =
-    cachedBybitMark > 0 ? cachedBybitMark : (typeof bybitManager.getMarkPrice === "function" ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) || 0;
+    const cachedBinanceMark = parseFloat(markPriceCache[sym]?.binance);
+    const cachedBybitMark = parseFloat(markPriceCache[sym]?.bybit);
+    const binanceMark =
+      cachedBinanceMark > 0
+        ? cachedBinanceMark
+        : (typeof binanceManager.getMarkPrice === "function" ? parseFloat(binanceManager.getMarkPrice(sym)) : 0) || 0;
+    const bybitMark =
+      cachedBybitMark > 0 ? cachedBybitMark : (typeof bybitManager.getMarkPrice === "function" ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) || 0;
 
-  const bEntry = parseFloat(pos.binanceEntry);
-  const bQty = parseFloat(pos.binanceQty);
-  const byEntry = parseFloat(pos.bybitEntry);
-  const byQty = parseFloat(pos.bybitQty);
-  const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
-  const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
+    const bEntry = parseFloat(pos.binanceEntry);
+    const bQty = parseFloat(pos.binanceQty);
+    const byEntry = parseFloat(pos.bybitEntry);
+    const byQty = parseFloat(pos.bybitQty);
+    const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
+    const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
 
-  const binancePnL =
-    binanceMark > 0 && bEntry > 0
-      ? binanceDirection * (binanceMark - bEntry) * bQty
-      : parseFloat(pos.binanceNativePnL) || 0;
-  const bybitPnL =
-    bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : parseFloat(pos.bybitNativePnL) || 0;
-  const combinedPnL = binancePnL + bybitPnL;
-  const totalMargin = parseFloat(pos.totalMargin) || 0;
-  const combinedPnlPercent =
-    totalMargin > 0 && Number.isFinite(combinedPnL) ? (combinedPnL / totalMargin) * 100 : null;
+    const binancePnL =
+      binanceMark > 0 && bEntry > 0
+        ? binanceDirection * (binanceMark - bEntry) * bQty
+        : parseFloat(pos.binanceNativePnL) || 0;
+    const bybitPnL =
+      bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : parseFloat(pos.bybitNativePnL) || 0;
+    const combinedPnL = binancePnL + bybitPnL;
+    const totalMargin = parseFloat(pos.totalMargin) || 0;
+    const combinedPnlPercent =
+      totalMargin > 0 && Number.isFinite(combinedPnL) ? (combinedPnL / totalMargin) * 100 : null;
 
-  io.emit("live_pnl_update", {
-    symbol: sym,
-    binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
-    bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
-    combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
-    binanceMarkPrice: binanceMark,
-    bybitMarkPrice: bybitMark,
-  });
+    io.emit("live_pnl_update", {
+      symbol: sym,
+      binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
+      bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
+      combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
+      binanceMarkPrice: binanceMark,
+      bybitMarkPrice: bybitMark,
+    });
 
-  if (typeof exitCheckCallback === "function" && combinedPnlPercent != null) {
-    try {
-      exitCheckCallback(sym, combinedPnlPercent);
-    } catch (e) {
-      console.error("[LivePnl] exitCheckCallback error", sym, e?.message || e);
+    if (typeof exitCheckCallback === "function" && combinedPnlPercent != null) {
+      try {
+        exitCheckCallback(sym, combinedPnlPercent);
+      } catch (e) {
+        console.error("[LivePnl] exitCheckCallback error", sym, e?.message || e);
+      }
     }
+  } catch (err) {
+    console.error("[PnL-Calc-Error]", toUpperSymbol(symbol), err?.message || err);
   }
 }
 
@@ -182,11 +188,13 @@ function init(socketServer, binance, bybit) {
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
 
   heartbeatIntervalId = setInterval(() => {
-    Object.keys(positionCache).forEach((sym) => computeAndEmitPnL(sym));
-  }, 500);
+    Object.keys(positionCache).forEach((sym) => {
+      if (positionCache[sym]) computeAndEmitPnL(sym);
+    });
+  }, 200);
 
   console.log(
-    "[LivePnl] Started: tick handler + 500ms heartbeat; position cache refreshed every",
+    "[LivePnl] Started: tick handler + 200ms heartbeat; position cache refreshed every",
     POSITION_CACHE_INTERVAL_MS / 1000,
     "s."
   );

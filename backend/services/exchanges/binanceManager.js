@@ -436,36 +436,37 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
       if (payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
-        if (s && p != null) lastMarkPriceBySymbol[s] = parseFloat(p) || 0;
-        if (onMarkPriceUpdate && s && p != null) {
+        const sym = s ? String(s).toUpperCase() : s;
+        if (sym && p != null) lastMarkPriceBySymbol[sym] = parseFloat(p) || 0;
+        if (onMarkPriceUpdate && sym && p != null) {
           try {
-            onMarkPriceUpdate(s, parseFloat(p), "binance");
+            onMarkPriceUpdate(sym, parseFloat(p), "binance");
           } catch (e) {
-            console.error("[Binance] onMarkPriceUpdate error", e.message);
+            console.error("[Binance-WS-Error]", e.message);
           }
         }
-        if (s != null) {
+        if (sym != null) {
           const nextFundingTime = T != null ? Number(T) : null;
-          cachedFundingRates[s] = {
+          cachedFundingRates[sym] = {
             fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
             nextFundingTime,
           };
         }
-        if (!onFundingUpdate || !s) return;
+        if (!onFundingUpdate || !sym) return;
         const now = Date.now();
-        const last = lastFundingEmitBySymbol[s];
+        const last = lastFundingEmitBySymbol[sym];
         if (last != null && now - last < FUNDING_THROTTLE_MS) return;
-        lastFundingEmitBySymbol[s] = now;
+        lastFundingEmitBySymbol[sym] = now;
         onFundingUpdate({
-          symbol: s,
+          symbol: sym,
           fundingRate: parseFloat(r),
           nextFundingTime: T,
           markPrice: parseFloat(p),
           eventTime: E,
         });
       }
-    } catch (e) {
-      console.error("[Binance] Public message parse error", e.message);
+    } catch (err) {
+      console.error("[Binance-WS-Error]", err.message);
     }
   });
 
