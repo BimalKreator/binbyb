@@ -210,6 +210,9 @@ export default function Home() {
 
     socket.on("live_pnl_update", (payload: any) => {
       if (!payload || !payload.symbol) return;
+
+      console.log(`[WS-RECEIVE] ⚡ ${payload.symbol} | PnL: ${payload.combinedPnL}`);
+
       latestPnlRef.current[payload.symbol] = payload;
     });
 

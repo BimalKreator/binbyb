@@ -143,14 +143,16 @@ function computeAndEmitPnL(symbol) {
 
     // Diagnostic log
     console.log(`[LIVE-MATH] 🟢 ${sym} | B_Entry: ${bEntry.toFixed(4)}, B_Mark: ${binanceMark.toFixed(4)} -> PnL: ${binancePnL.toFixed(4)} | By_Entry: ${byEntry.toFixed(4)}, By_Mark: ${bybitMark.toFixed(4)} -> PnL: ${bybitPnL.toFixed(4)}`);
-    io.emit("live_pnl_update", {
-      symbol: sym,
-      binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
-      bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
-      combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
-      binanceMarkPrice: binanceMark,
-      bybitMarkPrice: bybitMark,
-    });
+    if (typeof io !== "undefined" && io.emit) {
+      io.emit("live_pnl_update", {
+        symbol: sym,
+        binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
+        bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
+        combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
+        binanceMarkPrice: binanceMark,
+        bybitMarkPrice: bybitMark,
+      });
+    }
 
     if (typeof exitCheckCallback === "function" && combinedPnlPercent != null) {
       try {
