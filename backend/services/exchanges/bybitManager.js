@@ -362,8 +362,8 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               }
             }
             cachedFundingRates[sym] = {
-              fundingRate: Number.isFinite(parseFloat(state?.fundingRate ?? d.fundingRate)) ? parseFloat(state?.fundingRate ?? d.fundingRate) : 0,
-              nextFundingTime: (state?.nextFundingTime ?? d.nextFundingTime) != null ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
+              fundingRate: Number.isFinite(parseFloat((state?.fundingRate ?? d.fundingRate) || 0)) ? parseFloat((state?.fundingRate ?? d.fundingRate) || 0) : 0,
+              nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
             };
             if (!onFundingUpdate) continue;
             const now = Date.now();
@@ -373,7 +373,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             onFundingUpdate({
               symbol: d.symbol,
               fundingRate: parseFloat((state?.fundingRate ?? d.fundingRate) || 0),
-              nextFundingTime: (state?.nextFundingTime ?? d.nextFundingTime) != null ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
+              nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
               markPrice: mp,
               eventTime: (state?.timestamp ?? d.timestamp) ? Number(state?.timestamp ?? d.timestamp) : msg.ts,
             });
