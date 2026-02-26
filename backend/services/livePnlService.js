@@ -116,23 +116,23 @@ function computeAndEmitPnL(symbol) {
     const byQty = Math.abs(parseFloat(pos.bybitQty || pos.bybit?.size || pos.bybitRaw?.size || 0));
     if (bQty === 0 && byQty === 0) return;
 
-    // 1. Get Entry Prices safely
-    const bEntry = parseFloat(pos.binanceRaw?.entryPrice || pos.binanceEntry || 0);
-    const byEntry = parseFloat(pos.bybitRaw?.avgPrice || pos.bybitRaw?.entryPrice || pos.bybitEntry || 0);
+    // 1. Get Entry Prices safely (Using fields that actually exist in positionCache)
+    const bEntry = parseFloat(pos.binanceEntry || 0);
+    const byEntry = parseFloat(pos.bybitEntry || 0);
 
-    // 2. Get Mark Prices safely (From cache or raw position fallback)
-    const binanceMark = parseFloat(markPriceCache[sym]?.binance || pos.binanceRaw?.markPrice || 0);
-    const bybitMark = parseFloat(markPriceCache[sym]?.bybit || pos.bybitRaw?.markPrice || 0);
+    // 2. Get Mark Prices safely (Cache -> Manager Fallback -> 0)
+    const binanceMark = parseFloat(markPriceCache[sym]?.binance) || (binanceManager && typeof binanceManager.getMarkPrice === 'function' ? parseFloat(binanceManager.getMarkPrice(sym)) : 0) || 0;
+    const bybitMark = parseFloat(markPriceCache[sym]?.bybit) || (bybitManager && typeof bybitManager.getMarkPrice === 'function' ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) || 0;
 
     // 3. Get Directions safely
-    const bDir = parseFloat(pos.binanceRaw?.positionAmt || pos.binanceQty || 0) >= 0 ? 1 : -1;
-    const byDir = String(pos.bybitRaw?.side || pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
+    const bDir = parseFloat(pos.binanceDirection || 0) >= 0 ? 1 : -1;
+    const byDir = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
 
     // 4. Get Native REST Fallbacks
-    const binanceNative = parseFloat(pos.binanceRaw?.unRealizedProfit || 0);
-    const bybitNative = parseFloat(pos.bybitRaw?.unrealisedPnl || 0);
+    const binanceNative = parseFloat(pos.binanceNativePnL || 0);
+    const bybitNative = parseFloat(pos.bybitNativePnL || 0);
 
-    // 5. Calculate Live PnL (Force math if Entry and Mark exist)
+    // 5. Calculate Live PnL (Uses bQty and byQty already declared at the top of the function)
     const binancePnL = (bEntry > 0 && binanceMark > 0) ? bDir * (binanceMark - bEntry) * bQty : binanceNative;
     const bybitPnL = (byEntry > 0 && bybitMark > 0) ? byDir * (bybitMark - byEntry) * byQty : bybitNative;
     const combinedPnL = binancePnL + bybitPnL;
@@ -141,7 +141,8 @@ function computeAndEmitPnL(symbol) {
     const combinedPnlPercent =
       totalMargin > 0 && Number.isFinite(combinedPnL) ? (combinedPnL / totalMargin) * 100 : null;
 
-    console.log(`[LIVE-MATH] 🟢 ${sym} | B_Entry: ${bEntry}, B_Mark: ${binanceMark} -> PnL: ${binancePnL.toFixed(4)} | By_Entry: ${byEntry}, By_Mark: ${bybitMark} -> PnL: ${bybitPnL.toFixed(4)}`);
+    // Diagnostic log
+    console.log(`[LIVE-MATH] 🟢 ${sym} | B_Entry: ${bEntry.toFixed(4)}, B_Mark: ${binanceMark.toFixed(4)} -> PnL: ${binancePnL.toFixed(4)} | By_Entry: ${byEntry.toFixed(4)}, By_Mark: ${bybitMark.toFixed(4)} -> PnL: ${bybitPnL.toFixed(4)}`);
     io.emit("live_pnl_update", {
       symbol: sym,
       binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
