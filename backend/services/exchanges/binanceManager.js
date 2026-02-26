@@ -11,6 +11,7 @@ const { logLatency } = require("./latencyTracker");
 const PUBLIC_WS_BASE = "wss://fstream.binance.com";
 const WS_FAPI_BASE = "wss://ws-fapi.binance.com/ws-fapi/v1";
 const REST_BASE = "https://fapi.binance.com";
+const SPOT_REST_BASE = "https://api.binance.com";
 
 /** If x-mbx-used-weight-1m exceeds this, all Binance REST requests pause for 60s to avoid IP ban. */
 const BINANCE_WEIGHT_LIMIT = 2000;
@@ -828,6 +829,64 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, quantity, pric
   return res.data;
 }
 
+/**
+ * Futures USDT-M to Spot (internal transfer). Uses Spot API. type=2 = FUTURES to SPOT.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} asset - e.g. USDT
+ * @param {number} amount - amount to transfer
+ */
+async function futuresTransferToSpot(credentials, asset, amount) {
+  if (!credentials?.apiKey || !credentials?.apiSecret) throw new Error("Binance credentials required");
+  const timestamp = Date.now();
+  const params = {
+    type: 2, // FUTURES to SPOT
+    asset: String(asset || "USDT").toUpperCase(),
+    amount: parseFloat(amount) || 0,
+    timestamp,
+  };
+  const queryString = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const signature = signQueryString(queryString, credentials.apiSecret);
+  const fullQuery = `${queryString}&signature=${signature}`;
+  const { data } = await binanceAxios.post(`${SPOT_REST_BASE}/sapi/v1/futures/transfer?${fullQuery}`, null, {
+    headers: { "X-MBX-APIKEY": credentials.apiKey },
+  });
+  return data;
+}
+
+/**
+ * Withdraw from Spot to external address. Uses Spot API.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} coin - e.g. USDT
+ * @param {number} amount - amount to withdraw
+ * @param {string} address - destination address
+ * @param {string} network - e.g. TRC20, BEP20
+ */
+async function withdrawSpot(credentials, coin, amount, address, network) {
+  if (!credentials?.apiKey || !credentials?.apiSecret) throw new Error("Binance credentials required");
+  if (!address || !network) throw new Error("Address and network required");
+  const timestamp = Date.now();
+  const params = {
+    coin: String(coin || "USDT").toUpperCase(),
+    amount: parseFloat(amount) || 0,
+    address: String(address).trim(),
+    network: String(network).trim(),
+    timestamp,
+  };
+  const queryString = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const signature = signQueryString(queryString, credentials.apiSecret);
+  const fullQuery = `${queryString}&signature=${signature}`;
+  const { data } = await binanceAxios.post(`${SPOT_REST_BASE}/sapi/v1/capital/withdraw/apply?${fullQuery}`, null, {
+    headers: { "X-MBX-APIKEY": credentials.apiKey },
+  });
+  return data;
+}
+
 function stop() {
   publicStopped = true;
   if (publicReconnectTimer) {
@@ -1205,4 +1264,6 @@ module.exports = {
   getPositionDetails,
   getSymbolFilters,
   hydratePositionsFromRest,
+  futuresTransferToSpot,
+  withdrawSpot,
 };

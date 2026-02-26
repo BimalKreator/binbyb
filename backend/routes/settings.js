@@ -35,6 +35,11 @@ router.put("/", async (req, res) => {
       entryTimeMs,
       entrySlippagePct,
       userMinSpread,
+      openingBalance,
+      binanceDepositAddress,
+      binanceNetwork,
+      bybitDepositAddress,
+      bybitNetwork,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -48,6 +53,11 @@ router.put("/", async (req, res) => {
     if (entryTimeMs !== undefined) update.entryTimeMs = Math.max(0, Number(entryTimeMs) || 1000);
     if (entrySlippagePct !== undefined) update.entrySlippagePct = Math.max(0, Math.min(100, Number(entrySlippagePct) ?? 2));
     if (userMinSpread !== undefined) update.userMinSpread = Number(userMinSpread);
+    if (openingBalance !== undefined) update.openingBalance = Number(openingBalance);
+    if (binanceDepositAddress !== undefined) update.binanceDepositAddress = String(binanceDepositAddress ?? "").trim();
+    if (binanceNetwork !== undefined) update.binanceNetwork = String(binanceNetwork ?? "").trim();
+    if (bybitDepositAddress !== undefined) update.bybitDepositAddress = String(bybitDepositAddress ?? "").trim();
+    if (bybitNetwork !== undefined) update.bybitNetwork = String(bybitNetwork ?? "").trim();
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

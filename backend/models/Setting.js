@@ -16,6 +16,10 @@ const settingSchema = new mongoose.Schema(
     entrySlippagePct: { type: Number, default: 2 }, // IOC limit order slippage %
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
     openingBalance: { type: Number, default: 0 }, // USDT balance at start (for Profit = Current - Opening - Deposits + Withdrawals)
+    binanceDepositAddress: { type: String, default: "" },
+    binanceNetwork: { type: String, default: "" }, // e.g. TRC20, BEP20
+    bybitDepositAddress: { type: String, default: "" },
+    bybitNetwork: { type: String, default: "" },
   },
   { timestamps: true }
 );

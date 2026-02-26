@@ -10,6 +10,7 @@ const tradeRoutes = require("./trade");
 const tradesRoutes = require("./trades");
 const dashboardRoutes = require("./dashboard");
 const logsRoutes = require("./logs");
+const transferRoutes = require("./transfer");
 
 const router = express.Router();
 
@@ -24,5 +25,6 @@ router.use("/trade", tradeRoutes);
 router.use("/trades", tradesRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/logs", logsRoutes);
+router.use("/transfer", transferRoutes);
 
 module.exports = router;

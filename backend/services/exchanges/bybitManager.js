@@ -584,6 +584,64 @@ async function getSymbolFilters(symbol) {
 }
 
 /**
+ * Internal transfer: UNIFIED to FUND (Funding account). Same UID.
+ * POST /v5/asset/transfer/inter-transfer
+ */
+async function transferUnifiedToFunding(credentials, coin, amount) {
+  if (!credentials?.apiKey || !credentials?.apiSecret) throw new Error("Bybit credentials required");
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const body = {
+    transferId: `bt-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`,
+    coin: String(coin || "USDT").toUpperCase(),
+    amount: String(parseFloat(amount) || 0),
+    fromAccountType: "UNIFIED",
+    toAccountType: "FUND",
+  };
+  const rawBody = JSON.stringify(body);
+  const signStr = timestamp + credentials.apiKey + recvWindow + rawBody;
+  const signature = signMessage(signStr, credentials.apiSecret);
+  const { data } = await bybitPrivateAxios.post(`${REST_BASE}/v5/asset/transfer/inter-transfer`, body, {
+    headers: {
+      "X-BAPI-API-KEY": credentials.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+  });
+  return data;
+}
+
+/**
+ * Withdraw from Bybit to external address.
+ * POST /v5/asset/withdraw/create
+ */
+async function withdrawCreate(credentials, coin, chain, address, amount) {
+  if (!credentials?.apiKey || !credentials?.apiSecret) throw new Error("Bybit credentials required");
+  if (!address || !chain) throw new Error("Address and chain required");
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const body = {
+    coin: String(coin || "USDT").toUpperCase(),
+    chain: String(chain).trim(),
+    address: String(address).trim(),
+    amount: String(parseFloat(amount) || 0),
+  };
+  const rawBody = JSON.stringify(body);
+  const signStr = timestamp + credentials.apiKey + recvWindow + rawBody;
+  const signature = signMessage(signStr, credentials.apiSecret);
+  const { data } = await bybitPrivateAxios.post(`${REST_BASE}/v5/asset/withdraw/create`, body, {
+    headers: {
+      "X-BAPI-API-KEY": credentials.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+  });
+  return data;
+}
+
+/**
  * Get USDT wallet balance from WebSocket cache (private wallet topic). Synchronous; no REST.
  */
 function getBalance() {
@@ -1092,6 +1150,8 @@ module.exports = {
   getOrderFillPrice,
   setLeverage,
   placeWSOrder,
+  transferUnifiedToFunding,
+  withdrawCreate,
   placeMarketCloseOrder,
   getCredentials: () => privateCredentials,
   setOnFundingUpdate,
