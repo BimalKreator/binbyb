@@ -414,7 +414,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   publicStreamSymbols = symbols;
   const list = symbols.slice(0, MAX_STREAMS_PER_CONNECTION);
   const streams = list.map((s) => `${s.toLowerCase()}@markPrice@1s`);
-  const url = `${PUBLIC_WS_BASE}/stream?streams=${streams.join("/")}`;
+  const url = `${PUBLIC_WS_BASE}/ws`;
 
   const ws = new WebSocket(url, { family: 4 });
   publicWs = ws;
@@ -422,6 +422,14 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   ws.on("open", () => {
     publicReconnectAttempts = 0;
     console.log("[Binance] Public WebSocket connected");
+    const chunkSize = 100;
+    for (let i = 0; i < streams.length; i += chunkSize) {
+      ws.send(JSON.stringify({
+        method: "SUBSCRIBE",
+        params: streams.slice(i, i + chunkSize),
+        id: Date.now() + i,
+      }));
+    }
   });
 
   ws.on("message", (data) => {

@@ -323,8 +323,12 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   ws.on("open", () => {
     publicReconnectAttempts = 0;
     console.log("[Bybit] Public WebSocket connected");
-    const args = symbols.map((s) => `tickers.${s}`);
-    ws.send(JSON.stringify({ op: "subscribe", args }));
+    const subscribe_args = symbols.map((s) => `tickers.${s}`);
+    const chunkSize = 10;
+    for (let i = 0; i < subscribe_args.length; i += chunkSize) {
+      const chunk = subscribe_args.slice(i, i + chunkSize);
+      ws.send(JSON.stringify({ op: "subscribe", args: chunk }));
+    }
   });
 
   ws.on("message", (data) => {
