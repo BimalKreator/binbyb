@@ -425,17 +425,16 @@ export default function Home() {
                             <table className="w-full text-sm min-w-[640px]">
                               <thead>
                                 <tr className="text-left text-slate-400 border-b border-slate-700">
-                                  <th className="py-2 pr-2 font-medium">Exchange</th>
-                                  <th className="py-2 pr-2 font-medium">Direction</th>
+                                  <th className="py-2 pr-2 font-medium">Exch</th>
+                                  <th className="py-2 pr-2 font-medium">Trade</th>
                                   <th className="py-2 pr-2 font-medium text-right">Entry</th>
                                   <th className="py-2 pr-2 font-medium text-right">Qty</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Leverage</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Lev</th>
                                   <th className="py-2 pr-2 font-medium text-right">Mark</th>
                                   <th className="py-2 pr-2 font-medium text-right">Funding %</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Liq. Price</th>
+                                  <th className="py-2 pr-2 font-medium text-right">Liq</th>
                                   <th className="py-2 pr-2 font-medium text-right">PnL</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Next Fund</th>
-                                  <th className="py-2 font-medium text-right">Fees</th>
+                                  <th className="py-2 font-medium text-right">Nxt Funding</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -516,9 +515,6 @@ export default function Home() {
                                         }`}
                                       >
                                         {formatUsd(safeLeg.nextFundingAmount ?? 0)}
-                                      </td>
-                                      <td className="py-2 text-right text-slate-400">
-                                        {formatUsd(safeLeg.exchangeFees ?? 0)}
                                       </td>
                                     </tr>
                                   );
