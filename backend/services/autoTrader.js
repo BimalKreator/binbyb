@@ -129,7 +129,10 @@ function getSidesFromToken(token) {
  */
 async function runAutoEntry() {
   const settings = await Setting.findOne().lean();
-  if (!settings?.autoTradeEnabled) return;
+  if (!settings?.autoTradeEnabled) {
+    console.log("[AutoTrader] Blocked: Auto Trade is disabled in settings.");
+    return;
+  }
 
   const keys = await getDecryptedApiKeys();
   if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) {
@@ -144,12 +147,22 @@ async function runAutoEntry() {
   if (!rankedTokens || rankedTokens.length === 0) return;
 
   const top = rankedTokens[0];
+  const symbol = top.symbol;
   const entryTimeMs = Math.max(0, Number(settings.entryTimeMs) ?? 1000);
   const nextFundingTime = top.nextFundingTime;
   if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return;
   const now = Date.now();
   const timeRemaining = nextFundingTime - now;
-  if (timeRemaining <= 0 || timeRemaining > entryTimeMs) return;
+  if (timeRemaining <= 0) {
+    console.log(`[AutoTrader] Skipping: ${symbol} countdown expired (${timeRemaining}ms <= 0).`);
+    return;
+  }
+  if (timeRemaining > entryTimeMs) {
+    console.log(`[AutoTrader] Waiting: ${symbol} countdown (${timeRemaining}ms) > Limit (${entryTimeMs}ms)`);
+    return;
+  }
+
+  console.log(`[AutoTrader] Executing trade for ${symbol}...`);
 
   if (lastEntryTimeBySymbol[top.symbol] && now - lastEntryTimeBySymbol[top.symbol] < ENTRY_BUFFER_MS) {
     return; // buffer: skip

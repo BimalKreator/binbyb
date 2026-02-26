@@ -39,10 +39,10 @@ export default function SettingsPage() {
   const [maxTrades, setMaxTrades] = useState(5);
   const [stopLoss, setStopLoss] = useState(0);
   const [takeProfit, setTakeProfit] = useState(0);
-  const [autoTrade, setAutoTrade] = useState(false);
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [autoExitEnabled, setAutoExitEnabled] = useState(false);
-  const [entryTimeMs, setEntryTimeMs] = useState(1000);
+  const [entryTimeRaw, setEntryTimeRaw] = useState("1");
+  const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
   const [entrySlippagePct, setEntrySlippagePct] = useState(2);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
@@ -68,10 +68,25 @@ export default function SettingsPage() {
           setMaxTrades(s.maxTrades ?? 5);
           setStopLoss(s.stopLoss ?? 0);
           setTakeProfit(s.takeProfit ?? 0);
-          setAutoTrade(s.autoTrade ?? false);
           setAutoTradeEnabled(s.autoTradeEnabled ?? false);
           setAutoExitEnabled(s.autoExitEnabled ?? false);
-          setEntryTimeMs(s.entryTimeMs ?? 1000);
+          const ms = s.entryTimeMs ?? 1000;
+          const hours = Math.floor(ms / 3600000);
+          const minutes = Math.floor(ms / 60000);
+          const seconds = Math.floor(ms / 1000);
+          if (hours >= 1) {
+            setEntryTimeRaw(String(hours));
+            setEntryTimeUnit("hours");
+          } else if (minutes >= 1) {
+            setEntryTimeRaw(String(minutes));
+            setEntryTimeUnit("minutes");
+          } else if (seconds >= 1) {
+            setEntryTimeRaw(String(seconds));
+            setEntryTimeUnit("seconds");
+          } else {
+            setEntryTimeRaw(String(ms));
+            setEntryTimeUnit("ms");
+          }
           setEntrySlippagePct(s.entrySlippagePct ?? 2);
         }
       })
@@ -132,6 +147,20 @@ export default function SettingsPage() {
     }
   };
 
+  const entryTimeToMs = (): number => {
+    const val = Math.max(0, Number(entryTimeRaw) || 0);
+    switch (entryTimeUnit) {
+      case "hours":
+        return val * 3600000;
+      case "minutes":
+        return val * 60000;
+      case "seconds":
+        return val * 1000;
+      default:
+        return val;
+    }
+  };
+
   const saveSettings = async () => {
     setSavingSettings(true);
     try {
@@ -141,10 +170,10 @@ export default function SettingsPage() {
         maxTrades,
         stopLoss,
         takeProfit,
-        autoTrade,
+        autoTrade: autoTradeEnabled,
         autoTradeEnabled,
         autoExitEnabled,
-        entryTimeMs,
+        entryTimeMs: entryTimeToMs(),
         entrySlippagePct,
       });
       if (data.success && data.data) setSettings(data.data);
@@ -367,16 +396,29 @@ export default function SettingsPage() {
               </div>
             </div>
             <label className="block">
-              <span className={labelClass}>Entry Time before Funding (ms)</span>
-              <input
-                type="number"
-                min={0}
-                value={entryTimeMs}
-                onChange={(e) => setEntryTimeMs(Math.max(0, Number(e.target.value) ?? 1000))}
-                className={inputClass}
-                placeholder="1000"
-              />
-              <span className="text-xs text-slate-500 mt-0.5 block">Milliseconds before funding to execute entry</span>
+              <span className={labelClass}>Entry Time before Funding</span>
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={entryTimeRaw}
+                  onChange={(e) => setEntryTimeRaw(e.target.value)}
+                  className={inputClass}
+                  placeholder="1"
+                />
+                <select
+                  value={entryTimeUnit}
+                  onChange={(e) => setEntryTimeUnit(e.target.value as "ms" | "seconds" | "minutes" | "hours")}
+                  className={`${inputClass} w-auto min-w-[100px]`}
+                  aria-label="Entry time unit"
+                >
+                  <option value="ms">ms</option>
+                  <option value="seconds">seconds</option>
+                  <option value="minutes">minutes</option>
+                  <option value="hours">hours</option>
+                </select>
+              </div>
+              <span className="text-xs text-slate-500 mt-0.5 block">Time before funding to execute entry (saved as milliseconds)</span>
             </label>
             <label className="block">
               <span className={labelClass}>Entry Slippage Buffer (%)</span>
@@ -390,15 +432,6 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="2"
               />
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoTrade}
-                onChange={(e) => setAutoTrade(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 text-[var(--primary)] focus:ring-[var(--primary)]"
-              />
-              <span className="text-sm text-foreground">Auto Trade Toggle</span>
             </label>
             <button
               type="button"
