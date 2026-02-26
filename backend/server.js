@@ -73,8 +73,8 @@ mongoose
       const symbols = await startExchanges();
       screener.start(Array.isArray(symbols) ? symbols : undefined);
       autoTrader.start(1000);
-      tradeMonitor.start();
       livePnlService.init(io, binanceManager, bybitManager);
+      tradeMonitor.start();
       server.listen(PORT, () => {
         console.log("Server running on port", PORT);
       });

@@ -17,6 +17,9 @@ const POSITION_CACHE_INTERVAL_MS = 3000;
  */
 const positionCache = Object.create(null);
 
+/** Optional callback(symbol, combinedPnlPercent) called on every PnL compute for tick-based TP/SL. Set by tradeMonitor. */
+let exitCheckCallback = null;
+
 /** In-memory mark price cache: symbol -> { binance, bybit }.
  *  Updated ONLY inside the mark-price tick handler (from the tick payload). No REST, no manager reads.
  */
@@ -73,6 +76,9 @@ function refreshPositionCache() {
     const bybitSide = String(bybitPos.side ?? "").trim();
     const binanceNativePnL = parseFloat(binancePos.unrealizedProfit) || 0;
     const bybitNativePnL = parseFloat(bybitPos.unrealizedProfit) || 0;
+    const totalMargin =
+      (Number.isFinite(binancePos.marginUsed) ? Number(binancePos.marginUsed) : 0) +
+      (Number.isFinite(bybitPos.marginUsed) ? Number(bybitPos.marginUsed) : 0);
     positionCache[symbol] = {
       binanceEntry,
       bybitEntry,
@@ -82,6 +88,7 @@ function refreshPositionCache() {
       bybitSide,
       binanceNativePnL,
       bybitNativePnL,
+      totalMargin,
     };
   }
   // Remove symbols no longer paired
@@ -124,6 +131,9 @@ function computeAndEmitPnL(symbol) {
   const bybitPnL =
     bybitMark > 0 && byEntry > 0 ? bybitDirection * (bybitMark - byEntry) * byQty : parseFloat(pos.bybitNativePnL) || 0;
   const combinedPnL = binancePnL + bybitPnL;
+  const totalMargin = parseFloat(pos.totalMargin) || 0;
+  const combinedPnlPercent =
+    totalMargin > 0 && Number.isFinite(combinedPnL) ? (combinedPnL / totalMargin) * 100 : null;
 
   io.emit("live_pnl_update", {
     symbol: sym,
@@ -133,6 +143,14 @@ function computeAndEmitPnL(symbol) {
     binanceMarkPrice: binanceMark,
     bybitMarkPrice: bybitMark,
   });
+
+  if (typeof exitCheckCallback === "function" && combinedPnlPercent != null) {
+    try {
+      exitCheckCallback(sym, combinedPnlPercent);
+    } catch (e) {
+      console.error("[LivePnl] exitCheckCallback error", sym, e?.message || e);
+    }
+  }
 }
 
 /**
@@ -174,7 +192,12 @@ function init(socketServer, binance, bybit) {
   );
 }
 
+function setExitCheckCallback(cb) {
+  exitCheckCallback = typeof cb === "function" ? cb : null;
+}
+
 function stop() {
+  exitCheckCallback = null;
   if (positionCacheIntervalId) {
     clearInterval(positionCacheIntervalId);
     positionCacheIntervalId = null;
@@ -196,4 +219,5 @@ function stop() {
 module.exports = {
   init,
   stop,
+  setExitCheckCallback,
 };

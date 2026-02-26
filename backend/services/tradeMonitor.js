@@ -12,6 +12,7 @@ const { binanceManager, bybitManager } = require("./exchanges");
 const screener = require("./screener");
 const autoTrader = require("./autoTrader");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
+const livePnlService = require("./livePnlService");
 
 const ORPHAN_GRACE_MS = 10000; // 10 seconds: only close orphan if position age > this (avoids false orphan from leg latency)
 
@@ -26,6 +27,8 @@ const orphanFirstSeen = {};
 const orphanCloseCooldownUntil = {};
 /** Symbols that had a close API failure: skip for 10 minutes (no retries) */
 const failedClosesUntil = {};
+/** Symbols currently being closed from tick callback; runMonitor skips them to avoid double-close */
+const closingSymbols = new Set();
 
 let started = false;
 let runInProgress = false;
@@ -465,6 +468,7 @@ async function runMonitor() {
 
   for (const symbol of pairedSymbols) {
     if (now < (failedClosesUntil[symbol] || 0)) continue;
+    if (closingSymbols.has(symbol)) continue;
     const binancePos = binanceBySymbol[symbol];
     const bybitPos = bybitBySymbol[symbol];
     if (!binancePos || !bybitPos) continue;
@@ -588,8 +592,51 @@ function start() {
   bybitManager.setOnPositionUpdate(() => queueRun());
   binanceManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
   bybitManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
+
+  // Tick-based TP/SL: every mark-price tick calls this with real-time combined PnL % (no REST, no polling)
+  livePnlService.setExitCheckCallback((symbol, pnlPercent) => {
+    if (pnlPercent == null) return;
+    if (closingSymbols.has(symbol)) return;
+    const now = Date.now();
+    if (now < (failedClosesUntil[symbol] || 0)) return;
+
+    getDecryptedApiKeys()
+      .then((keys) => {
+        if (!keys?.binance?.apiKey || !keys?.bybit?.apiKey) return null;
+        return Setting.findOne().then((settings) => ({ keys, settings }));
+      })
+      .then((ctx) => {
+        if (!ctx) return;
+        const stopLoss = Number(ctx.settings?.stopLoss) || 0;
+        const takeProfit = Number(ctx.settings?.takeProfit) || 0;
+        if (stopLoss <= 0 && takeProfit <= 0) return;
+
+        const binancePos = binanceManager.getLivePositions().find((p) => toUpperSymbol(p.symbol) === symbol);
+        const bybitPos = bybitManager.getLivePositions().find((p) => toUpperSymbol(p.symbol) === symbol);
+        if (!binancePos || !bybitPos) return;
+
+        let reason = null;
+        if (stopLoss > 0 && pnlPercent <= -stopLoss) reason = "SL";
+        else if (takeProfit > 0 && pnlPercent >= takeProfit) reason = "Target";
+        if (!reason) return;
+
+        closingSymbols.add(symbol);
+        closePair(ctx.keys, symbol, binancePos, bybitPos, reason)
+          .then(() => {
+            delete failedClosesUntil[symbol];
+            console.log("[TradeMonitor] Tick exit", symbol, reason, "PnL%", pnlPercent.toFixed(2));
+          })
+          .catch((e) => {
+            console.error("[TradeMonitor] Tick close failed", symbol, reason, e?.message || e);
+            failedClosesUntil[symbol] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
+          })
+          .finally(() => closingSymbols.delete(symbol));
+      })
+      .catch((e) => console.error("[TradeMonitor] Tick exit check error", symbol, e?.message || e));
+  });
+
   queueRun(); // initial pass in case state already exists
-  console.log("[TradeMonitor] Started (event-driven, WS state only; no position GET polling).");
+  console.log("[TradeMonitor] Started (event-driven + tick-based TP/SL; WS state only; no position GET polling).");
 }
 
 function stop() {
@@ -607,6 +654,8 @@ function stop() {
   bybitManager.setOnPositionUpdate(null);
   binanceManager.setOnPositionClosed(null);
   bybitManager.setOnPositionClosed(null);
+  livePnlService.setExitCheckCallback(null);
+  closingSymbols.clear();
   runQueued = false;
   console.log("[TradeMonitor] Stopped.");
 }
