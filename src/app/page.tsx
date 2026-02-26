@@ -187,7 +187,6 @@ export default function Home() {
     })();
     const intervalId = setInterval(() => {
       fetchMetrics();
-      fetchPositions();
     }, 2000);
     return () => {
       cancelled = true;
@@ -199,8 +198,8 @@ export default function Home() {
     const origin = getSocketOrigin().replace(/\/$/, "");
     const { io } = require("socket.io-client");
     const socket = io(origin, { path: "/socket.io", transports: ["websocket", "polling"] });
-    socket.on("live_pnl_update", (payload: { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number }) => {
-      const { symbol, binancePnL, bybitPnL, combinedPnL } = payload ?? {};
+    socket.on("live_pnl_update", (payload: { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number; binanceMarkPrice?: number; bybitMarkPrice?: number }) => {
+      const { symbol, binancePnL, bybitPnL, combinedPnL, binanceMarkPrice, bybitMarkPrice } = payload ?? {};
       if (!symbol) return;
       setPositions((prev) =>
         prev.map((row) =>
@@ -208,8 +207,16 @@ export default function Home() {
             ? {
                 ...row,
                 combinedUnrealizedProfit: combinedPnL ?? row.combinedUnrealizedProfit,
-                binance: { ...row.binance, unrealizedProfit: binancePnL ?? row.binance.unrealizedProfit },
-                bybit: { ...row.bybit, unrealizedProfit: bybitPnL ?? row.bybit.unrealizedProfit },
+                binance: {
+                  ...row.binance,
+                  unrealizedProfit: binancePnL ?? row.binance.unrealizedProfit,
+                  ...(binanceMarkPrice != null && Number.isFinite(binanceMarkPrice) ? { markPrice: binanceMarkPrice } : {}),
+                },
+                bybit: {
+                  ...row.bybit,
+                  unrealizedProfit: bybitPnL ?? row.bybit.unrealizedProfit,
+                  ...(bybitMarkPrice != null && Number.isFinite(bybitMarkPrice) ? { markPrice: bybitMarkPrice } : {}),
+                },
               }
             : row
         )

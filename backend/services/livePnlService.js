@@ -12,8 +12,8 @@ let bybitManager = null;
 /** Slow interval for position cache refresh (decoupled from ticks). 5–10s. */
 const POSITION_CACHE_INTERVAL_MS = 5000;
 
-/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, direction }.
- *  Updated ONLY by refreshPositionCache() (called from setInterval and from WS position updates).
+/** In-memory position cache: symbol -> { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitDirection }.
+ *  Updated ONLY by refreshPositionCache() (called from setInterval).
  */
 const positionCache = Object.create(null);
 
@@ -69,16 +69,15 @@ function refreshPositionCache() {
     if (binanceQty <= 0 && bybitQty <= 0) continue;
     const binanceEntry = parseFloat(binancePos.entryPrice) || 0;
     const bybitEntry = parseFloat(bybitPos.entryPrice) || 0;
-    const isLong =
-      (parseFloat(binancePos.positionAmt) || 0) > 0 ||
-      String(binancePos.side || "").toUpperCase() === "BUY";
-    const direction = isLong ? 1 : -1;
+    const binanceDirection = (parseFloat(binancePos.positionAmt) || 0) > 0 ? 1 : -1;
+    const bybitDirection = String(bybitPos.side || "").toLowerCase() === "buy" ? 1 : -1;
     positionCache[symbol] = {
       binanceEntry,
       bybitEntry,
       binanceQty,
       bybitQty,
-      direction,
+      binanceDirection,
+      bybitDirection,
     };
   }
   // Remove symbols no longer paired
@@ -106,10 +105,10 @@ function onMarkPriceTick(symbol, markPrice, source) {
 
   const binanceMark = markPriceCache[sym].binance || 0;
   const bybitMark = markPriceCache[sym].bybit || 0;
-  const { binanceEntry, bybitEntry, binanceQty, bybitQty, direction } = pos;
+  const { binanceEntry, bybitEntry, binanceQty, bybitQty, binanceDirection, bybitDirection } = pos;
 
-  const binancePnL = direction * (binanceMark - binanceEntry) * binanceQty;
-  const bybitPnL = direction * (bybitMark - bybitEntry) * bybitQty;
+  const binancePnL = binanceDirection * (binanceMark - binanceEntry) * binanceQty;
+  const bybitPnL = bybitDirection * (bybitMark - bybitEntry) * bybitQty;
   const combinedPnL = binancePnL + bybitPnL;
 
   io.emit("live_pnl_update", {
@@ -117,6 +116,8 @@ function onMarkPriceTick(symbol, markPrice, source) {
     binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
     bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
     combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
+    binanceMarkPrice: binanceMark,
+    bybitMarkPrice: bybitMark,
   });
 }
 
