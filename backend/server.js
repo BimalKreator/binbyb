@@ -30,8 +30,6 @@ const server = http.createServer(app);
 const CORS_ORIGINS = [
   "https://tradeictearner.online",
   "http://tradeictearner.online",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
 ];
 
 const io = new SocketServer(server, {
