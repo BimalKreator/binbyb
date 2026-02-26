@@ -13,6 +13,9 @@ const ENTRY_BUFFER_MS = 60 * 1000; // 60 seconds per symbol before re-entry
 const STRICT_ENTRY_WINDOW_MS = 120000; // 2-minute window: only enter when countdown in [entryTimeMs - 2min, entryTimeMs]
 const DEFAULT_LEVERAGE = 5;
 
+/** Global execution lock: prevents concurrent trades before DB/WS registers the first. */
+let isExecutingTrade = false;
+
 /** Last entry timestamp per symbol to enforce buffer */
 const lastEntryTimeBySymbol = {};
 
@@ -132,6 +135,8 @@ function getSidesFromToken(token) {
  * Entry only when autoTradeEnabled and timeRemaining in (0, entryTimeMs].
  */
 async function runAutoEntry() {
+  if (isExecutingTrade) return;
+
   const settings = await Setting.findOne().lean();
   if (!settings?.autoTradeEnabled) {
     console.log("[AutoTrader] Blocked: Auto Trade is disabled in settings.");
@@ -205,34 +210,39 @@ async function runAutoEntry() {
     ? bybitOrderbookPrice
     : markPrice;
 
-  // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
-  for (const qtyStr of chunks) {
-    if (!orderCircuitBreaker.canPlaceOrder()) {
-      console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);
-      break;
+  isExecutingTrade = true;
+  try {
+    // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
+    for (const qtyStr of chunks) {
+      if (!orderCircuitBreaker.canPlaceOrder()) {
+        console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);
+        break;
+      }
+      const qty = parseFloat(qtyStr);
+      if (qty <= 0) continue;
+      try {
+        await Promise.all([
+          binanceManager.placeIOCLimitOrder(keys.binance, top.symbol, binanceSide, qty, binancePrice, { leverage: levInt }).then((r) => {
+            orderCircuitBreaker.recordOrderPlaced();
+            return r;
+          }),
+          bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice).then((r) => {
+            orderCircuitBreaker.recordOrderPlaced();
+            return r;
+          }),
+        ]);
+        tradedCycles[symbol] = nextFundingTime;
+        console.log(`[AutoTrader] Locked ${symbol} for the current cycle. Will not re-enter until next funding time.`);
+        lastEntryTimeBySymbol[top.symbol] = now;
+        entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
+        console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", qtyStr);
+      } catch (e) {
+        console.error("[AutoTrader] Entry failed", top.symbol, e.message || e);
+        break; // no retry — single attempt per chunk to avoid rate limits
+      }
     }
-    const qty = parseFloat(qtyStr);
-    if (qty <= 0) continue;
-    try {
-      await Promise.all([
-        binanceManager.placeIOCLimitOrder(keys.binance, top.symbol, binanceSide, qty, binancePrice, { leverage: levInt }).then((r) => {
-          orderCircuitBreaker.recordOrderPlaced();
-          return r;
-        }),
-        bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice).then((r) => {
-          orderCircuitBreaker.recordOrderPlaced();
-          return r;
-        }),
-      ]);
-      tradedCycles[symbol] = nextFundingTime;
-      console.log(`[AutoTrader] Locked ${symbol} for the current cycle. Will not re-enter until next funding time.`);
-      lastEntryTimeBySymbol[top.symbol] = now;
-      entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
-      console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", qtyStr);
-    } catch (e) {
-      console.error("[AutoTrader] Entry failed", top.symbol, e.message || e);
-      break; // no retry — single attempt per chunk to avoid rate limits
-    }
+  } finally {
+    isExecutingTrade = false;
   }
 }
 

@@ -128,9 +128,21 @@ export default function TradesPage() {
 
   const filteredLogs = logs.filter((l) => {
     if (logFilter === "all") return true;
-    if (logFilter === "error") return l.level === "error" || (l.category && l.category.toLowerCase() === "error");
-    if (logFilter === "entry") return l.category && l.category.toLowerCase() === "entry";
-    if (logFilter === "exit") return l.category && l.category.toLowerCase() === "exit";
+    const msg = (l.message ?? "").toLowerCase();
+    const level = (l.level ?? "").toLowerCase();
+    const category = (l.category ?? "").toLowerCase();
+    if (logFilter === "error") {
+      if (level === "error" || category === "error") return true;
+      return /error|fail|reject|timeout/.test(msg);
+    }
+    if (logFilter === "entry") {
+      if (category === "entry") return true;
+      return /entry|new|executing trade|buy|sell/.test(msg);
+    }
+    if (logFilter === "exit") {
+      if (category === "exit") return true;
+      return /exit|tp|sl|close|filled/.test(msg);
+    }
     return true;
   });
 
@@ -194,9 +206,15 @@ export default function TradesPage() {
                 <span className="text-slate-500">No logs to show.</span>
               ) : (
                 filteredLogs.map((l, i) => {
-                  const isError = l.level === "error" || l.category === "error";
-                  const isEntry = l.category === "entry";
-                  const isExit = l.category === "exit";
+                  const msg = (l.message ?? "").toLowerCase();
+                  const isError =
+                    l.level === "error" ||
+                    (l.category ?? "").toLowerCase() === "error" ||
+                    /error|fail|reject|timeout/.test(msg);
+                  const isEntry =
+                    (l.category ?? "").toLowerCase() === "entry" || /entry|new|executing trade|buy|sell/.test(msg);
+                  const isExit =
+                    (l.category ?? "").toLowerCase() === "exit" || /exit|tp|sl|close|filled/.test(msg);
                   const lineClass = isError ? "text-red-400" : isEntry ? "text-emerald-400" : isExit ? "text-amber-400" : "text-slate-300";
                   return (
                     <div key={`${l.ts}-${i}`} className={lineClass}>
@@ -233,7 +251,27 @@ export default function TradesPage() {
               const exitTime = first?.exitTime ? new Date(first.exitTime).toLocaleString() : "";
               const combinedPnl = group.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
               const totalFees = group.reduce((s, t) => s + (Number(t.fee) ?? 0), 0);
-              const isLegacy = group.length === 1 && (first?.exchange === "binance+bybit" || !first?.groupId);
+              const isLegacySingle = group.length === 1 && (first?.exchange === "binance+bybit" || !first?.groupId);
+              const displayLegs: Array<{ exchange: string; t: TradeRecord }> = isLegacySingle
+                ? [
+                    {
+                      exchange: "Binance",
+                      t: {
+                        ...first!,
+                        pnl: (Number(first?.pnl) || 0) / 2,
+                        fee: (Number(first?.fee) ?? 0) / 2,
+                      },
+                    },
+                    {
+                      exchange: "Bybit",
+                      t: {
+                        ...first!,
+                        pnl: (Number(first?.pnl) || 0) / 2,
+                        fee: (Number(first?.fee) ?? 0) / 2,
+                      },
+                    },
+                  ]
+                : group.map((t) => ({ exchange: t.exchange || "—", t }));
 
               return (
                 <div key={group.map((t) => t._id).join("-")} className="rounded-lg border border-slate-700 bg-slate-800/30 overflow-hidden">
@@ -247,19 +285,20 @@ export default function TradesPage() {
                       <thead>
                         <tr className="border-b border-slate-700/70">
                           <th className="text-left py-1.5 px-3 text-slate-500 font-medium text-xs">Exchange</th>
-                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Requested</th>
-                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Executed</th>
-                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Exit</th>
-                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">PnL</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Qty</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Req. Entry</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Exec. Entry</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Req. Exit</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Exec. Exit</th>
                           <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Fee</th>
+                          <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Individual PnL</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {group.map((t) => (
-                          <tr key={t._id} className="border-b border-slate-700/50 last:border-b-0">
-                            <td className="py-1.5 px-3 text-foreground">
-                              {isLegacy ? (t.exchange || "—") : t.exchange}
-                            </td>
+                        {displayLegs.map(({ exchange, t }, idx) => (
+                          <tr key={t._id + (isLegacySingle ? exchange : "") + idx} className="border-b border-slate-700/50 last:border-b-0">
+                            <td className="py-1.5 px-3 text-foreground">{exchange}</td>
+                            <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">—</td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
                               {t.requestedEntryPrice != null ? Number(t.requestedEntryPrice).toFixed(4) : "—"}
                             </td>
@@ -267,13 +306,16 @@ export default function TradesPage() {
                               {t.executedEntryPrice != null ? Number(t.executedEntryPrice).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
-                              {t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : "—"}
+                              {t.requestedEntryPrice != null ? Number(t.requestedEntryPrice).toFixed(4) : "—"}
                             </td>
-                            <td className={`py-1.5 px-3 text-right font-medium tabular-nums ${t.pnl != null && t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                              {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
+                            <td className="py-1.5 px-3 text-right text-slate-300 tabular-nums">
+                              {t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-right text-slate-400 tabular-nums">
                               {t.fee != null && t.fee !== 0 ? Number(t.fee).toFixed(4) : "—"}
+                            </td>
+                            <td className={`py-1.5 px-3 text-right font-medium tabular-nums ${t.pnl != null && t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
                             </td>
                           </tr>
                         ))}
