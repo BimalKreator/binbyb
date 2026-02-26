@@ -412,6 +412,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
 
   publicStreamSymbols = symbols;
+  const trackedSymbols = new Set((symbols || []).map((s) => String(s).toUpperCase()));
   const url = `${PUBLIC_WS_BASE}/ws`;
 
   const ws = new WebSocket(url, { family: 4 });
@@ -419,7 +420,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected");
+    console.log("[Binance] Public WebSocket connected. Subscribing to all-market markPrice stream...");
     ws.send(JSON.stringify({
       method: "SUBSCRIBE",
       params: ["!markPrice@arr@1s"],
@@ -427,33 +428,39 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
     }));
   });
 
-  ws.on("message", (data) => {
+  ws.on("message", (raw) => {
     try {
-      const parsed = JSON.parse(data.toString());
+      const data = JSON.parse(raw.toString());
 
-      if (Array.isArray(parsed)) {
-        parsed.forEach((item) => {
-          if (item.e === "markPriceUpdate") {
-            const s = item.s;
+      if (data && data.result === null && data.id === 1) {
+        console.log("[Binance] Successfully subscribed to !markPrice@arr@1s");
+        return;
+      }
+
+      if (Array.isArray(data)) {
+        data.forEach((item) => {
+          if (item && item.e === "markPriceUpdate") {
+            const sym = item.s ? String(item.s).toUpperCase() : "";
             const mp = parseFloat(item.p);
             const fr = parseFloat(item.r);
-            const nextTime = item.T != null ? parseInt(item.T, 10) : null;
+            const nextTime = Number.isFinite(parseInt(item.T, 10)) ? parseInt(item.T, 10) : null;
 
-            if (s && mp > 0) {
-              const sym = String(s).toUpperCase();
+            if (sym && !Number.isNaN(mp) && mp > 0) {
               lastMarkPriceBySymbol[sym] = mp;
               cachedFundingRates[sym] = {
                 fundingRate: Number.isFinite(fr) ? fr : 0,
                 nextFundingTime: nextTime,
               };
-              if (onMarkPriceUpdate) {
+
+              if (onMarkPriceUpdate && trackedSymbols.has(sym)) {
                 try {
                   onMarkPriceUpdate(sym, mp, "binance");
                 } catch (e) {
                   console.error("[Binance-WS-Error]", e.message);
                 }
               }
-              if (onFundingUpdate) {
+
+              if (onFundingUpdate && trackedSymbols.has(sym)) {
                 const now = Date.now();
                 const last = lastFundingEmitBySymbol[sym];
                 if (last == null || now - last >= FUNDING_THROTTLE_MS) {
@@ -473,14 +480,14 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         return;
       }
 
-      const stream = parsed.stream || "";
-      const payload = parsed.data || parsed;
+      const stream = data.stream || "";
+      const payload = data.data || data;
 
-      if (payload.E) {
+      if (payload && payload.E) {
         logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
       }
 
-      if (payload.e === "markPriceUpdate") {
+      if (payload && payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
         const sym = s ? String(s).toUpperCase() : s;
         if (sym && p != null) lastMarkPriceBySymbol[sym] = parseFloat(p) || 0;
@@ -513,8 +520,8 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           }
         }
       }
-    } catch (err) {
-      console.error("[Binance-WS-Error]", err.message);
+    } catch (e) {
+      console.error("[Binance-WS-Error] Failed to parse message:", e.message);
     }
   });
 
