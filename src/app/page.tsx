@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
@@ -194,36 +194,47 @@ export default function Home() {
     };
   }, [fetchMetrics, fetchPositions]);
 
+  const latestPnlRef = useRef<Record<string, { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number; binanceMarkPrice?: number; bybitMarkPrice?: number }>>({});
+
   useEffect(() => {
     const { io } = require("socket.io-client");
     const socket = io("/", { path: "/socket.io" });
+
     socket.on("live_pnl_update", (payload: { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number; binanceMarkPrice?: number; bybitMarkPrice?: number }) => {
-      const { symbol, binancePnL, bybitPnL, combinedPnL, binanceMarkPrice, bybitMarkPrice } = payload ?? {};
-      if (!symbol) return;
-      setPositions((prev) =>
-        prev.map((row) => {
-          if (row.symbol !== symbol) return row;
-          const nextBinance = {
-            ...row.binance,
-            unrealizedProfit: (payload.binancePnL != null && !Number.isNaN(Number(payload.binancePnL))) ? payload.binancePnL : row.binance.unrealizedProfit,
-            ...(binanceMarkPrice != null && Number.isFinite(binanceMarkPrice) ? { markPrice: binanceMarkPrice } : {}),
-          };
-          const nextBybit = {
-            ...row.bybit,
-            unrealizedProfit: (payload.bybitPnL != null && !Number.isNaN(Number(payload.bybitPnL))) ? payload.bybitPnL : row.bybit.unrealizedProfit,
-            ...(bybitMarkPrice != null && Number.isFinite(bybitMarkPrice) ? { markPrice: bybitMarkPrice } : {}),
-          };
-          return {
-            ...row,
-            combinedUnrealizedProfit: (payload.combinedPnL != null && !Number.isNaN(Number(payload.combinedPnL))) ? payload.combinedPnL : row.combinedUnrealizedProfit,
-            binance: nextBinance,
-            bybit: nextBybit,
-          };
-        })
-      );
+      if (!payload || !payload.symbol) return;
+      latestPnlRef.current[payload.symbol] = payload;
     });
+
+    const renderInterval = setInterval(() => {
+      const updates = latestPnlRef.current;
+      if (Object.keys(updates).length > 0) {
+        setPositions((prev) =>
+          prev.map((row) => {
+            const up = updates[row.symbol];
+            if (!up) return row;
+            return {
+              ...row,
+              combinedUnrealizedProfit: Number.isFinite(up.combinedPnL) ? up.combinedPnL : row.combinedUnrealizedProfit,
+              binance: {
+                ...row.binance,
+                unrealizedProfit: Number.isFinite(up.binancePnL) ? up.binancePnL : row.binance.unrealizedProfit,
+                markPrice: up.binanceMarkPrice ?? row.binance.markPrice,
+              },
+              bybit: {
+                ...row.bybit,
+                unrealizedProfit: Number.isFinite(up.bybitPnL) ? up.bybitPnL : row.bybit.unrealizedProfit,
+                markPrice: up.bybitMarkPrice ?? row.bybit.markPrice,
+              },
+            };
+          })
+        );
+        latestPnlRef.current = {};
+      }
+    }, 100);
+
     return () => {
       socket.disconnect();
+      clearInterval(renderInterval);
     };
   }, []);
 
