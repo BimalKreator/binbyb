@@ -558,8 +558,15 @@ async function runMonitor() {
     const bQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
     const byQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
     const qtyDiff = Math.abs(bQty - byQty);
+    const markPrice =
+      Number(binancePos?.markPrice ?? bybitPos?.markPrice ?? 0) ||
+      binanceManager.getMarkPrice(symbol) ||
+      bybitManager.getMarkPrice(symbol) ||
+      0;
+    const notionalDiff = qtyDiff * markPrice;
 
-    if (qtyDiff > 0.0001) {
+    // Only attempt fix if the difference is greater than $6 to bypass min notional limits
+    if (notionalDiff > 6) {
       if (!mismatchFirstSeen[symbol]) {
         mismatchFirstSeen[symbol] = now;
         console.log(

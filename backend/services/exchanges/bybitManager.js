@@ -878,7 +878,7 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
       await setLeverage(credentials, sym, opts.leverage);
     } catch (e) {
       console.log(
-        `[Bybit] Could not set leverage to ${opts.leverage} for ${sym}, proceeding anyway.`,
+        `[Bybit] Note: Leverage setup for ${sym} failed or was already set:`,
         e?.message ?? e
       );
     }
@@ -963,9 +963,10 @@ async function setLeverage(credentials, symbol, leverage) {
       console.warn("[Bybit] setLeverage", sym, "retCode", retCode, res.data?.retMsg);
     }
   } catch (e) {
-    const code = e.response?.data?.retCode;
+    // Bybit returns 110043 when leverage is already set to the target value
+    const code = e?.response?.data?.retCode ?? e?.body?.retCode;
     if (code === 110043) return;
-    console.warn("[Bybit] setLeverage failed", sym, e.response?.data?.retMsg || e.message);
+    console.warn("[Bybit] setLeverage failed", sym, e?.response?.data?.retMsg || e?.message);
   }
 }
 
