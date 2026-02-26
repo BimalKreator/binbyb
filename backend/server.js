@@ -55,6 +55,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", routes);
+app.use("/", routes); // When Nginx strips /api prefix (e.g. proxy_pass with trailing slash), requests like POST /login still work
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, service: "binbyb-backend" });
