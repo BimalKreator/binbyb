@@ -195,9 +195,8 @@ export default function Home() {
   }, [fetchMetrics, fetchPositions]);
 
   useEffect(() => {
-    const origin = getSocketOrigin().replace(/\/$/, "");
     const { io } = require("socket.io-client");
-    const socket = io(origin, { path: "/socket.io", transports: ["websocket", "polling"] });
+    const socket = io("/", { path: "/socket.io" });
     socket.on("live_pnl_update", (payload: { symbol: string; binancePnL: number; bybitPnL: number; combinedPnL: number; binanceMarkPrice?: number; bybitMarkPrice?: number }) => {
       const { symbol, binancePnL, bybitPnL, combinedPnL, binanceMarkPrice, bybitMarkPrice } = payload ?? {};
       if (!symbol) return;

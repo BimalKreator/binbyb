@@ -373,7 +373,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             lastFundingEmitBySymbol[sym] = now;
             onFundingUpdate({
               symbol: d.symbol,
-              fundingRate: parseFloat(state?.fundingRate ?? d.fundingRate || 0),
+              fundingRate: parseFloat((state?.fundingRate ?? d.fundingRate) || 0),
               nextFundingTime: (state?.nextFundingTime ?? d.nextFundingTime) != null ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
               markPrice: mp,
               eventTime: (state?.timestamp ?? d.timestamp) ? Number(state?.timestamp ?? d.timestamp) : msg.ts,
