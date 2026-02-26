@@ -45,32 +45,40 @@ function floorToStepSize(quantity, stepSize) {
 }
 
 /**
- * Capital: Min(Binance_USDT, Bybit_USDT) * (Settings.capitalPercent / 100)
+ * Base capital = min(Actual Balance Binance, Actual Balance Bybit).
+ * Actual Balance = Total Wallet Balance / Equity (NOT Available/Free). No subtraction of margin used.
+ * Allocated margin per trade = baseCapital * (capitalPercent / 100). Every trade gets the same size.
  */
-async function getTradeCapital(credentials) {
-  const [binanceUSDT, bybitUSDT] = await Promise.all([
+async function getAllocatedMargin(credentials) {
+  const [binanceActualBalance, bybitActualBalance] = await Promise.all([
     binanceManager.getBalance(credentials.binance),
     bybitManager.getBalance(),
   ]);
-  const minBalance = Math.min(
-    Number.isFinite(binanceUSDT) ? binanceUSDT : 0,
-    Number.isFinite(bybitUSDT) ? bybitUSDT : 0
+  const baseCapital = Math.min(
+    Number.isFinite(binanceActualBalance) ? binanceActualBalance : 0,
+    Number.isFinite(bybitActualBalance) ? bybitActualBalance : 0
   );
   const settings = await Setting.findOne().lean();
-  const pct = Math.max(0, Math.min(100, Number(settings?.capitalPercent) || 0));
-  return minBalance * (pct / 100);
+  const capitalPercent = Math.max(0, Math.min(100, Number(settings?.capitalPercent) || 0));
+  const allocatedMargin = baseCapital * (capitalPercent / 100);
+  return allocatedMargin;
 }
 
 /**
- * Quantity = Capital / MarkPrice.
- * Round down to satisfy both exchanges' stepSize; split into chunks if exceeds maxOrderQty.
+ * Quantity from: tradeNotionalValue = allocatedMargin * leverage, then quantity = tradeNotionalValue / currentTokenPrice.
+ * Round down to exchange stepSize; split into chunks if exceeds maxOrderQty.
+ * @param {number} allocatedMargin - margin allocated for this trade (baseCapital * capitalPercent/100)
+ * @param {number} leverage - user's leverage (e.g. 10)
+ * @param {number} currentTokenPrice - mark/current price for the token
+ * @param {string} symbol - e.g. BTCUSDT
  * @returns {Promise<{ chunks: string[], stepSize: string | null }>} formatted qty strings per chunk
  */
-async function computeQuantityChunks(capital, markPrice, symbol) {
-  if (!Number.isFinite(capital) || capital <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
+async function computeQuantityChunks(allocatedMargin, leverage, currentTokenPrice, symbol) {
+  if (!Number.isFinite(allocatedMargin) || allocatedMargin <= 0 || !Number.isFinite(leverage) || leverage <= 0 || !Number.isFinite(currentTokenPrice) || currentTokenPrice <= 0) {
     return { chunks: [], stepSize: null };
   }
-  const rawQty = capital / markPrice;
+  const tradeNotionalValue = allocatedMargin * leverage;
+  let quantity = tradeNotionalValue / currentTokenPrice;
   const sym = String(symbol).toUpperCase();
 
   const [binanceFilters, bybitFilters] = await Promise.all([
@@ -85,9 +93,9 @@ async function computeQuantityChunks(capital, markPrice, symbol) {
   let maxPerOrder = Math.min(maxBinance, maxBybit);
   if (maxPerOrder <= 0) maxPerOrder = Infinity;
 
-  let qtyValidBoth = rawQty;
-  if (stepBinance) qtyValidBoth = Math.min(qtyValidBoth, floorToStepSize(rawQty, stepBinance));
-  if (stepBybit) qtyValidBoth = Math.min(qtyValidBoth, floorToStepSize(rawQty, stepBybit));
+  let qtyValidBoth = quantity;
+  if (stepBinance) qtyValidBoth = Math.min(qtyValidBoth, floorToStepSize(quantity, stepBinance));
+  if (stepBybit) qtyValidBoth = Math.min(qtyValidBoth, floorToStepSize(quantity, stepBybit));
   if (qtyValidBoth <= 0) return { chunks: [], stepSize: stepBinance || stepBybit };
 
   const stepSize = stepBinance || stepBybit;
@@ -186,17 +194,17 @@ async function runAutoEntry() {
     return; // buffer: skip
   }
 
-  const capital = await getTradeCapital(keys);
-  if (capital <= 0) return;
+  const allocatedMargin = await getAllocatedMargin(keys);
+  if (allocatedMargin <= 0) return;
 
   const markPrice = top.markPrice ?? 0;
   if (!markPrice || !Number.isFinite(markPrice)) return;
 
-  const { chunks } = await computeQuantityChunks(capital, markPrice, top.symbol);
+  const levInt = Math.max(1, Math.min(125, Number(settings.leverage) || DEFAULT_LEVERAGE));
+  const { chunks } = await computeQuantityChunks(allocatedMargin, levInt, markPrice, top.symbol);
   if (chunks.length === 0) return;
 
   const { binanceSide, bybitSide } = getSidesFromToken(top);
-  const levInt = Math.max(1, Math.min(125, Number(settings.leverage) || DEFAULT_LEVERAGE));
   const slippagePct = Number.isFinite(settings.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
 
   const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
@@ -278,7 +286,8 @@ function clearEntryFundingDirection(symbol) {
 }
 
 module.exports = {
-  getTradeCapital,
+  getAllocatedMargin,
+  getTradeCapital: getAllocatedMargin,
   computeQuantityChunks,
   getOpenArbitrageCount,
   getEntryFundingDirection,

@@ -119,8 +119,8 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
         : "SHORT";
 
   const { computeQuantityChunks } = autoTrader;
-  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks : [];
-  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks : [];
+  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks : [];
+  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks : [];
 
   const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? fallbackMarkPrice;
   const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? fallbackMarkPrice;
@@ -245,7 +245,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
   const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
 
   const { computeQuantityChunks } = autoTrader;
-  const chunks = (await computeQuantityChunks(qty * fallbackMarkPrice, fallbackMarkPrice, sym)).chunks;
+  const chunks = (await computeQuantityChunks(qty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks;
   const price = exchange === "binance"
     ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice)
     : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice);
