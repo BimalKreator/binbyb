@@ -34,6 +34,7 @@ let started = false;
 let runInProgress = false;
 let runQueued = false;
 let queueTimer = null;
+let heartbeatTimer = null;
 const orphanRecheckTimerBySymbol = {};
 
 function toUpperSymbol(value) {
@@ -63,30 +64,58 @@ function buildPrimaryBySymbol(positions) {
 }
 
 /**
- * Exchange-native unrealized PnL only. Do NOT calculate (markPrice - entryPrice) * size.
- * Binance: unRealizedProfit from position payload. Bybit: unrealisedPnl from position payload.
- * Managers normalize both to unrealizedProfit.
+ * Real-time PnL % using manager mark prices; fallback to exchange native unrealized when mark missing.
  */
-function getNativeUnrealizedPnl(binancePos, bybitPos) {
-  const binanceNativePnL =
-    Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : 0;
-  const bybitNativePnL =
-    Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : 0;
-  const combinedUnrealizedPnL = parseFloat(binanceNativePnL) + parseFloat(bybitNativePnL);
-  const combinedMargin =
-    (Number.isFinite(binancePos?.marginUsed) ? binancePos.marginUsed : 0) +
-    (Number.isFinite(bybitPos?.marginUsed) ? bybitPos.marginUsed : 0);
-  return { combinedUnrealizedPnL, combinedMargin };
-}
+function calculateRealtimePnlPercent(symbol, binancePos, bybitPos) {
+  const sym = toUpperSymbol(symbol);
+  const binanceMark = binanceManager.getMarkPrice(sym) || 0;
+  const bybitMark = bybitManager.getMarkPrice(sym) || 0;
 
-/**
- * Combined PnL % for TP/SL: (Binance native + Bybit native unrealized) / total margin * 100.
- * Trigger TP/SL based ONLY on this combinedUnrealizedPnL (no local math).
- */
-function combinedPnlPercent(binancePos, bybitPos) {
-  const { combinedUnrealizedPnL, combinedMargin } = getNativeUnrealizedPnl(binancePos, bybitPos);
+  const bEntry = parseFloat(binancePos?.entryPrice) || 0;
+  const byEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || 0;
+
+  const bQty = Math.abs(parseFloat(binancePos?.positionAmt) || 0);
+  const byQty = Math.abs(parseFloat(bybitPos?.positionAmt) || 0);
+
+  const bDir = (parseFloat(binancePos?.positionAmt) || 0) > 0 ? 1 : -1;
+  const byDir = String(bybitPos?.side || "").toLowerCase() === "buy" ? 1 : -1;
+
+  const binanceRealtime = (binanceMark > 0 && bEntry > 0)
+    ? bDir * (binanceMark - bEntry) * bQty
+    : (parseFloat(binancePos?.unrealizedProfit) || 0);
+
+  const bybitRealtime = (bybitMark > 0 && byEntry > 0)
+    ? byDir * (bybitMark - byEntry) * byQty
+    : (parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0);
+
+  const combinedUnrealizedPnL = binanceRealtime + bybitRealtime;
+
+  const bMargin = parseFloat(binancePos?.marginUsed) || parseFloat(binancePos?.initialMargin) || 0;
+  const byMargin = parseFloat(bybitPos?.marginUsed) || parseFloat(bybitPos?.positionIM) || 0;
+  const combinedMargin = bMargin + byMargin;
+
   if (combinedMargin <= 0) return null;
   return (combinedUnrealizedPnL / combinedMargin) * 100;
+}
+
+/** Compute combined unrealized PnL (real-time math) for closePair logging. */
+function getCombinedUnrealizedPnL(symbol, binancePos, bybitPos) {
+  const sym = toUpperSymbol(symbol);
+  const binanceMark = binanceManager.getMarkPrice(sym) || 0;
+  const bybitMark = bybitManager.getMarkPrice(sym) || 0;
+  const bEntry = parseFloat(binancePos?.entryPrice) || 0;
+  const byEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || 0;
+  const bQty = Math.abs(parseFloat(binancePos?.positionAmt) || 0);
+  const byQty = Math.abs(parseFloat(bybitPos?.positionAmt) || 0);
+  const bDir = (parseFloat(binancePos?.positionAmt) || 0) > 0 ? 1 : -1;
+  const byDir = String(bybitPos?.side || "").toLowerCase() === "buy" ? 1 : -1;
+  const binanceRealtime = (binanceMark > 0 && bEntry > 0)
+    ? bDir * (binanceMark - bEntry) * bQty
+    : (parseFloat(binancePos?.unrealizedProfit) || 0);
+  const bybitRealtime = (bybitMark > 0 && byEntry > 0)
+    ? byDir * (bybitMark - byEntry) * byQty
+    : (parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0);
+  return binanceRealtime + bybitRealtime;
 }
 
 /**
@@ -105,7 +134,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
   const binancePositionSide = binancePos.positionSide || undefined;
   const bybitCloseSide = String(bybitPos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
 
-  const { combinedUnrealizedPnL } = getNativeUnrealizedPnl(binancePos, bybitPos);
+  const combinedUnrealizedPnL = getCombinedUnrealizedPnL(symbol, binancePos, bybitPos);
   const snapshot = screener.getSnapshot();
   const token = (snapshot.rankedTokens || []).find((t) => toUpperSymbol(t?.symbol) === sym);
   const markPriceFromToken = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
@@ -473,7 +502,7 @@ async function runMonitor() {
     const bybitPos = bybitBySymbol[symbol];
     if (!binancePos || !bybitPos) continue;
 
-    const pnlPct = combinedPnlPercent(binancePos, bybitPos);
+    const pnlPct = calculateRealtimePnlPercent(symbol, binancePos, bybitPos);
     if (pnlPct != null) {
       if (stopLoss > 0 && pnlPct <= -stopLoss) {
         console.log("[TradeMonitor] SL exit", symbol, "PnL%", pnlPct.toFixed(2), "stopLoss", stopLoss);
@@ -593,50 +622,9 @@ function start() {
   binanceManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
   bybitManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
 
-  // Tick-based TP/SL: every mark-price tick calls this with real-time combined PnL % (no REST, no polling)
-  livePnlService.setExitCheckCallback((symbol, pnlPercent) => {
-    if (pnlPercent == null) return;
-    if (closingSymbols.has(symbol)) return;
-    const now = Date.now();
-    if (now < (failedClosesUntil[symbol] || 0)) return;
-
-    getDecryptedApiKeys()
-      .then((keys) => {
-        if (!keys?.binance?.apiKey || !keys?.bybit?.apiKey) return null;
-        return Setting.findOne().then((settings) => ({ keys, settings }));
-      })
-      .then((ctx) => {
-        if (!ctx) return;
-        const stopLoss = Number(ctx.settings?.stopLoss) || 0;
-        const takeProfit = Number(ctx.settings?.takeProfit) || 0;
-        if (stopLoss <= 0 && takeProfit <= 0) return;
-
-        const binancePos = binanceManager.getLivePositions().find((p) => toUpperSymbol(p.symbol) === symbol);
-        const bybitPos = bybitManager.getLivePositions().find((p) => toUpperSymbol(p.symbol) === symbol);
-        if (!binancePos || !bybitPos) return;
-
-        let reason = null;
-        if (stopLoss > 0 && pnlPercent <= -stopLoss) reason = "SL";
-        else if (takeProfit > 0 && pnlPercent >= takeProfit) reason = "Target";
-        if (!reason) return;
-
-        closingSymbols.add(symbol);
-        closePair(ctx.keys, symbol, binancePos, bybitPos, reason)
-          .then(() => {
-            delete failedClosesUntil[symbol];
-            console.log("[TradeMonitor] Tick exit", symbol, reason, "PnL%", pnlPercent.toFixed(2));
-          })
-          .catch((e) => {
-            console.error("[TradeMonitor] Tick close failed", symbol, reason, e?.message || e);
-            failedClosesUntil[symbol] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
-          })
-          .finally(() => closingSymbols.delete(symbol));
-      })
-      .catch((e) => console.error("[TradeMonitor] Tick exit check error", symbol, e?.message || e));
-  });
-
-  queueRun(); // initial pass in case state already exists
-  console.log("[TradeMonitor] Started (event-driven + tick-based TP/SL; WS state only; no position GET polling).");
+  heartbeatTimer = setInterval(() => queueRun(), 1000);
+  queueRun();
+  console.log("[TradeMonitor] Started (event-driven + 1s active heartbeat for fast TP/SL).");
 }
 
 function stop() {
@@ -645,6 +633,10 @@ function stop() {
   if (queueTimer) {
     clearTimeout(queueTimer);
     queueTimer = null;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
   }
   for (const symbol of Object.keys(orphanRecheckTimerBySymbol)) {
     clearTimeout(orphanRecheckTimerBySymbol[symbol]);
