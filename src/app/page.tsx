@@ -191,12 +191,15 @@ export default function Home() {
   useEffect(() => {
     const { io } = require("socket.io-client");
 
-    console.log("🔌 Attempting relative socket connection...");
+    const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
+    const apiUrl = isSecure ? "https://tradeictearner.online" : (typeof window !== "undefined" ? window.location.origin : "");
 
-    const socket = io({
+    console.log("🔌 Attempting socket connection to:", apiUrl);
+
+    const socket = io(apiUrl, {
       path: "/socket.io",
       transports: ["polling", "websocket"],
-      secure: true,
+      secure: isSecure,
       rejectUnauthorized: false,
     });
 
@@ -206,7 +209,7 @@ export default function Home() {
     });
 
     socket.on("connect_error", (err: any) => {
-      console.error("🔴 WS Connection Error:", err.message, err.description);
+      console.error("🔴 WS Connection Error:", err.message);
     });
 
     socket.on("live_pnl_update", (payload: any) => {
