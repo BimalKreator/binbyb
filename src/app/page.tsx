@@ -187,6 +187,7 @@ export default function Home() {
     })();
     const intervalId = setInterval(() => {
       fetchMetrics();
+      // Do NOT call fetchPositions() here - it would overwrite live WebSocket PnL with stale REST data
     }, 2000);
     return () => {
       cancelled = true;

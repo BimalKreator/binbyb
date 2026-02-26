@@ -112,9 +112,9 @@ function computeAndEmitPnL(symbol) {
     const pos = positionCache[sym];
     if (!pos) return;
 
-    const binanceQty = Math.abs(parseFloat(pos.binanceRaw?.positionAmt || pos.binanceQty || 0));
-    const bybitQty = Math.abs(parseFloat(pos.bybitRaw?.size || pos.bybitQty || 0));
-    if (binanceQty === 0 && bybitQty === 0) return;
+    const bQty = Math.abs(parseFloat(pos.binanceQty || pos.binance?.positionAmt || pos.binanceRaw?.positionAmt || 0));
+    const byQty = Math.abs(parseFloat(pos.bybitQty || pos.bybit?.size || pos.bybitRaw?.size || 0));
+    if (bQty === 0 && byQty === 0) return;
 
     const cachedBinanceMark = parseFloat(markPriceCache[sym]?.binance);
     const cachedBybitMark = parseFloat(markPriceCache[sym]?.bybit);
@@ -126,9 +126,7 @@ function computeAndEmitPnL(symbol) {
       cachedBybitMark > 0 ? cachedBybitMark : (typeof bybitManager.getMarkPrice === "function" ? parseFloat(bybitManager.getMarkPrice(sym)) : 0) || 0;
 
     const bEntry = parseFloat(pos.binanceEntry);
-    const bQty = parseFloat(pos.binanceQty);
     const byEntry = parseFloat(pos.bybitEntry);
-    const byQty = parseFloat(pos.bybitQty);
     const binanceDirection = Number(pos.binanceDirection) === 1 ? 1 : -1;
     const bybitDirection = String(pos.bybitSide || pos.bybitDirection || "").toLowerCase() === "buy" ? 1 : -1;
 
@@ -145,6 +143,7 @@ function computeAndEmitPnL(symbol) {
     const combinedPnlPercent =
       totalMargin > 0 && Number.isFinite(combinedPnL) ? (combinedPnL / totalMargin) * 100 : null;
 
+    console.log(`[LIVE-PNL] 🟢 ${sym} | Qty: ${bQty}/${byQty} | Combined: ${combinedPnL}`);
     io.emit("live_pnl_update", {
       symbol: sym,
       binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
