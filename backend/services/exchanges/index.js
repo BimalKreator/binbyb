@@ -31,8 +31,8 @@ async function fetchSymbolsWithRetry(getSymbolsFn, label) {
 }
 
 /**
- * Fetch perpetual symbols from both exchanges and return intersection (symbols on both).
- * Retries each exchange independently so e.g. IP ban on one doesn't block the other.
+ * Fetch perpetual symbols from both exchanges and return intersection (symbols on both)
+ * with STRICT funding interval match only. Retries each exchange independently.
  */
 async function getCommonPerpetualSymbols() {
   let binanceList = [];
@@ -59,12 +59,30 @@ async function getCommonPerpetualSymbols() {
     return ["BTCUSDT", "ETHUSDT"];
   }
 
+  // Binance funding intervals required for strict matching (populated before filtering)
+  try {
+    await binanceManager.syncFundingIntervals();
+  } catch (e) {
+    console.warn("[Exchanges] Binance funding interval sync failed:", e.message);
+  }
+
   const bybitSet = new Set(bybitList.map((s) => String(s).toUpperCase()));
-  const common = binanceList.filter((s) => bybitSet.has(String(s).toUpperCase()));
+  const common = [];
+  for (const sym of binanceList) {
+    const s = String(sym).toUpperCase();
+    if (!bybitSet.has(s)) continue;
+    const binanceInterval = binanceManager.getFundingInterval(sym);
+    const bybitInterval = bybitManager.getFundingInterval(sym);
+    if (binanceInterval === bybitInterval) {
+      common.push(sym);
+    } else {
+      console.log(`[Exchanges] Mismatch excluded ${sym}: Binance ${binanceInterval}h, Bybit ${bybitInterval}h`);
+    }
+  }
   const sorted = [...new Set(common)].sort();
   const maxSymbols = 500;
   const capped = sorted.length ? sorted.slice(0, maxSymbols) : ["BTCUSDT", "ETHUSDT"];
-  console.log("[Exchanges] Common perpetual symbols: Binance", binanceList.length, ", Bybit", bybitList.length, ", common", sorted.length, ", tracking", capped.length);
+  console.log("[Exchanges] Common perpetual symbols (strict interval match): Binance", binanceList.length, ", Bybit", bybitList.length, ", common", sorted.length, ", tracking", capped.length);
   return capped;
 }
 

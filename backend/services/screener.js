@@ -48,10 +48,12 @@ function intervalHoursToLabel(hours) {
 }
 
 /**
- * Interval from manager cache only. No mathematical fallbacks; manager returns 8 when missing.
+ * Interval from manager cache only (hours). Both managers return 8 when missing.
+ * commonSymbols is strict-interval-matched so Binance and Bybit agree for every symbol in the list.
  */
 function computeIntervalHours(symbol, _nextFundingTime, source) {
   if (source === "binance") return binanceManager.getFundingIntervalHours(symbol);
+  if (source === "bybit") return bybitManager.getFundingInterval(symbol);
   return 8;
 }
 
@@ -153,12 +155,10 @@ async function runScreener() {
       const nextBin = bin?.nextFundingTime ?? null;
       const nextByb = byb?.nextFundingTime ?? null;
 
-      let binanceIntervalHours = computeIntervalHours(symbol, nextBin, "binance");
-      let bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
-
-      const binanceIntervalString = intervalHoursToLabel(binanceIntervalHours);
-      // Use Binance as authoritative interval source. Bybit usually matches Binance's schedule.
-      const intervalDisplay = binanceIntervalString;
+      const binanceIntervalHours = computeIntervalHours(symbol, nextBin, "binance");
+      const bybitIntervalHours = computeIntervalHours(symbol, nextByb, "bybit");
+      // commonSymbols is strict-interval-matched, so both match; use Binance for display.
+      const intervalDisplay = intervalHoursToLabel(binanceIntervalHours);
       const intervalHours = binanceIntervalHours ?? 8;
 
       intervalHoursCache[symbol] = intervalHours;
@@ -264,7 +264,8 @@ async function hydrateBinanceDataFromPremiumIndex(commonSymbols) {
 
 /**
  * Connect to exchange managers so screener updates on every funding message.
- * @param {string[]} [commonSymbols] - Optional. Symbols that exist on BOTH Binance and Bybit; used to hydrate interval from premium index and enforce strict matching.
+ * Relies strictly on commonSymbols: only these symbols are included in ranked tokens and broadcast.
+ * @param {string[]} [commonSymbols] - Symbols that exist on BOTH Binance and Bybit with matching funding interval (strict); used to hydrate and enforce list.
  */
 function start(commonSymbols) {
   if (Array.isArray(commonSymbols) && commonSymbols.length > 0) {

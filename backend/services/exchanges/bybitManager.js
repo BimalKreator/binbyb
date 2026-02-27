@@ -572,7 +572,11 @@ async function ensureInstrumentsLoaded() {
       instrumentsBySymbol = {};
       for (const item of all) {
         const s = (item.symbol || "").toUpperCase();
-        if (s) instrumentsBySymbol[s] = item;
+        if (!s) continue;
+        // Bybit returns fundingInterval in minutes (e.g., 240 for 4h, 60 for 1h)
+        const intervalMinutes = parseInt(item.fundingInterval, 10) || 480;
+        item.fundingIntervalHours = intervalMinutes / 60;
+        instrumentsBySymbol[s] = item;
       }
       console.log("[Bybit] One-time instruments-info loaded:", cachedInstrumentsInfo.length, "instruments");
     } catch (e) {
@@ -1178,6 +1182,17 @@ function getCachedNextFundingTime(symbol) {
 }
 
 /**
+ * Get funding interval in hours (1, 2, 4, 8) from instruments-info cache. Default 8 if missing.
+ * Call after ensureInstrumentsLoaded() (e.g. after getPerpetualSymbols()) so cache is populated.
+ */
+function getFundingInterval(symbol) {
+  const sym = String(symbol || "").toUpperCase();
+  const instrument = instrumentsBySymbol[sym];
+  const h = instrument?.fundingIntervalHours;
+  return h != null && Number.isFinite(h) ? h : 8;
+}
+
+/**
  * Get max leverage for symbol from one-time cached instruments-info. No per-symbol REST.
  */
 async function getMaxLeverage(symbol) {
@@ -1293,6 +1308,7 @@ module.exports = {
   getMarkPrice,
   getCachedFundingRate,
   getCachedNextFundingTime,
+  getFundingInterval,
   getMaxLeverage,
   getPerpetualSymbols,
   getOrderbookPrice,

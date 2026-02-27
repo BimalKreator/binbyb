@@ -1162,10 +1162,8 @@ async function syncFundingIntervals() {
     if (!Array.isArray(data)) return;
     data.forEach((item) => {
       const sym = (item.symbol || "").toUpperCase().trim();
-      const parsed = parseInt(item.fundingIntervalHours, 10);
-      if (!Number.isNaN(parsed) && [1, 2, 4, 8].includes(parsed)) {
-        fundingIntervalCache[sym] = parsed;
-      }
+      // Binance returns fundingIntervalHours directly
+      fundingIntervalCache[sym] = parseInt(item.fundingIntervalHours, 10) || 8;
     });
   } catch (err) {
     console.error("[Binance] Failed to sync funding intervals:", err?.message || err);
@@ -1177,6 +1175,13 @@ async function syncFundingIntervals() {
  */
 function getFundingIntervalHours(symbol) {
   return fundingIntervalCache[(symbol || "").toUpperCase().trim()] || 8;
+}
+
+/**
+ * Get funding interval in hours. Same as getFundingIntervalHours; alias for exchange-agnostic use.
+ */
+function getFundingInterval(symbol) {
+  return getFundingIntervalHours(symbol);
 }
 
 /**
@@ -1333,8 +1338,10 @@ module.exports = {
   getCachedNextFundingTime,
   getMaxLeverage,
   getPerpetualSymbols,
+  getFundingInterval,
   getFundingIntervalHours,
   getPremiumIndex,
+  syncFundingIntervals,
   intervalHoursFromHoursUntilNext,
   getOrderbookPrice,
   getBalance,
