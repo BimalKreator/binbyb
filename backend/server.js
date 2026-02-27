@@ -32,6 +32,7 @@ const server = http.createServer(app);
 const CORS_ORIGINS = [
   "https://tradeictearner.online",
   "http://tradeictearner.online",
+  "http://139.180.190.25:3000",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ];
@@ -46,10 +47,10 @@ io.on("connection", (socket) => {
 
 app.use(
   cors({
-    origin: CORS_ORIGINS,
-    credentials: true,
+    origin: ["http://139.180.190.25:3000", "http://localhost:3000"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+    credentials: true, // Required for cookies, authorization headers with HTTPS
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json());
