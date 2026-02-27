@@ -21,8 +21,9 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         <Header />
         {/* Spacer matching header height (h-16) so content sits below fixed navbar. */}
         <div className="h-16 shrink-0" aria-hidden="true" />
-        <main className="flex flex-col flex-1 min-h-0 safe-area-inset pb-24 md:pb-6 min-w-0 overflow-x-hidden">
+        <main className="flex flex-col flex-1 min-h-0 safe-area-inset min-w-0 overflow-x-hidden">
           {children}
+          <div className="h-28 md:h-8 w-full shrink-0" aria-hidden="true" />
         </main>
         <BottomNav />
       </div>
