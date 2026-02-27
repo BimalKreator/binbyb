@@ -20,6 +20,7 @@ const settingSchema = new mongoose.Schema(
     binanceNetwork: { type: String, default: "" }, // e.g. TRC20, BEP20
     bybitDepositAddress: { type: String, default: "" },
     bybitNetwork: { type: String, default: "" },
+    mismatchMinNotionalFilter: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

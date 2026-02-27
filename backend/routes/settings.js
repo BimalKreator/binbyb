@@ -32,6 +32,7 @@ router.put("/", async (req, res) => {
       autoTrade,
       autoTradeEnabled,
       autoExitEnabled,
+      mismatchMinNotionalFilter,
       entryTimeMs,
       entrySlippagePct,
       userMinSpread,
@@ -50,6 +51,7 @@ router.put("/", async (req, res) => {
     if (autoTrade !== undefined) update.autoTrade = Boolean(autoTrade);
     if (autoTradeEnabled !== undefined) update.autoTradeEnabled = Boolean(autoTradeEnabled);
     if (autoExitEnabled !== undefined) update.autoExitEnabled = Boolean(autoExitEnabled);
+    if (mismatchMinNotionalFilter !== undefined) update.mismatchMinNotionalFilter = Boolean(mismatchMinNotionalFilter);
     if (entryTimeMs !== undefined) update.entryTimeMs = Math.max(0, Number(entryTimeMs) || 1000);
     if (entrySlippagePct !== undefined) update.entrySlippagePct = Math.max(0, Math.min(100, Number(entrySlippagePct) ?? 2));
     if (userMinSpread !== undefined) update.userMinSpread = Number(userMinSpread);

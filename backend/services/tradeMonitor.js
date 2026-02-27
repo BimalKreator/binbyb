@@ -411,7 +411,7 @@ async function runMonitor() {
   for (const symbol of onlyBinance) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "binance", firstSeen: now };
-      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 30s grace period.`);
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 10s grace period.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -425,7 +425,7 @@ async function runMonitor() {
   for (const symbol of onlyBybit) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "bybit", firstSeen: now };
-      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 30s grace period.`);
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 10s grace period.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -573,9 +573,16 @@ async function runMonitor() {
       bybitManager.getMarkPrice(symbol) ||
       0;
     const notionalDiff = qtyDiff * markPrice;
+    const useFilter = settings?.mismatchMinNotionalFilter ?? true;
+    const isMismatchSignificant = useFilter ? notionalDiff > 6 : qtyDiff > 0.0001;
 
-    // Only attempt fix if the difference is greater than $6 to bypass min notional limits
-    if (notionalDiff > 6) {
+    if (qtyDiff > 0.0001 && !isMismatchSignificant) {
+      console.log(
+        `[TradeMonitor] Mismatch on ${symbol} skipped: Notional $${notionalDiff.toFixed(2)} is below $6 safety limit.`
+      );
+    }
+
+    if (isMismatchSignificant) {
       if (!mismatchFirstSeen[symbol]) {
         mismatchFirstSeen[symbol] = now;
         console.log(
