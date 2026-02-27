@@ -593,26 +593,75 @@ async function runMonitor() {
 
         const lowExchange = bQty < byQty ? "binance" : "bybit";
         const highExchange = bQty > byQty ? "binance" : "bybit";
+        const lowPos = lowExchange === "binance" ? binancePos : bybitPos;
         const highPos = highExchange === "binance" ? binancePos : bybitPos;
-        const closeSide =
-          highExchange === "binance"
-            ? highPos.side === "BUY"
-              ? "SELL"
-              : "BUY"
-            : String(highPos.side || "").toLowerCase() === "buy"
-              ? "Sell"
-              : "Buy";
 
-        const posToReduce = { ...highPos, positionAmt: qtyDiff, size: qtyDiff };
+        const lowLeverage = Math.max(1, Number(lowPos?.leverage ?? lowPos?.leverageId ?? 1));
+        let requiredMargin = (qtyDiff * markPrice) / lowLeverage;
+        requiredMargin *= 1.1;
 
+        let availableBalance = 0;
         try {
+          if (lowExchange === "binance") {
+            const bal = binanceManager.getBalance(keys.binance);
+            availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? 0) || 0;
+          } else {
+            const bal = bybitManager.getBalance();
+            availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? bal?.equity ?? 0) || 0;
+          }
+        } catch (e) {
+          console.warn("[TradeMonitor] Mismatch fix: balance fetch failed", symbol, e?.message ?? e);
+        }
+
+        const doReduce = async (reason) => {
+          const posToReduce = { ...highPos, positionAmt: qtyDiff, size: qtyDiff };
           await closeOrphanPosition(keys, highExchange, symbol, posToReduce);
-          console.log(`[TradeMonitor] Mismatch fixed for ${symbol}: Reduced ${highExchange} by ${qtyDiff}`);
+          console.log(`[TradeMonitor] Mismatch Fix: Reducing ${highExchange} by ${qtyDiff} (${reason})`);
+        };
+
+        if (!orderCircuitBreaker.canPlaceOrder()) {
+          // skip this run
+        } else if (availableBalance > requiredMargin) {
+          const sym = String(symbol).toUpperCase();
+          const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+          const isLong = Number(lowPos?.positionAmt ?? lowPos?.size ?? 0) >= 0;
+          const addSide = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
+          const addPrice =
+            lowExchange === "binance"
+              ? (binanceManager.getOrderbookPrice(sym, addSide, slippagePct) ?? markPrice)
+              : (bybitManager.getOrderbookPrice(sym, addSide, slippagePct) ?? markPrice);
+
+          try {
+            if (lowExchange === "binance") {
+              await binanceManager.placeIOCLimitOrder(keys.binance, sym, addSide, qtyDiff, addPrice, {
+                positionSide: isLong ? "LONG" : "SHORT",
+                leverage: lowLeverage,
+              });
+            } else {
+              await bybitManager.placeIOCLimitOrder(keys.bybit, sym, addSide, qtyDiff, addPrice, { leverage: lowLeverage });
+            }
+            orderCircuitBreaker.recordOrderPlaced();
+            console.log(
+              `[TradeMonitor] Mismatch Fix: Increasing ${lowExchange} by ${qtyDiff} (Funds: $${availableBalance.toFixed(2)} > Req: $${requiredMargin.toFixed(2)})`
+            );
+          } catch (e) {
+            console.warn("[TradeMonitor] Mismatch fix (Add) failed, attempting Reduce fallback", symbol, e?.message ?? e);
+            try {
+              await doReduce("Add failed, fallback");
+            } catch (e2) {
+              console.error(`[TradeMonitor] Mismatch fix Reduce fallback failed for ${symbol}:`, e2?.message ?? e2);
+            }
+          }
           failedClosesUntil[symbol] = now + 30000;
           delete mismatchFirstSeen[symbol];
-        } catch (e) {
-          console.error(`[TradeMonitor] Failed to fix mismatch for ${symbol}:`, e?.message ?? e);
+        } else {
+          try {
+            await doReduce("Insufficient funds on other side");
+          } catch (e) {
+            console.error(`[TradeMonitor] Failed to fix mismatch for ${symbol}:`, e?.message ?? e);
+          }
           failedClosesUntil[symbol] = now + 30000;
+          delete mismatchFirstSeen[symbol];
         }
       }
     } else {
