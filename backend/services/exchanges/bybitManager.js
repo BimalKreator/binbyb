@@ -873,16 +873,24 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
   const sym = symbol.toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
 
-  // FIRST: Force leverage and WAIT before placing order (avoid race where order uses wrong leverage)
+  // STEP 1: If leverage is provided, update it FIRST and WAIT for the exchange response.
   if (opts?.leverage != null) {
     try {
-      await setLeverage(credentials, sym, opts.leverage);
+      const success = await setLeverage(credentials, sym, opts.leverage);
+      if (!success) {
+        throw new Error(`Failed to confirm leverage set to ${opts.leverage}`);
+      }
+      console.log(`[Bybit] Leverage confirmed at ${opts.leverage}x for ${sym}. Proceeding to order.`);
     } catch (e) {
-      console.log(`[Bybit] Note: Leverage setup for ${sym} failed or already exists:`, e?.message ?? e);
+      const errCode = e?.body?.retCode ?? e?.response?.data?.retCode;
+      if (errCode !== 110043) {
+        console.error(`[Bybit] Stopping order: Leverage setup failed for ${sym}:`, e?.message ?? e);
+        throw e;
+      }
     }
   }
 
-  // THEN: Place order only after leverage is set
+  // STEP 2: Place the order ONLY after Step 1 is successful.
   try {
     const data = await placeWSOrder(credentials, sym, sideNorm, qty, price, opts);
     return { result: data, retCode: 0, retMsg: "OK" };
@@ -893,16 +901,24 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
 }
 
 async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, opts = {}) {
-  // FIRST: Force leverage and WAIT before placing order
+  // STEP 1: If leverage is provided, update it FIRST and WAIT for confirmation.
   if (opts?.leverage != null) {
     try {
-      await setLeverage(credentials, sym, opts.leverage);
+      const success = await setLeverage(credentials, sym, opts.leverage);
+      if (!success) {
+        throw new Error(`Failed to confirm leverage set to ${opts.leverage}`);
+      }
+      console.log(`[Bybit] Leverage confirmed at ${opts.leverage}x for ${sym}. Proceeding to order.`);
     } catch (e) {
-      console.log(`[Bybit] Note: Leverage setup for ${sym} failed or already exists:`, e?.message ?? e);
+      const errCode = e?.body?.retCode ?? e?.response?.data?.retCode;
+      if (errCode !== 110043) {
+        console.error(`[Bybit] Stopping order: Leverage setup failed for ${sym}:`, e?.message ?? e);
+        throw e;
+      }
     }
   }
 
-  // THEN: Place order only after leverage is set
+  // STEP 2: Place the order ONLY after Step 1 is successful.
   const filters = await getSymbolFilters(sym);
   const qtyStr = filters.stepSize
     ? formatQuantityToStepSize(qty, filters.stepSize)
@@ -940,10 +956,11 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
 
 /**
  * Set leverage for a symbol via Bybit V5 REST. Used before entry so orders use correct leverage.
- * Ignores 110043 (leverage already set to this value). Uses correct V5 structure.
+ * @returns {Promise<boolean>} true on success or 110043 (already set); false if credentials missing.
+ * V5 return codes: 0 = success, 110043 = leverage already set to this value (treat as success).
  */
 async function setLeverage(credentials, symbol, leverage) {
-  if (!credentials?.apiKey || !credentials?.apiSecret) return;
+  if (!credentials?.apiKey || !credentials?.apiSecret) return false;
   const sym = String(symbol || "").toUpperCase();
   const levStr = String(Math.max(1, Math.min(125, Number(leverage) || 1)));
   const timestamp = Date.now().toString();
@@ -967,13 +984,12 @@ async function setLeverage(credentials, symbol, leverage) {
       },
     });
     const retCode = res.data?.retCode;
-    if (retCode === 110043) return true;
+    if (retCode === 110043) return true; // Already set to this value
     if (retCode !== 0 && retCode != null) {
       console.warn("[Bybit] setLeverage", sym, "retCode", retCode, res.data?.retMsg);
     }
-    return true;
+    return true; // retCode 0 or other non-fatal
   } catch (e) {
-    // Ignore Bybit error 110043 (leverage already set to this value)
     if (e?.body?.retCode === 110043 || e?.response?.data?.retCode === 110043) return true;
     throw e;
   }
