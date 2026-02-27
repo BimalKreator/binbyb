@@ -23,6 +23,7 @@ const settingSchema = new mongoose.Schema(
     mismatchMinNotionalFilter: { type: Boolean, default: true },
     liquidationAutoClose: { type: Boolean, default: false },
     liquidationDistancePct: { type: Number, default: 25 },
+    cooldownMinutes: { type: Number, default: 15 },
   },
   { timestamps: true }
 );

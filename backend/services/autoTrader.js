@@ -194,10 +194,10 @@ async function runAutoEntry() {
     console.log(`[AutoTrader] Skipped: ${symbol} already traded for this cycle. Waiting for next funding.`);
     return;
   }
-  // Persistent cycle lock: survive PM2 restart — skip if symbol had a closed trade in last 4h
+  const cooldownMs = (settings?.cooldownMinutes ?? 15) * 60 * 1000;
   const lastTrade = await TradeLog.findOne({ symbol }).sort({ exitTime: -1 }).lean();
-  if (lastTrade?.exitTime && (Date.now() - new Date(lastTrade.exitTime).getTime()) < 14400000) {
-    console.log(`[AutoTrader] Persistent Lock: ${symbol} recently traded. Waiting for next cycle.`);
+  if (lastTrade?.exitTime && (Date.now() - new Date(lastTrade.exitTime).getTime()) < cooldownMs) {
+    console.log(`[AutoTrader] Cooldown: ${symbol} recently closed. Waiting ${settings?.cooldownMinutes ?? 15} min before re-entry.`);
     return;
   }
   if (countdownMs <= 0) {

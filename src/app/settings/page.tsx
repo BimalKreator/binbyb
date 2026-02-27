@@ -24,6 +24,7 @@ type SettingRecord = {
   mismatchMinNotionalFilter?: boolean;
   liquidationAutoClose?: boolean;
   liquidationDistancePct?: number;
+  cooldownMinutes?: number;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -50,6 +51,7 @@ export default function SettingsPage() {
   const [entryTimeRaw, setEntryTimeRaw] = useState("1");
   const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
   const [entrySlippagePct, setEntrySlippagePct] = useState(2);
+  const [cooldownMinutes, setCooldownMinutes] = useState(15);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -97,6 +99,7 @@ export default function SettingsPage() {
             setEntryTimeUnit("ms");
           }
           setEntrySlippagePct(s.entrySlippagePct ?? 2);
+          setCooldownMinutes(s.cooldownMinutes ?? 15);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -187,6 +190,7 @@ export default function SettingsPage() {
         liquidationDistancePct,
         entryTimeMs: entryTimeToMs(),
         entrySlippagePct,
+        cooldownMinutes,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -494,6 +498,21 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="2"
               />
+            </label>
+            <label className="block">
+              <span className={labelClass}>Auto-Trade Cooldown (Minutes)</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cooldownMinutes}
+                onChange={(e) => setCooldownMinutes(Math.max(0, Number(e.target.value) ?? 15))}
+                className={inputClass}
+                placeholder="15"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">
+                Time to wait before the bot can re-enter the same token after a trade is closed.
+              </span>
             </label>
             <button
               type="button"
