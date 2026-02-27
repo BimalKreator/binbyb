@@ -1,8 +1,8 @@
 import axios, { type AxiosError } from "axios";
 
-// Backend API base: set NEXT_PUBLIC_API_URL (e.g. http://139.180.190.25:5000) or fallback to hardcoded backend URL
+// Backend API base: set NEXT_PUBLIC_API_URL (e.g. https://tradeictearner.online) or fallback to secure domain
 const API_ORIGIN =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://139.180.190.25:5000";
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "https://tradeictearner.online";
 const API_ORIGIN_CLEAN = String(API_ORIGIN).replace(/\/$/, "");
 const baseURL = `${API_ORIGIN_CLEAN}/api`;
 
