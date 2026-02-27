@@ -21,6 +21,8 @@ const settingSchema = new mongoose.Schema(
     bybitDepositAddress: { type: String, default: "" },
     bybitNetwork: { type: String, default: "" },
     mismatchMinNotionalFilter: { type: Boolean, default: true },
+    liquidationAutoClose: { type: Boolean, default: false },
+    liquidationDistancePct: { type: Number, default: 25 },
   },
   { timestamps: true }
 );

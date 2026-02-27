@@ -22,6 +22,8 @@ type SettingRecord = {
   entrySlippagePct?: number;
   userMinSpread?: number;
   mismatchMinNotionalFilter?: boolean;
+  liquidationAutoClose?: boolean;
+  liquidationDistancePct?: number;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -43,6 +45,8 @@ export default function SettingsPage() {
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [autoExitEnabled, setAutoExitEnabled] = useState(false);
   const [mismatchMinNotionalFilter, setMismatchMinNotionalFilter] = useState(true);
+  const [liquidationAutoClose, setLiquidationAutoClose] = useState(false);
+  const [liquidationDistancePct, setLiquidationDistancePct] = useState(25);
   const [entryTimeRaw, setEntryTimeRaw] = useState("1");
   const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
   const [entrySlippagePct, setEntrySlippagePct] = useState(2);
@@ -73,6 +77,8 @@ export default function SettingsPage() {
           setAutoTradeEnabled(s.autoTradeEnabled ?? false);
           setAutoExitEnabled(s.autoExitEnabled ?? false);
           setMismatchMinNotionalFilter(s.mismatchMinNotionalFilter ?? true);
+          setLiquidationAutoClose(s.liquidationAutoClose ?? false);
+          setLiquidationDistancePct(s.liquidationDistancePct ?? 25);
           const ms = s.entryTimeMs ?? 1000;
           const hours = Math.floor(ms / 3600000);
           const minutes = Math.floor(ms / 60000);
@@ -177,6 +183,8 @@ export default function SettingsPage() {
         autoTradeEnabled,
         autoExitEnabled,
         mismatchMinNotionalFilter,
+        liquidationAutoClose,
+        liquidationDistancePct,
         entryTimeMs: entryTimeToMs(),
         entrySlippagePct,
       });
@@ -341,6 +349,38 @@ export default function SettingsPage() {
                 <div className="absolute left-1 top-1 w-6 h-6 rounded-full bg-white shadow transition-transform peer-checked:translate-x-7" aria-hidden />
               </div>
             </label>
+            <label className="flex items-center justify-between gap-4 cursor-pointer p-3 rounded-lg bg-slate-700/50 hover:bg-slate-700/70 transition-colors">
+              <div>
+                <span className="text-sm font-medium text-foreground block">Liquidation Auto-Close Protection</span>
+                <span className="text-xs text-slate-500 mt-0.5 block">
+                  Automatically closes the paired trade if the Mark Price gets within this percentage of the Liquidation Price on either exchange.
+                </span>
+              </div>
+              <div className="relative w-14 h-8 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={liquidationAutoClose}
+                  onChange={(e) => setLiquidationAutoClose(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors shadow-inner" aria-hidden />
+                <div className="absolute left-1 top-1 w-6 h-6 rounded-full bg-white shadow transition-transform peer-checked:translate-x-7" aria-hidden />
+              </div>
+            </label>
+            {liquidationAutoClose && (
+              <label className="block pl-3">
+                <span className={labelClass}>Liquidation Distance %</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={liquidationDistancePct}
+                  onChange={(e) => setLiquidationDistancePct(Math.max(1, Math.min(100, Number(e.target.value) ?? 25)))}
+                  className={inputClass}
+                />
+                <span className="text-xs text-slate-500 mt-0.5 block">Default 25. Close when mark is within this % of liquidation price.</span>
+              </label>
+            )}
           </div>
         )}
       </section>

@@ -520,6 +520,40 @@ async function runMonitor() {
     const bybitPos = bybitBySymbol[symbol];
     if (!binancePos || !bybitPos) continue;
 
+    const liqAutoCloseOn = settings?.liquidationAutoClose ?? false;
+    const liqDistanceLimit = settings?.liquidationDistancePct ?? 25;
+    if (liqAutoCloseOn) {
+      const binanceLiq = parseFloat(binancePos?.liquidationPrice ?? 0);
+      const binanceMark = parseFloat(binancePos?.markPrice ?? 0) || binanceManager.getMarkPrice(symbol) || 0;
+      const bybitLiq = parseFloat(bybitPos?.liqPrice ?? bybitPos?.liquidationPrice ?? 0);
+      const bybitMark = parseFloat(bybitPos?.markPrice ?? 0) || bybitManager.getMarkPrice(symbol) || 0;
+      const binanceLiqDist = binanceLiq > 0 && binanceMark > 0 ? (Math.abs(binanceMark - binanceLiq) / binanceMark) * 100 : 100;
+      const bybitLiqDist = bybitLiq > 0 && bybitMark > 0 ? (Math.abs(bybitMark - bybitLiq) / bybitMark) * 100 : 100;
+
+      if (binanceLiq > 0 && binanceLiqDist <= liqDistanceLimit) {
+        console.log(`[TradeMonitor] LIQUIDATION ALERT: Binance distance ${binanceLiqDist.toFixed(2)}% <= ${liqDistanceLimit}%. Auto-closing ${symbol}.`);
+        try {
+          await closePair(keys, symbol, binancePos, bybitPos, "Target", "Auto-Close: Binance Near Liquidation");
+          delete failedClosesUntil[symbol];
+        } catch (e) {
+          console.error("[TradeMonitor] closePair (liquidation Binance) failed", symbol, e?.message ?? e);
+          failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
+        }
+        continue;
+      }
+      if (bybitLiq > 0 && bybitLiqDist <= liqDistanceLimit) {
+        console.log(`[TradeMonitor] LIQUIDATION ALERT: Bybit distance ${bybitLiqDist.toFixed(2)}% <= ${liqDistanceLimit}%. Auto-closing ${symbol}.`);
+        try {
+          await closePair(keys, symbol, binancePos, bybitPos, "Target", "Auto-Close: Bybit Near Liquidation");
+          delete failedClosesUntil[symbol];
+        } catch (e) {
+          console.error("[TradeMonitor] closePair (liquidation Bybit) failed", symbol, e?.message ?? e);
+          failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
+        }
+        continue;
+      }
+    }
+
     const pnlPct = calculateRealtimePnlPercent(symbol, binancePos, bybitPos);
     if (pnlPct != null) {
       if (stopLoss > 0 && pnlPct <= -stopLoss) {
