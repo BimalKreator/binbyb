@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import toast from "react-hot-toast";
-import api from "@/lib/api";
+import api, { getSocketOrigin } from "@/lib/api";
 import { Loader } from "@/components/Loader";
 import { ChevronLeft, ChevronRight, Receipt, Terminal } from "lucide-react";
 
@@ -35,16 +35,6 @@ type LogEntry = {
 };
 
 const LIMIT = 20;
-// Use HTTPS origin for production; WSS is used automatically over HTTPS
-function getSocketOrigin(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== "undefined") {
-    if (window.location.hostname === "tradeictearner.online") return "https://tradeictearner.online";
-    return window.location.origin;
-  }
-  return "http://localhost:5000";
-}
-const apiOrigin = getSocketOrigin();
 
 function reasonColor(reason: string): string {
   switch (reason) {
@@ -117,7 +107,7 @@ export default function TradesPage() {
       .finally(() => setLoadingLogs(false));
 
     const { io } = require("socket.io-client");
-    const socket = io(apiOrigin.replace(/\/$/, ""), { path: "/socket.io", transports: ["websocket", "polling"] });
+    const socket = io(getSocketOrigin().replace(/\/$/, ""), { path: "/socket.io", transports: ["websocket", "polling"] });
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
     socket.on("system-log", (payload: LogEntry) => {

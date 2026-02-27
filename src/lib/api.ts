@@ -1,7 +1,10 @@
 import axios, { type AxiosError } from "axios";
 
-// Exactly "/api" for secure domain (Nginx proxy); no trailing slash
-const baseURL = "/api";
+// Backend API base: set NEXT_PUBLIC_API_URL (e.g. http://139.180.190.25:5000) or fallback to hardcoded backend URL
+const API_ORIGIN =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://139.180.190.25:5000";
+const API_ORIGIN_CLEAN = String(API_ORIGIN).replace(/\/$/, "");
+const baseURL = `${API_ORIGIN_CLEAN}/api`;
 
 export const api = axios.create({
   baseURL,
@@ -11,9 +14,9 @@ export const api = axios.create({
 
 const TOKEN_KEY = "binbyb_jwt";
 
-/** Use same host as the page so Next/Nginx proxy handles socket.io; avoids path-matching issues. */
+/** Backend origin for Socket.io (same as API server, no /api path). */
 export const getSocketOrigin = (): string => {
-  return "";
+  return API_ORIGIN_CLEAN;
 };
 
 export function getStoredToken(): string | null {

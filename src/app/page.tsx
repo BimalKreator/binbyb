@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
-import api from "@/lib/api";
+import api, { getSocketOrigin } from "@/lib/api";
 import { Loader } from "@/components/Loader";
 import { XCircle, ChevronDown, ChevronRight } from "lucide-react";
 
@@ -201,16 +201,12 @@ export default function Home() {
   useEffect(() => {
     const { io } = require("socket.io-client");
 
-    const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
-    const apiUrl = isSecure ? "https://tradeictearner.online" : (typeof window !== "undefined" ? window.location.origin : "");
-
+    const apiUrl = getSocketOrigin();
     console.log("🔌 Attempting socket connection to:", apiUrl);
 
     const socket = io(apiUrl, {
       path: "/socket.io",
-      transports: ["polling", "websocket"],
-      secure: isSecure,
-      rejectUnauthorized: false,
+      transports: ["websocket", "polling"],
     });
 
     socket.on("connect", () => {
