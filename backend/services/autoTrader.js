@@ -237,7 +237,6 @@ async function runAutoEntry() {
 
   isExecutingTrade = true;
   try {
-    await bybitManager.setLeverage(keys.bybit, top.symbol, levInt);
     for (const qtyStr of chunks) {
       if (!orderCircuitBreaker.canPlaceOrder()) {
         console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);
@@ -246,21 +245,36 @@ async function runAutoEntry() {
       const qty = parseFloat(qtyStr);
       if (qty <= 0) continue;
       try {
-        await Promise.all([
-          binanceManager.placeIOCLimitOrder(keys.binance, top.symbol, binanceSide, qty, binancePrice, { leverage: levInt }).then((r) => {
-            orderCircuitBreaker.recordOrderPlaced();
-            return r;
-          }),
-          bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice, { leverage: levInt }).then((r) => {
-            orderCircuitBreaker.recordOrderPlaced();
-            return r;
-          }),
-        ]);
+        // Sequential execution: Bybit first (primary leg), then Binance only if Bybit succeeds.
+        let bybitResult;
+        try {
+          bybitResult = await bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice, { leverage: levInt });
+          orderCircuitBreaker.recordOrderPlaced();
+        } catch (e) {
+          console.log("[Entry-Logic] Bybit failed, skipping Binance to save fees.", top.symbol, e?.message ?? e);
+          break;
+        }
+        const orderId = bybitResult?.result?.orderId ?? bybitResult?.orderId;
+        if (!orderId) {
+          console.log("[Entry-Logic] Bybit returned no orderId, skipping Binance to save fees.", top.symbol);
+          break;
+        }
+        const filledQty = await bybitManager.getOrderFilledQty(keys.bybit, orderId);
+        const binanceQty = filledQty > 0 ? filledQty : qty;
+        if (filledQty > 0 && filledQty < qty) {
+          console.log("[AutoTrader] Bybit partial fill", top.symbol, "requested", qty, "filled", filledQty, "- Binance matching", binanceQty);
+        }
+        if (binanceQty <= 0) {
+          console.log("[Entry-Logic] Bybit filled 0, skipping Binance.", top.symbol);
+          break;
+        }
+        await binanceManager.placeIOCLimitOrder(keys.binance, top.symbol, binanceSide, binanceQty, binancePrice, { leverage: levInt });
+        orderCircuitBreaker.recordOrderPlaced();
         tradedCycles[symbol] = nextFundingTime;
         console.log(`[AutoTrader] Locked ${symbol} for the current cycle. Will not re-enter until next funding time.`);
         lastEntryTimeBySymbol[top.symbol] = now;
         entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
-        console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", qtyStr);
+        console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", binanceQty === qty ? qtyStr : String(binanceQty));
       } catch (e) {
         console.error("[AutoTrader] Entry failed", top.symbol, e.message || e);
         break; // no retry — single attempt per chunk to avoid rate limits

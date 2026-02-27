@@ -1236,11 +1236,49 @@ async function getOrderFillPrice(credentials, orderId) {
   return null;
 }
 
+/**
+ * Get filled quantity for an order (e.g. after placeIOCLimitOrder). Waits briefly then GET /v5/order/history.
+ * Used so Binance leg can match Bybit filled qty on partial fills.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} orderId - order ID from create response
+ * @returns {Promise<number>} cumExecQty or 0
+ */
+async function getOrderFilledQty(credentials, orderId) {
+  if (!credentials?.apiKey || !credentials?.apiSecret || !orderId) return 0;
+  await new Promise((r) => setTimeout(r, 400));
+  try {
+    const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+    const qs = `category=linear&orderId=${encodeURIComponent(orderId)}`;
+    const signStr = timestamp + credentials.apiKey + recvWindow + qs;
+    const signature = signMessage(signStr, credentials.apiSecret);
+    const { data } = await bybitPrivateAxios.get(`${REST_BASE}/v5/order/history?${qs}`, {
+      headers: {
+        "X-BAPI-API-KEY": credentials.apiKey,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "X-BAPI-SIGN": signature,
+      },
+    });
+    const list = data?.result?.list || [];
+    const order = list[0];
+    const q = order?.cumExecQty;
+    if (q != null && String(q).length > 0) {
+      const n = parseFloat(q);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  } catch (e) {
+    console.warn("[Bybit] getOrderFilledQty", orderId, e?.message ?? e);
+  }
+  return 0;
+}
+
 module.exports = {
   start,
   stop,
   placeIOCLimitOrder,
   getOrderFillPrice,
+  getOrderFilledQty,
   setLeverage,
   placeWSOrder,
   transferUnifiedToFunding,

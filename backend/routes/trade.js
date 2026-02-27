@@ -79,22 +79,38 @@ router.post("/arbitrage", async (req, res) => {
         message: "Order rate limit reached; trading paused. Try again later.",
       });
     }
-    // Order placement uses WS (placeWSOrder) with REST fallback via placeIOCLimitOrder
-    const [binanceResult, bybitResult] = await Promise.all([
-      binanceManager.placeIOCLimitOrder(keys.binance, symbol, binanceSideNorm, qty, binancePrice, { leverage: levInt }).then((r) => {
-        orderCircuitBreaker.recordOrderPlaced();
-        return r;
-      }),
-      bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice, { leverage: levInt }).then((r) => {
-        orderCircuitBreaker.recordOrderPlaced();
-        return r;
-      }),
-    ]);
+    // Sequential execution: Bybit first (primary leg), then Binance only if Bybit succeeds.
+    let bybitResult;
+    try {
+      bybitResult = await bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice, { leverage: levInt });
+      orderCircuitBreaker.recordOrderPlaced();
+    } catch (e) {
+      console.log("[Entry-Logic] Bybit failed, skipping Binance to save fees.", symbol, e?.message ?? e);
+      return res.status(400).json({
+        success: false,
+        message: e?.message ?? "Bybit order failed; Binance not placed to avoid orphan.",
+      });
+    }
+    const orderId = bybitResult?.result?.orderId ?? bybitResult?.orderId;
+    if (!orderId) {
+      console.log("[Entry-Logic] Bybit returned no orderId, skipping Binance to save fees.", symbol);
+      return res.status(400).json({
+        success: false,
+        message: "Bybit returned no orderId; Binance not placed to avoid orphan.",
+      });
+    }
+    const filledQty = await bybitManager.getOrderFilledQty(keys.bybit, orderId);
+    const binanceQty = filledQty > 0 ? filledQty : qty;
+    let binanceResult = null;
+    if (binanceQty > 0) {
+      binanceResult = await binanceManager.placeIOCLimitOrder(keys.binance, symbol, binanceSideNorm, binanceQty, binancePrice, { leverage: levInt });
+      orderCircuitBreaker.recordOrderPlaced();
+    }
 
     return res.json({
       success: true,
       data: { binance: binanceResult, bybit: bybitResult },
-      message: "Arbitrage orders submitted.",
+      message: binanceQty > 0 ? "Arbitrage orders submitted." : "Bybit filled; Binance skipped (no fill).",
     });
   } catch (e) {
     const msg = e.response?.data?.message || e.message;
