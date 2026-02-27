@@ -873,6 +873,7 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
   const sym = symbol.toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
 
+  // FIRST: Force leverage and WAIT before placing order (avoid race where order uses wrong leverage)
   if (opts?.leverage != null) {
     try {
       await setLeverage(credentials, sym, opts.leverage);
@@ -881,6 +882,7 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
     }
   }
 
+  // THEN: Place order only after leverage is set
   try {
     const data = await placeWSOrder(credentials, sym, sideNorm, qty, price, opts);
     return { result: data, retCode: 0, retMsg: "OK" };
@@ -891,6 +893,7 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
 }
 
 async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, opts = {}) {
+  // FIRST: Force leverage and WAIT before placing order
   if (opts?.leverage != null) {
     try {
       await setLeverage(credentials, sym, opts.leverage);
@@ -899,6 +902,7 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
     }
   }
 
+  // THEN: Place order only after leverage is set
   const filters = await getSymbolFilters(sym);
   const qtyStr = filters.stepSize
     ? formatQuantityToStepSize(qty, filters.stepSize)

@@ -284,6 +284,9 @@ export default function TradesPage() {
                     <span className="font-medium text-foreground">{symbol}</span>
                     <span className="text-slate-500 text-xs">{exitTime}</span>
                     <span className={`inline-block px-2 py-0.5 rounded text-xs ${reasonColor(reason)}`}>{reason}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                      {first?.exitReason || "Target/SL"}
+                    </span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -324,8 +327,9 @@ export default function TradesPage() {
                               {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
                             </td>
                             <td className="py-1.5 px-3 text-left text-slate-400 text-xs">
-                              <span className="font-semibold text-slate-300">Exit Reason: </span>
-                              {t.exitReason || "N/A"}
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                                {first?.exitReason ?? t?.exitReason ?? "Closed"}
+                              </span>
                             </td>
                           </tr>
                         ))}

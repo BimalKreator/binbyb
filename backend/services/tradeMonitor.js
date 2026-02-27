@@ -128,9 +128,13 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     return { binanceOk: false, bybitOk: false };
   }
   const sym = toUpperSymbol(symbol);
+  closingSymbols.add(sym);
+  try {
   const binanceQty = Math.abs(Number(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
   const bybitQty = Math.abs(Number(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
-  if (binanceQty <= 0 && bybitQty <= 0) return { binanceOk: false, bybitOk: false };
+  if (binanceQty <= 0 && bybitQty <= 0) {
+    return { binanceOk: false, bybitOk: false };
+  }
   const binanceCloseSide = binancePos.side === "BUY" ? "SELL" : "BUY";
   const binancePositionSide = binancePos.positionSide || undefined;
   const bybitCloseSide = String(bybitPos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
@@ -151,6 +155,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     console.error("[TradeMonitor] CRITICAL: Cannot determine any price for", sym, "exit. Missing all price data.");
     return { binanceOk: false, bybitOk: false };
   }
+
 
   const settings = await Setting.findOne().lean();
   const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
@@ -279,6 +284,9 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     TradeLog.insertMany(legs).catch((e) => console.error("[TradeMonitor] TradeLog insertMany failed", e.message));
   }
   return { binanceOk, bybitOk };
+  } finally {
+    closingSymbols.delete(sym);
+  }
 }
 
 /**
@@ -411,7 +419,7 @@ async function runMonitor() {
   for (const symbol of onlyBinance) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "binance", firstSeen: now };
-      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 10s grace period.`);
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Waiting 10s for data sync.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -425,7 +433,7 @@ async function runMonitor() {
   for (const symbol of onlyBybit) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "bybit", firstSeen: now };
-      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 10s grace period.`);
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Waiting 10s for data sync.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -448,9 +456,10 @@ async function runMonitor() {
     }
   }
 
-  // Orphan exit: only close after 30s grace period since first detection (avoids WS delay false orphans)
+  // Orphan exit: only close after 10s grace; skip if this symbol is being closed as a pair (avoid double-kill)
   for (const symbol of Object.keys(orphanFirstSeen)) {
     const rec = orphanFirstSeen[symbol];
+    if (closingSymbols.has(symbol)) continue;
     if (now < (orphanCloseCooldownUntil[symbol] || 0)) continue;
     if (now < (failedClosesUntil[symbol] || 0)) continue;
 
@@ -464,7 +473,7 @@ async function runMonitor() {
       const pos = binanceBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
         try {
-          await closeOrphanPosition(keys, "binance", symbol, pos, "Orphan Exit: Bybit Data Missing (10s Lag)");
+          await closeOrphanPosition(keys, "binance", symbol, pos, "Orphan: Bybit Lag (10s)");
           delete orphanFirstSeen[symbol];
           delete orphanCloseCooldownUntil[symbol];
           delete failedClosesUntil[symbol];
@@ -481,7 +490,7 @@ async function runMonitor() {
       const pos = bybitBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
         try {
-          await closeOrphanPosition(keys, "bybit", symbol, pos, "Orphan Exit: Binance Data Missing (10s Lag)");
+          await closeOrphanPosition(keys, "bybit", symbol, pos, "Orphan: Binance Lag (10s)");
           delete orphanFirstSeen[symbol];
           delete orphanCloseCooldownUntil[symbol];
           delete failedClosesUntil[symbol];
