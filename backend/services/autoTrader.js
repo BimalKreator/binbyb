@@ -251,7 +251,7 @@ async function runAutoEntry() {
             orderCircuitBreaker.recordOrderPlaced();
             return r;
           }),
-          bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice).then((r) => {
+          bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice, { leverage: levInt }).then((r) => {
             orderCircuitBreaker.recordOrderPlaced();
             return r;
           }),

@@ -7,6 +7,8 @@ const tradeLogSchema = new mongoose.Schema(
     exitPrice: { type: Number, required: true },
     pnl: { type: Number, required: true },
     reason: { type: String, enum: ["Target", "SL", "Orphan", "Manual"], default: "Manual" },
+    /** Human-readable exit reason for UI (e.g. "Stop Loss Hit (Combined)", "Orphan Exit: Bybit Data Missing (10s Lag)"). */
+    exitReason: { type: String, default: "" },
     exitTime: { type: Date, default: Date.now },
     side: { type: String, enum: ["long", "short", ""], default: "" },
     exchange: { type: String, default: "" },

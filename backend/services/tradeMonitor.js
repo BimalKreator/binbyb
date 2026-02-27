@@ -15,6 +15,7 @@ const orderCircuitBreaker = require("./orderCircuitBreaker");
 const livePnlService = require("./livePnlService");
 
 const ORPHAN_GRACE_MS = 10000; // 10 seconds: only close orphan if position age > this (avoids false orphan from leg latency)
+const ORPHAN_GRACE_PERIOD_MS = 10000; // 10 seconds: wait after first detecting an orphan before closing (avoids WS delay false orphans)
 
 const FUNDING_WINDOW_MS = 600000; // 10 minutes before next funding
 const ORPHAN_WAIT_MS = 10000; // 10 seconds before closing orphan (for timer-based orphan path)
@@ -121,7 +122,7 @@ function getCombinedUnrealizedPnL(symbol, binancePos, bybitPos) {
 /**
  * Close paired positions using split IOC limit orders (getOrderbookPrice slippage). No REST polling.
  */
-async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
+async function closePair(credentials, symbol, binancePos, bybitPos, reason, exitReasonOverride) {
   if (!orderCircuitBreaker.canPlaceOrder()) {
     console.error("[TradeMonitor] Order circuit breaker: trading paused, skipping closePair", toUpperSymbol(symbol));
     return { binanceOk: false, bybitOk: false };
@@ -235,6 +236,9 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
     autoTrader.clearEntryFundingDirection(sym);
     const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const reasonStr = reason === "SL" ? "SL" : "Target";
+    const exitReasonStr =
+      exitReasonOverride ||
+      (reason === "SL" ? "Stop Loss Hit (Combined)" : "Target Profit Hit (Combined)");
     const sideStr = binancePos.side === "BUY" ? "long" : "short";
     const binancePnl = Number.isFinite(binancePos?.unrealizedProfit) ? binancePos.unrealizedProfit : combinedUnrealizedPnL / 2;
     const bybitPnl = Number.isFinite(bybitPos?.unrealizedProfit) ? bybitPos.unrealizedProfit : combinedUnrealizedPnL / 2;
@@ -245,6 +249,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
         exitPrice: binanceExecExit,
         pnl: binancePnl,
         reason: reasonStr,
+        exitReason: exitReasonStr,
         side: sideStr,
         exchange: "Binance",
         groupId,
@@ -260,6 +265,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
         exitPrice: bybitExecExit,
         pnl: bybitPnl,
         reason: reasonStr,
+        exitReason: exitReasonStr,
         side: sideStr,
         exchange: "Bybit",
         groupId,
@@ -277,8 +283,9 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason) {
 
 /**
  * Close orphan position using split IOC limit orders (getOrderbookPrice). No REST polling.
+ * @param {string} [exitReason] - Descriptive reason for the log (e.g. "Orphan Exit: Bybit Data Missing (10s Lag)")
  */
-async function closeOrphanPosition(credentials, exchange, symbol, pos) {
+async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReason) {
   if (!orderCircuitBreaker.canPlaceOrder()) {
     console.error("[TradeMonitor] Order circuit breaker: trading paused, skipping closeOrphan", toUpperSymbol(symbol), exchange);
     return;
@@ -365,6 +372,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos) {
     exitPrice: execExitPrice,
     pnl: unrealized,
     reason: "Orphan",
+    exitReason: exitReason || "Orphan",
     side: isLong ? "long" : "short",
     exchange: exchangeName,
     groupId: null,
@@ -403,6 +411,7 @@ async function runMonitor() {
   for (const symbol of onlyBinance) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "binance", firstSeen: now };
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 30s grace period.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -416,6 +425,7 @@ async function runMonitor() {
   for (const symbol of onlyBybit) {
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "bybit", firstSeen: now };
+      console.log(`[TradeMonitor] Orphan detected for ${symbol}. Starting 30s grace period.`);
       if (!orphanRecheckTimerBySymbol[symbol]) {
         orphanRecheckTimerBySymbol[symbol] = setTimeout(() => {
           delete orphanRecheckTimerBySymbol[symbol];
@@ -438,11 +448,14 @@ async function runMonitor() {
     }
   }
 
-  // Orphan exit with 10-second grace: only close if position age > ORPHAN_GRACE_MS (avoids false orphan from leg latency)
+  // Orphan exit: only close after 30s grace period since first detection (avoids WS delay false orphans)
   for (const symbol of Object.keys(orphanFirstSeen)) {
     const rec = orphanFirstSeen[symbol];
     if (now < (orphanCloseCooldownUntil[symbol] || 0)) continue;
     if (now < (failedClosesUntil[symbol] || 0)) continue;
+
+    const elapsed = now - rec.firstSeen;
+    if (elapsed < ORPHAN_GRACE_PERIOD_MS) continue; // Still in grace period
 
     const stillOnlyBinance = rec.exchange === "binance" && binanceSymbols.has(symbol) && !bybitSymbols.has(symbol);
     const stillOnlyBybit = rec.exchange === "bybit" && bybitSymbols.has(symbol) && !binanceSymbols.has(symbol);
@@ -450,10 +463,8 @@ async function runMonitor() {
     if (stillOnlyBinance) {
       const pos = binanceBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
-        const posAge = now - (pos.createdTime ?? pos.updatedTime ?? now);
-        if (posAge <= ORPHAN_GRACE_MS) continue;
         try {
-          await closeOrphanPosition(keys, "binance", symbol, pos);
+          await closeOrphanPosition(keys, "binance", symbol, pos, "Orphan Exit: Bybit Data Missing (10s Lag)");
           delete orphanFirstSeen[symbol];
           delete orphanCloseCooldownUntil[symbol];
           delete failedClosesUntil[symbol];
@@ -469,10 +480,8 @@ async function runMonitor() {
     } else if (stillOnlyBybit) {
       const pos = bybitBySymbol[symbol];
       if (pos && Math.abs(Number(pos.positionAmt) || 0) > 0) {
-        const posAge = now - (pos.createdTime ?? pos.updatedTime ?? now);
-        if (posAge <= ORPHAN_GRACE_MS) continue;
         try {
-          await closeOrphanPosition(keys, "bybit", symbol, pos);
+          await closeOrphanPosition(keys, "bybit", symbol, pos, "Orphan Exit: Binance Data Missing (10s Lag)");
           delete orphanFirstSeen[symbol];
           delete orphanCloseCooldownUntil[symbol];
           delete failedClosesUntil[symbol];
@@ -543,7 +552,7 @@ async function runMonitor() {
       if (timeLeft <= FUNDING_WINDOW_MS) {
         console.log("[TradeMonitor] Funding flip exit (within 10 min)", symbol);
         try {
-          await closePair(keys, symbol, binancePos, bybitPos, "Target");
+          await closePair(keys, symbol, binancePos, bybitPos, "Target", "Funding Flip Exit (Combined)");
           delete failedClosesUntil[symbol];
         } catch (e) {
           console.error("[TradeMonitor] closePair (funding flip) failed", symbol, e.message || e);
@@ -653,7 +662,7 @@ function handlePositionClosed(symbol, closedExchange) {
       if (!primary) return;
       const posAge = Date.now() - (primary.createdTime ?? primary.updatedTime ?? Date.now());
       if (posAge <= ORPHAN_GRACE_MS) return;
-      return closeOrphanPosition(keys, otherExchange, sym, primary).then(
+      return closeOrphanPosition(keys, otherExchange, sym, primary, "Orphan: Pair Closed (Follow-up)").then(
         () => {
           delete orphanCloseCooldownUntil[sym];
           delete failedClosesUntil[sym];

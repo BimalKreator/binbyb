@@ -873,14 +873,11 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
   const sym = symbol.toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
 
-  if (opts.leverage != null) {
+  if (opts?.leverage != null) {
     try {
       await setLeverage(credentials, sym, opts.leverage);
     } catch (e) {
-      console.log(
-        `[Bybit] Note: Leverage setup for ${sym} failed or was already set:`,
-        e?.message ?? e
-      );
+      console.log(`[Bybit] Note: Leverage setup for ${sym} failed or already exists:`, e?.message ?? e);
     }
   }
 
@@ -894,6 +891,14 @@ async function placeIOCLimitOrder(credentials, symbol, side, qty, price, opts = 
 }
 
 async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, opts = {}) {
+  if (opts?.leverage != null) {
+    try {
+      await setLeverage(credentials, sym, opts.leverage);
+    } catch (e) {
+      console.log(`[Bybit] Note: Leverage setup for ${sym} failed or already exists:`, e?.message ?? e);
+    }
+  }
+
   const filters = await getSymbolFilters(sym);
   const qtyStr = filters.stepSize
     ? formatQuantityToStepSize(qty, filters.stepSize)
@@ -931,7 +936,7 @@ async function placeIOCLimitOrderREST(credentials, sym, sideNorm, qty, price, op
 
 /**
  * Set leverage for a symbol via Bybit V5 REST. Used before entry so orders use correct leverage.
- * Ignores 110043 (leverage not modified) so it doesn't block the trade.
+ * Ignores 110043 (leverage already set to this value). Uses correct V5 structure.
  */
 async function setLeverage(credentials, symbol, leverage) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return;
@@ -958,15 +963,15 @@ async function setLeverage(credentials, symbol, leverage) {
       },
     });
     const retCode = res.data?.retCode;
-    if (retCode === 110043) return;
+    if (retCode === 110043) return true;
     if (retCode !== 0 && retCode != null) {
       console.warn("[Bybit] setLeverage", sym, "retCode", retCode, res.data?.retMsg);
     }
+    return true;
   } catch (e) {
-    // Bybit returns 110043 when leverage is already set to the target value
-    const code = e?.response?.data?.retCode ?? e?.body?.retCode;
-    if (code === 110043) return;
-    console.warn("[Bybit] setLeverage failed", sym, e?.response?.data?.retMsg || e?.message);
+    // Ignore Bybit error 110043 (leverage already set to this value)
+    if (e?.body?.retCode === 110043 || e?.response?.data?.retCode === 110043) return true;
+    throw e;
   }
 }
 

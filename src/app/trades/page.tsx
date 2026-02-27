@@ -12,6 +12,7 @@ type TradeRecord = {
   entryPrice: number;
   exitPrice: number;
   reason: string;
+  exitReason?: string | null;
   pnl: number;
   exitTime: string;
   side: string;
@@ -296,6 +297,7 @@ export default function TradesPage() {
                           <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Exec. Exit</th>
                           <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Fee</th>
                           <th className="text-right py-1.5 px-3 text-slate-500 font-medium text-xs">Individual PnL</th>
+                          <th className="text-left py-1.5 px-3 text-slate-500 font-medium text-xs">Exit Reason</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -320,6 +322,10 @@ export default function TradesPage() {
                             </td>
                             <td className={`py-1.5 px-3 text-right font-medium tabular-nums ${t.pnl != null && t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                               {t.pnl != null ? (t.pnl >= 0 ? `+${Number(t.pnl).toFixed(2)}` : Number(t.pnl).toFixed(2)) : "—"}
+                            </td>
+                            <td className="py-1.5 px-3 text-left text-slate-400 text-xs">
+                              <span className="font-semibold text-slate-300">Exit Reason: </span>
+                              {t.exitReason || "N/A"}
                             </td>
                           </tr>
                         ))}

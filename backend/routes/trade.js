@@ -85,7 +85,7 @@ router.post("/arbitrage", async (req, res) => {
         orderCircuitBreaker.recordOrderPlaced();
         return r;
       }),
-      bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice).then((r) => {
+      bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice, { leverage: levInt }).then((r) => {
         orderCircuitBreaker.recordOrderPlaced();
         return r;
       }),
