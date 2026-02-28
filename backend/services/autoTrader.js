@@ -174,7 +174,11 @@ async function runAutoEntry() {
   const rankedTokens = screener.getRankedTokens();
   if (!rankedTokens || rankedTokens.length === 0) return;
 
-  const top = rankedTokens[0];
+  const bannedSet = new Set((settings.bannedTokens || []).map((s) => String(s).toUpperCase()));
+  const eligible = rankedTokens.filter((t) => !bannedSet.has(String(t.symbol).toUpperCase()));
+  if (eligible.length === 0) return;
+
+  const top = eligible[0];
   const symbol = top.symbol;
   const entryTimeMs = Math.max(0, Number(settings.entryTimeMs) ?? 1000);
   const nextFundingTime = top.nextFundingTime;
@@ -316,6 +320,14 @@ function clearEntryFundingDirection(symbol) {
   delete entryFundingDirectionBySymbol[key];
 }
 
+/** Symbols whose trade lock expiry (nextFundingTime) is still in the future. */
+function getCoolingTokens() {
+  const now = Date.now();
+  return Object.entries(tradedCycles)
+    .filter(([, expiry]) => Number(expiry) > now)
+    .map(([sym]) => String(sym).toUpperCase());
+}
+
 module.exports = {
   getAllocatedMargin,
   getTradeCapital: getAllocatedMargin,
@@ -323,6 +335,7 @@ module.exports = {
   getOpenArbitrageCount,
   getEntryFundingDirection,
   clearEntryFundingDirection,
+  getCoolingTokens,
   runAutoEntry,
   start,
   stop,

@@ -26,6 +26,7 @@ const settingSchema = new mongoose.Schema(
     liquidationAutoClose: { type: Boolean, default: false },
     liquidationDistancePct: { type: Number, default: 25 },
     cooldownMinutes: { type: Number, default: 15 },
+    bannedTokens: { type: [String], default: [] },
   },
   { timestamps: true }
 );
