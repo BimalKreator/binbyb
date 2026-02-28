@@ -51,6 +51,8 @@ type PositionRow = {
   combinedPnlPercent: number | null;
   totalNextFundingAmount: number;
   nextFundingPayment: { nextFundingTime: number; nextFundingTimeISO: string } | null;
+  targetAmount?: number;
+  stopLossAmount?: number;
 };
 
 function formatUsd(n: number): string {
@@ -381,6 +383,11 @@ export default function Home() {
                 {positions.map((row) => {
                   const isExpanded = expandedSymbol === row.symbol;
                   const pnl = row.combinedUnrealizedProfit ?? 0;
+                  const groupPnl = Number(row.binance?.unrealizedProfit ?? 0) + Number(row.bybit?.unrealizedProfit ?? 0);
+                  const targetAmount = Number(row.targetAmount ?? 1);
+                  const stopLossAmount = Number(row.stopLossAmount ?? 1);
+                  const profitWidth = groupPnl > 0 ? Math.min((groupPnl / targetAmount) * 100, 100) : 0;
+                  const lossWidth = groupPnl < 0 ? Math.min((Math.abs(groupPnl) / stopLossAmount) * 100, 100) : 0;
                   const binanceIncome = parseFloat(String(row.binance?.nextFundingAmount ?? 0)) || 0;
                   const bybitIncome = parseFloat(String(row.bybit?.nextFundingAmount ?? 0)) || 0;
                   const totalFunding = binanceIncome + bybitIncome;
@@ -437,6 +444,32 @@ export default function Home() {
                           <XCircle className="w-4 h-4 shrink-0" />
                           Exit
                         </button>
+                      </div>
+
+                      {/* Target / Stoploss progress meter */}
+                      <div className="w-full px-4 py-3 bg-slate-900/50 border-t border-slate-800">
+                        <div className="flex justify-between text-[10px] uppercase font-bold tracking-wider mb-1.5">
+                          <span className="text-red-400/80">SL -${stopLossAmount.toFixed(2)}</span>
+                          <span className={groupPnl >= 0 ? "text-green-400" : "text-red-400"}>
+                            {groupPnl >= 0 ? "+" : ""}{groupPnl.toFixed(2)}
+                          </span>
+                          <span className="text-green-400/80">TP +${targetAmount.toFixed(2)}</span>
+                        </div>
+                        <div className="flex w-full h-2.5 bg-slate-800 rounded-full overflow-hidden relative">
+                          <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-slate-500 z-10" />
+                          <div className="w-1/2 h-full flex justify-end border-r border-slate-700/50">
+                            <div
+                              className="h-full bg-gradient-to-l from-red-500 to-red-600 transition-all duration-500 ease-in-out"
+                              style={{ width: `${lossWidth}%` }}
+                            />
+                          </div>
+                          <div className="w-1/2 h-full flex justify-start">
+                            <div
+                              className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-all duration-500 ease-in-out"
+                              style={{ width: `${profitWidth}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
 
                       {/* Expanded details: Binance + Bybit rows */}

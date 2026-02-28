@@ -69,6 +69,10 @@ export default function ScreenerPage() {
     binanceAvailableBalance?: number;
     bybitAvailableBalance?: number;
   } | null>(null);
+  const [bannedTokens, setBannedTokens] = useState<string[]>([]);
+  const [coolingTokens, setCoolingTokens] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 15;
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -123,6 +127,35 @@ export default function ScreenerPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBans = () => {
+      api
+        .get<{ bannedTokens?: string[]; coolingTokens?: string[] }>("/bans")
+        .then(({ data }) => {
+          if (cancelled || !data) return;
+          setBannedTokens(Array.isArray(data.bannedTokens) ? data.bannedTokens : []);
+          setCoolingTokens(Array.isArray(data.coolingTokens) ? data.coolingTokens : []);
+        })
+        .catch(() => {});
+    };
+    fetchBans();
+    const t = setInterval(fetchBans, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const handleToggleBan = async (symbol: string, action: "ban" | "unban") => {
+    try {
+      const { data } = await api.post<{ bannedTokens?: string[] }>("/bans", { symbol, action });
+      if (Array.isArray(data?.bannedTokens)) setBannedTokens(data.bannedTokens);
+    } catch (e) {
+      toast.error("Failed to update ban.");
+    }
+  };
+
   // Backend returns rankedTokens sorted by interval (1h/2h first, then 4h, 8h) then by combined funding spread (spreadPctAbs) descending. We only filter here, preserving order.
   const filtered = useMemo(() => {
     if (!data?.rankedTokens) return [];
@@ -134,6 +167,22 @@ export default function ScreenerPage() {
     if (!Number.isNaN(minSpread)) list = list.filter((t) => t.netPct >= minSpread);
     return list;
   }, [data?.rankedTokens, search, intervalFilter, minSpreadPct]);
+
+  const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
+  const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
+  const mainList = useMemo(
+    () => filtered.filter((t) => !bannedSet.has(t.symbol.toUpperCase()) && !coolingSet.has(t.symbol.toUpperCase())),
+    [filtered, bannedSet, coolingSet]
+  );
+  const bannedList = useMemo(
+    () => filtered.filter((t) => bannedSet.has(t.symbol.toUpperCase()) || coolingSet.has(t.symbol.toUpperCase())),
+    [filtered, bannedSet, coolingSet]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(mainList.length / itemsPerPage));
+  const page = Math.max(1, Math.min(currentPage, totalPages));
+  const startIdx = (page - 1) * itemsPerPage;
+  const currentItems = mainList.slice(startIdx, startIdx + itemsPerPage);
 
   const markPrice = popupToken?.markPrice ?? 0;
   const qtyNum = parseFloat(quantity) || 0;
@@ -227,74 +276,185 @@ export default function ScreenerPage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-slate-500 py-8">No tokens match the filters or data is not ready yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0 max-w-[100vw]">
-          <table className="w-full text-xs min-w-0">
-            <thead>
-              <tr className="border-b border-slate-700 bg-slate-800/50">
-                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-16 sm:w-auto">Token</th>
-                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
-                <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
-                <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
-                <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((row) => {
-                const binNum = Number(row.fundingBinance);
-                const bybNum = Number(row.fundingBybit);
-                const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
-                const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
-                const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
-                const netPctNum = Number(row.netPct);
-                const hasNetPct = !Number.isNaN(netPctNum);
-                return (
-                  <tr key={row.symbol} className="border-b border-slate-700/50">
-                    <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
-                    <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
-                      <span className="block leading-tight">
-                        {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
-                      </span>
-                      <span className="block leading-tight">
-                        {formatFundingWithDirection(row.fundingBybit, "Bybit", bybitIsLong)}
-                      </span>
-                    </td>
-                    <td className="py-1 px-2 text-right">
-                      <span
-                        className={
-                          hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
-                        }
-                      >
-                        {formatNetPct(row.netPct)}
-                      </span>
-                    </td>
-                    <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
-                      <span className="block font-medium tabular-nums leading-tight">
-                        {countdownMs != null && countdownMs > 0 ? formatCountdownHms(countdownMs) : "—"}
-                      </span>
-                      <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
-                        {row.intervalDisplay || "8h"}
-                      </span>
-                    </td>
-                    <td className="py-1 px-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPopupToken(row);
-                          setQuantity("");
-                          setLeverage(row.maxLeverage?.toString() ?? "10");
-                        }}
-                        className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center h-9 px-3 rounded-lg text-[10px] sm:text-xs font-medium text-white touch-manipulation"
-                        style={{ backgroundColor: "var(--primary)" }}
-                      >
-                        Trade
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0 max-w-[100vw]">
+            <table className="w-full text-xs min-w-0">
+              <thead>
+                <tr className="border-b border-slate-700 bg-slate-800/50">
+                  <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-16 sm:w-auto">Token</th>
+                  <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
+                  <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
+                  <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
+                  <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentItems.map((row) => {
+                  const binNum = Number(row.fundingBinance);
+                  const bybNum = Number(row.fundingBybit);
+                  const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
+                  const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
+                  const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
+                  const netPctNum = Number(row.netPct);
+                  const hasNetPct = !Number.isNaN(netPctNum);
+                  return (
+                    <tr key={row.symbol} className="border-b border-slate-700/50">
+                      <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
+                      <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
+                        <span className="block leading-tight">
+                          {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
+                        </span>
+                        <span className="block leading-tight">
+                          {formatFundingWithDirection(row.fundingBybit, "Bybit", bybitIsLong)}
+                        </span>
+                      </td>
+                      <td className="py-1 px-2 text-right">
+                        <span
+                          className={
+                            hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
+                          }
+                        >
+                          {formatNetPct(row.netPct)}
+                        </span>
+                      </td>
+                      <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
+                        <span className="block font-medium tabular-nums leading-tight">
+                          {countdownMs != null && countdownMs > 0 ? formatCountdownHms(countdownMs) : "—"}
+                        </span>
+                        <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
+                          {row.intervalDisplay || "8h"}
+                        </span>
+                      </td>
+                      <td className="py-1 px-2 text-right">
+                        <span className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPopupToken(row);
+                              setQuantity("");
+                              setLeverage(row.maxLeverage?.toString() ?? "10");
+                            }}
+                            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center h-9 px-3 rounded-lg text-[10px] sm:text-xs font-medium text-white touch-manipulation"
+                            style={{ backgroundColor: "var(--primary)" }}
+                          >
+                            Trade
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBan(row.symbol, "ban")}
+                            className="min-h-[44px] inline-flex items-center justify-center h-9 px-2 rounded-lg text-[10px] sm:text-xs font-medium text-red-400 border border-red-500/60 bg-red-900/20 hover:bg-red-900/40 touch-manipulation"
+                          >
+                            Ban
+                          </button>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {mainList.length > 0 && (
+            <div className="flex items-center justify-between gap-2 mt-3 text-sm text-slate-400">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-700/50"
+              >
+                Previous
+              </button>
+              <span className="tabular-nums">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-700/50"
+              >
+                Next
+              </button>
+            </div>
+          )}
+          {bannedList.length > 0 && (
+            <>
+              <h3 className="text-xl font-bold mt-8 mb-4 text-slate-200">Banned & Cooling Tokens</h3>
+              <div className="overflow-x-auto rounded-lg border border-slate-700 -mx-2 sm:mx-0 max-w-[100vw]">
+                <table className="w-full text-xs min-w-0">
+                  <thead>
+                    <tr className="border-b border-slate-700 bg-slate-800/50">
+                      <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-16 sm:w-auto">Token</th>
+                      <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
+                      <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
+                      <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
+                      <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bannedList.map((row) => {
+                      const binNum = Number(row.fundingBinance);
+                      const bybNum = Number(row.fundingBybit);
+                      const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
+                      const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
+                      const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
+                      const netPctNum = Number(row.netPct);
+                      const hasNetPct = !Number.isNaN(netPctNum);
+                      const isCooling = coolingSet.has(row.symbol.toUpperCase());
+                      const isBanned = bannedSet.has(row.symbol.toUpperCase());
+                      return (
+                        <tr key={row.symbol} className="border-b border-slate-700/50">
+                          <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
+                          <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
+                            <span className="block leading-tight">
+                              {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
+                            </span>
+                            <span className="block leading-tight">
+                              {formatFundingWithDirection(row.fundingBybit, "Bybit", bybitIsLong)}
+                            </span>
+                          </td>
+                          <td className="py-1 px-2 text-right">
+                            <span
+                              className={
+                                hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
+                              }
+                            >
+                              {formatNetPct(row.netPct)}
+                            </span>
+                          </td>
+                          <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
+                            <span className="block font-medium tabular-nums leading-tight">
+                              {countdownMs != null && countdownMs > 0 ? formatCountdownHms(countdownMs) : "—"}
+                            </span>
+                            <span className="block text-[10px] text-slate-500 mt-0.5 leading-tight" title="Funding interval (1h, 2h, 4h, 8h)">
+                              {row.intervalDisplay || "8h"}
+                            </span>
+                          </td>
+                          <td className="py-1 px-2 text-right">
+                            {isCooling && (
+                              <span className="border border-blue-500 text-blue-400 px-2 py-1 rounded text-xs font-bold bg-blue-900/30">
+                                Cooling
+                              </span>
+                            )}
+                            {isBanned && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleBan(row.symbol, "unban")}
+                                className="ml-1 inline-flex items-center justify-center h-8 px-2 rounded-lg text-xs font-medium text-slate-200 border border-slate-500 bg-slate-700/50 hover:bg-slate-600/50"
+                              >
+                                Unban
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {/* Manual Trade Popup */}
