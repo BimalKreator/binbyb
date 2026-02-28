@@ -165,6 +165,10 @@ router.get("/positions", async (req, res) => {
       return res.json({ success: true, data: [] });
     }
 
+    const settings = await Setting.findOne().lean();
+    const targetPct = parseFloat(settings?.takeProfit ?? settings?.tpPercent ?? 5);
+    const stopLossPct = parseFloat(settings?.stopLoss ?? settings?.slPercent ?? 10);
+
     const binancePositions = binanceManager.getLivePositions();
     const bybitPositions = bybitManager.getLivePositions();
 
@@ -237,6 +241,9 @@ router.get("/positions", async (req, res) => {
       const combinedMargin =
         parseFloat(String(binancePos.marginUsed ?? 0)) + parseFloat(String(bybitPos.marginUsed ?? 0));
       const combinedPnlPct = combinedMargin > 0 ? (combinedUnrealized / combinedMargin) * 100 : null;
+      // TP/SL amounts matching tradeMonitor: PnL% = (combinedUnrealized / combinedMargin) * 100, so trigger at targetPct/stopLossPct of margin
+      const targetAmount = combinedMargin * (targetPct / 100);
+      const stopLossAmount = combinedMargin * (stopLossPct / 100);
 
       grandTotalPnl += combinedUnrealized;
       grandTotalNextFundingAmount += totalFundingIncome;
@@ -286,6 +293,8 @@ router.get("/positions", async (req, res) => {
         combinedPnlPercent: combinedPnlPct,
         totalNextFundingAmount,
         nextFundingPayment: fundingPaymentEstimate,
+        targetAmount,
+        stopLossAmount,
       });
     }
 
