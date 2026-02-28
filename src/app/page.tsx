@@ -352,23 +352,23 @@ export default function Home() {
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-700 bg-slate-800/50">
                 <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                   <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total PnL</p>
+                    <p className="text-xs text-slate-400 uppercase tracking-wider">TOTAL PnL</p>
                     <p
                       className={`text-lg font-semibold transition-colors duration-150 ${
                         grandTotalPnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                       }`}
                     >
-                      {formatUsd(grandTotalPnl)}
+                      {Number.isFinite(grandTotalPnl) ? `$${Number(grandTotalPnl).toFixed(2)}` : "—"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider">Grand Total Next Funding</p>
+                    <p className="text-xs text-slate-400 uppercase tracking-wider">Total Nxt FR</p>
                     <p
                       className={`text-lg font-semibold ${
                         grandTotalNextFunding >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                       }`}
                     >
-                      {formatUsd(grandTotalNextFunding)}
+                      {Number.isFinite(grandTotalNextFunding) ? `$${Number(grandTotalNextFunding).toFixed(2)}` : "—"}
                     </p>
                   </div>
                 </div>
@@ -407,11 +407,12 @@ export default function Home() {
                         <span
                           className={`text-sm font-medium ${(totalFunding ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}
                         >
-                          Next fund: {formatUsd(totalFunding)}
+                          Nxt FR:{" "}
+                          {Number.isFinite(totalFunding) ? `$${Number(totalFunding).toFixed(2)}` : "—"}
                         </span>
                         {isFlipped && (
                           <span className="ml-2 px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider text-red-100 bg-red-900/50 border border-red-800 rounded">
-                            Funding Flipped
+                            FR Flip
                           </span>
                         )}
                         <span
@@ -419,7 +420,7 @@ export default function Home() {
                             pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                           }`}
                         >
-                          {formatUsd(pnl)}
+                          {Number.isFinite(pnl) ? `$${Number(pnl).toFixed(2)}` : "—"}
                         </span>
                         <button
                           type="button"

@@ -249,7 +249,9 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {binanceWallet ? formatUsd(binanceWallet.totalTradeValue ?? 0) : "—"}
+                {binanceWallet != null
+                  ? formatUsd(Number(binanceWallet.totalTradeValue ?? 0))
+                  : "—"}
               </dd>
             </div>
           </dl>
@@ -276,7 +278,9 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {bybitWallet ? formatUsd(bybitWallet.totalTradeValue ?? 0) : "—"}
+                {bybitWallet != null
+                  ? formatUsd(Number(bybitWallet.totalTradeValue ?? 0))
+                  : "—"}
               </dd>
             </div>
           </dl>
