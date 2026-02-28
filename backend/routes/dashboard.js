@@ -182,16 +182,23 @@ router.get("/positions", async (req, res) => {
 
       const binanceAmt = parseFloat(String(binancePos.positionAmt ?? 0)) || 0;
       const bybitAmt = parseFloat(String(bybitPos.positionAmt ?? 0)) || 0;
-      const notionalBinance = Math.abs(binanceAmt) * (Number.isFinite(binanceMark) ? binanceMark : 0);
-      const notionalBybit = Math.abs(bybitAmt) * (Number.isFinite(bybitMark) ? bybitMark : 0);
+      const binanceQty = Math.abs(binanceAmt);
+      const bybitQty = Math.abs(bybitAmt);
+      const notionalBinance = binanceQty * (Number.isFinite(binanceMark) ? binanceMark : 0);
+      const notionalBybit = bybitQty * (Number.isFinite(bybitMark) ? bybitMark : 0);
       const binanceFundingDecimal = Number(binanceFundingRate) || 0;
       const bybitFundingDecimal = Number(bybitFundingRate) || 0;
-      const binanceFee = notionalBinance * binanceFundingDecimal;
-      const bybitFee = notionalBybit * bybitFundingDecimal;
-      const totalFundingIncome = -(binanceFee + bybitFee);
+      // Funding rate > 0: Longs pay Shorts (Long = loss, Short = profit). Rate < 0: Shorts pay Longs.
+      const binanceIsLong = binanceAmt > 0;
+      const bybitIsLong = String(bybitPos.side || "").toLowerCase() === "buy";
+      const binanceNextFundingAmount = binanceIsLong
+        ? notionalBinance * -binanceFundingDecimal
+        : notionalBinance * binanceFundingDecimal;
+      const bybitNextFundingAmount = bybitIsLong
+        ? notionalBybit * -bybitFundingDecimal
+        : notionalBybit * bybitFundingDecimal;
+      const totalFundingIncome = binanceNextFundingAmount + bybitNextFundingAmount;
       const isFundingFlipped = totalFundingIncome < 0;
-      const binanceNextFundingAmount = -binanceFee;
-      const bybitNextFundingAmount = -bybitFee;
       const totalNextFundingAmount = totalFundingIncome;
 
       // Exchange-native unrealized PnL only (Binance: unRealizedProfit, Bybit: unrealisedPnl → normalized to unrealizedProfit)

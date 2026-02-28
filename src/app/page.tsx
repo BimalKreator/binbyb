@@ -379,7 +379,10 @@ export default function Home() {
                 {positions.map((row) => {
                   const isExpanded = expandedSymbol === row.symbol;
                   const pnl = row.combinedUnrealizedProfit ?? 0;
-                  const totalFunding = row.totalNextFundingAmount ?? 0;
+                  const binanceIncome = parseFloat(String(row.binance?.nextFundingAmount ?? 0)) || 0;
+                  const bybitIncome = parseFloat(String(row.bybit?.nextFundingAmount ?? 0)) || 0;
+                  const totalFunding = binanceIncome + bybitIncome;
+                  const isFlipped = totalFunding < 0;
                   return (
                     <div key={row.symbol} className="bg-slate-800/20">
                       {/* Token bar (group header) */}
@@ -401,9 +404,14 @@ export default function Home() {
                           )}
                         </span>
                         <span className="font-medium text-foreground min-w-[80px]">{row.symbol}</span>
-                        {row.isFundingFlipped && (
-                          <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/40" title="Next funding will be a payment (negative); consider exiting before funding.">
-                            ⚠️ Funding Flipped
+                        <span
+                          className={`text-sm font-medium ${(totalFunding ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}
+                        >
+                          Next fund: {formatUsd(totalFunding)}
+                        </span>
+                        {isFlipped && (
+                          <span className="ml-2 px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider text-red-100 bg-red-900/50 border border-red-800 rounded">
+                            Funding Flipped
                           </span>
                         )}
                         <span
@@ -412,9 +420,6 @@ export default function Home() {
                           }`}
                         >
                           {formatUsd(pnl)}
-                        </span>
-                        <span className={`text-sm font-medium ${(totalFunding ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}>
-                          Next fund: {formatUsd(totalFunding)}
                         </span>
                         <button
                           type="button"

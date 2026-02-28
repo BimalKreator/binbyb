@@ -582,13 +582,20 @@ async function runMonitor() {
 
     const token = rankedTokens.find((t) => toUpperSymbol(t?.symbol) === symbol);
     const nextFundingTime = token?.nextFundingTime ?? null;
-    const binanceFunding = Number(token?.fundingBinance ?? binanceManager.getCachedFundingRate(symbol) ?? 0) || 0;
-    const bybitFunding = Number(token?.fundingBybit ?? bybitManager.getCachedFundingRate(symbol) ?? 0) || 0;
-    const notionalBinance = Math.abs(Number(binancePos?.positionAmt ?? 0)) * (binanceManager.getMarkPrice(symbol) ?? 0);
-    const notionalBybit = Math.abs(Number(bybitPos?.positionAmt ?? 0)) * (bybitManager.getMarkPrice(symbol) ?? 0);
-    const binanceFee = notionalBinance * binanceFunding;
-    const bybitFee = notionalBybit * bybitFunding;
-    const totalFundingIncome = -(binanceFee + bybitFee);
+    const bFR = Number(token?.fundingBinance ?? binanceManager.getCachedFundingRate(symbol) ?? 0) || 0;
+    const byFR = Number(token?.fundingBybit ?? bybitManager.getCachedFundingRate(symbol) ?? 0) || 0;
+    const bQtyRaw = parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0;
+    const byQtyRaw = parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0;
+    const mark = binanceManager.getMarkPrice(symbol) ?? bybitManager.getMarkPrice(symbol) ?? 0;
+    const binanceQty = Math.abs(bQtyRaw);
+    const bybitQty = Math.abs(byQtyRaw);
+    const notionalBinance = binanceQty * mark;
+    const notionalBybit = bybitQty * mark;
+    const binanceIsLong = bQtyRaw > 0;
+    const bybitIsLong = String(bybitPos?.side || "").toLowerCase() === "buy";
+    const binanceFee = binanceIsLong ? notionalBinance * -bFR : notionalBinance * bFR;
+    const bybitFee = bybitIsLong ? notionalBybit * -byFR : notionalBybit * byFR;
+    const totalFundingIncome = binanceFee + bybitFee;
     const isFundingFlipped = totalFundingIncome < 0;
     if (isFundingFlipped && nextFundingTime != null && Number.isFinite(nextFundingTime)) {
       const timeLeft = nextFundingTime - now;
