@@ -326,7 +326,7 @@ export default function Home() {
                     {formatUsdStandard(netProfitDisplay)}
                   </p>
                   <p className="text-sm text-slate-400 mt-0.5">
-                    Profit % {m.profitPercent != null ? formatPct(m.profitPercent) : "—"}
+                    Profit % {m.profitPercent != null ? `${m.profitPercent.toFixed(2)}%` : "—"}
                     {m.dailyROI != null ? ` · Daily ROI ${formatPct(m.dailyROI)}` : ""}
                   </p>
                 </>

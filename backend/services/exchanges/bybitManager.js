@@ -747,12 +747,15 @@ async function getBalances(credentials) {
     }
     if (usdtCoin) {
       const coinData = usdtCoin;
-      out.totalEquity = parseFloat(coinData.equity ?? coinData.walletBalance ?? 0) || 0;
-      out.totalWalletBalance = parseFloat(coinData.walletBalance ?? 0) || 0;
-      const availableBalance = parseFloat(
-        coinData.availableToWithdraw ?? coinData.free ?? coinData.walletBalance ?? 0
+      const equity = parseFloat(coinData.equity || coinData.walletBalance || 0) || 0;
+      const walletBal = parseFloat(coinData.walletBalance || 0) || 0;
+      // Free balance: availableToWithdraw or free in Unified Accounts
+      const availableBal = parseFloat(
+        coinData.availableToWithdraw || coinData.free || coinData.availableBalance || 0
       ) || 0;
-      out.availableBalance = availableBalance;
+      out.totalEquity = equity;
+      out.totalWalletBalance = walletBal;
+      out.availableBalance = availableBal > 0 ? availableBal : walletBal * 0.95;
     }
   } catch (e) {
     console.warn("[Bybit] getBalances failed:", e?.message ?? e);

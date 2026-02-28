@@ -51,7 +51,7 @@ function buildPrimaryBySymbol(positions) {
 router.get("/metrics", async (req, res) => {
   try {
     const settings = await Setting.findOne().lean();
-    const baseOpeningBalance = Number(settings?.dailyOpeningBalance) || 3450;
+    const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
     let binanceBalances = { totalMarginBalance: 0, totalWalletBalance: 0, availableBalance: 0 };
@@ -119,9 +119,10 @@ router.get("/metrics", async (req, res) => {
       if (log.type === "withdrawal") totalWithdrawals += amt;
     }
 
-    const profit = currentTotalCapital - baseOpeningBalance;
-    const profitPercent = baseOpeningBalance > 0 ? (profit / baseOpeningBalance) * 100 : 0;
-    const dailyROI = baseOpeningBalance > 0 ? (profit / baseOpeningBalance) * 100 : null;
+    const profit = currentTotalCapital - openingBalance;
+    // Strict Percentage Formula: (Net Profit / Opening Balance) * 100
+    const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
+    const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
     const totalCapitalINR = currentTotalCapital * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
@@ -135,7 +136,7 @@ router.get("/metrics", async (req, res) => {
         bybitWallet,
         totalCapital: currentTotalCapital,
         currentBalance: currentTotalCapital,
-        openingBalance: baseOpeningBalance,
+        openingBalance,
         totalDeposits,
         totalWithdrawals,
         profit,
