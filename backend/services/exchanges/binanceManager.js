@@ -1227,6 +1227,35 @@ function getBalance(credentials) {
 }
 
 /**
+ * Fetch account balances from REST (equity = totalMarginBalance = wallet + unrealized PnL).
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @returns {Promise<{ totalMarginBalance: number, totalWalletBalance: number, availableBalance: number }>}
+ */
+async function getBalances(credentials) {
+  const out = { totalMarginBalance: 0, totalWalletBalance: 0, availableBalance: 0 };
+  if (!credentials?.apiKey || !credentials?.apiSecret) return out;
+  try {
+    const timestamp = Date.now();
+    const queryString = `timestamp=${timestamp}`;
+    const signature = signQueryString(queryString, credentials.apiSecret);
+    const fullQuery = `${queryString}&signature=${signature}`;
+    const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
+      headers: { "X-MBX-APIKEY": credentials.apiKey },
+    });
+    const totalWallet = parseFloat(data?.totalWalletBalance ?? 0) || 0;
+    const available = parseFloat(data?.availableBalance ?? 0) || 0;
+    const totalMargin = parseFloat(data?.totalMarginBalance ?? 0) || 0;
+    const totalUnrealized = parseFloat(data?.totalUnrealizedProfit ?? 0) || 0;
+    out.totalWalletBalance = totalWallet;
+    out.availableBalance = available;
+    out.totalMarginBalance = totalMargin > 0 ? totalMargin : totalWallet + totalUnrealized;
+  } catch (e) {
+    console.warn("[Binance] getBalances failed:", e?.message ?? e);
+  }
+  return out;
+}
+
+/**
  * Get open position symbols (positionAmt !== 0). USER_DATA, signed.
  * @returns {Promise<string[]>} symbols with open position
  */
@@ -1345,6 +1374,7 @@ module.exports = {
   intervalHoursFromHoursUntilNext,
   getOrderbookPrice,
   getBalance,
+  getBalances,
   getPositionSymbols,
   getPositionDetails,
   getSymbolFilters,

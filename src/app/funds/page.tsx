@@ -20,6 +20,7 @@ type WalletData = {
   totalWalletBalance: number;
   availableBalance: number;
   totalPositionInitialMargin: number;
+  totalTradeValue?: number;
 };
 
 type MetricsData = {
@@ -244,7 +245,7 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {binanceWallet ? formatUsd((binanceWallet.totalPositionInitialMargin ?? 0) * 10) : "—"}
+                {binanceWallet ? formatUsd(binanceWallet.totalTradeValue ?? 0) : "—"}
               </dd>
             </div>
           </dl>
@@ -267,7 +268,7 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Total Trade Value</dt>
               <dd className="font-medium text-slate-300 tabular-nums">
-                {bybitWallet ? formatUsd((bybitWallet.totalPositionInitialMargin ?? 0) * 10) : "—"}
+                {bybitWallet ? formatUsd(bybitWallet.totalTradeValue ?? 0) : "—"}
               </dd>
             </div>
           </dl>

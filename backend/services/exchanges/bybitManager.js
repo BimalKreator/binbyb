@@ -704,6 +704,59 @@ function getBalance() {
 }
 
 /**
+ * Fetch account balances from REST (equity = wallet + UPL).
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @returns {Promise<{ totalEquity: number, totalWalletBalance: number, availableBalance: number }>}
+ */
+async function getBalances(credentials) {
+  const out = { totalEquity: 0, totalWalletBalance: 0, availableBalance: 0 };
+  if (!credentials?.apiKey || !credentials?.apiSecret) return out;
+  try {
+    const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+    const qsUnified = "accountType=UNIFIED";
+    const signStr = timestamp + credentials.apiKey + recvWindow + qsUnified;
+    const signature = signMessage(signStr, credentials.apiSecret);
+    const headers = {
+      "X-BAPI-API-KEY": credentials.apiKey,
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+      "X-BAPI-SIGN": signature,
+    };
+    let data = (await bybitPrivateAxios.get(REST_BASE + "/v5/account/wallet-balance?" + qsUnified, { headers })).data;
+    let list = data?.result?.list || [];
+    if (!list.length) {
+      const qsContract = "accountType=CONTRACT";
+      const signStrContract = timestamp + credentials.apiKey + recvWindow + qsContract;
+      const signatureContract = signMessage(signStrContract, credentials.apiSecret);
+      const headersContract = {
+        "X-BAPI-API-KEY": credentials.apiKey,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "X-BAPI-SIGN": signatureContract,
+      };
+      data = (await bybitPrivateAxios.get(REST_BASE + "/v5/account/wallet-balance?" + qsContract, { headers: headersContract })).data;
+      list = data?.result?.list || [];
+    }
+    let usdtCoin = null;
+    for (const item of list) {
+      if (Array.isArray(item.coin)) {
+        usdtCoin = item.coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
+      }
+      if (usdtCoin) break;
+    }
+    if (usdtCoin) {
+      out.totalEquity = parseFloat(usdtCoin.equity ?? 0) || 0;
+      out.totalWalletBalance = parseFloat(usdtCoin.walletBalance ?? 0) || 0;
+      out.availableBalance = parseFloat(usdtCoin.availableToWithdraw ?? usdtCoin.walletBalance ?? 0) || 0;
+    }
+  } catch (e) {
+    console.warn("[Bybit] getBalances failed:", e?.message ?? e);
+  }
+  return out;
+}
+
+/**
  * Get open position symbols (size !== 0) for linear. USER_DATA, signed. Header-based auth only.
  */
 async function getPositionSymbols(credentials) {
@@ -1313,6 +1366,7 @@ module.exports = {
   getPerpetualSymbols,
   getOrderbookPrice,
   getBalance,
+  getBalances,
   getPositionSymbols,
   getPositionDetails,
   getSymbolFilters,

@@ -54,28 +54,54 @@ router.get("/metrics", async (req, res) => {
     const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
-    // getBalance() is synchronous (reads from WS cache); no await, no REST. Safe fallback to 0.
-    const binanceBalance =
-      keys?.binance?.apiKey && keys?.binance?.apiSecret
-        ? (Number(binanceManager.getBalance(keys.binance)) || 0)
-        : 0;
-    const val = bybitManager.getBalance();
-    const bybitBalance = Number.isFinite(val) ? val : 0;
+    let binanceBalances = { totalMarginBalance: 0, totalWalletBalance: 0, availableBalance: 0 };
+    let bybitBalances = { totalEquity: 0, totalWalletBalance: 0, availableBalance: 0 };
+    if (keys?.binance?.apiKey && keys?.binance?.apiSecret) {
+      try {
+        binanceBalances = await binanceManager.getBalances(keys.binance);
+      } catch (e) {
+        const fallback = Number(binanceManager.getBalance(keys.binance)) || 0;
+        binanceBalances = { totalMarginBalance: fallback, totalWalletBalance: fallback, availableBalance: fallback };
+      }
+    }
+    if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
+      try {
+        bybitBalances = await bybitManager.getBalances(keys.bybit);
+      } catch (e) {
+        const fallback = Number(bybitManager.getBalance()) || 0;
+        bybitBalances = { totalEquity: fallback, totalWalletBalance: fallback, availableBalance: fallback };
+      }
+    }
+    const binanceCapitalBase = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
+    const bybitCapitalBase = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
+    const binanceBalance = binanceCapitalBase;
+    const bybitBalance = bybitCapitalBase;
 
-    // Wallet details for Funds page: Actual (total), Available, Used Margin per exchange
     const binancePositions = keys?.binance?.apiKey ? binanceManager.getLivePositions() || [] : [];
     const bybitPositions = keys?.bybit?.apiKey ? bybitManager.getLivePositions() || [] : [];
     const binanceUsedMargin = binancePositions.reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
     const bybitUsedMargin = bybitPositions.reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+    const binanceTotalTradeValue = binancePositions.reduce((sum, p) => {
+      const amt = Math.abs(parseFloat(p?.positionAmt ?? 0) || 0);
+      const mark = binanceManager.getMarkPrice(p?.symbol) ?? 0;
+      return sum + amt * (Number.isFinite(mark) ? mark : 0);
+    }, 0);
+    const bybitTotalTradeValue = bybitPositions.reduce((sum, p) => {
+      const amt = Math.abs(parseFloat(p?.positionAmt ?? p?.size ?? 0) || 0);
+      const mark = bybitManager.getMarkPrice(p?.symbol) ?? 0;
+      return sum + amt * (Number.isFinite(mark) ? mark : 0);
+    }, 0);
     const binanceWallet = {
       totalWalletBalance: Number.isFinite(binanceBalance) ? binanceBalance : 0,
-      availableBalance: Math.max(0, (Number(binanceBalance) || 0) - binanceUsedMargin),
+      availableBalance: Number.isFinite(binanceBalances.availableBalance) ? binanceBalances.availableBalance : Math.max(0, (Number(binanceBalance) || 0) - binanceUsedMargin),
       totalPositionInitialMargin: binanceUsedMargin,
+      totalTradeValue: Number.isFinite(binanceTotalTradeValue) ? binanceTotalTradeValue : 0,
     };
     const bybitWallet = {
       totalWalletBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
-      availableBalance: Math.max(0, (Number(bybitBalance) || 0) - bybitUsedMargin),
+      availableBalance: Number.isFinite(bybitBalances.availableBalance) ? bybitBalances.availableBalance : Math.max(0, (Number(bybitBalance) || 0) - bybitUsedMargin),
       totalPositionInitialMargin: bybitUsedMargin,
+      totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
     const totalCapital = binanceBalance + bybitBalance;
@@ -93,10 +119,7 @@ router.get("/metrics", async (req, res) => {
 
     const profit = currentBalance - openingBalance;
     const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
-    const profitPercent =
-      openingBalance !== 0 && Number.isFinite(openingBalance)
-        ? ((currentBalance - openingBalance) / openingBalance) * 100
-        : null;
+    const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
     const totalCapitalINR = currentBalance * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
@@ -114,7 +137,7 @@ router.get("/metrics", async (req, res) => {
         totalDeposits,
         totalWithdrawals,
         profit,
-        profitPercent: profitPercent != null && Number.isFinite(profitPercent) ? profitPercent : null,
+        profitPercent: Number.isFinite(profitPercent) ? profitPercent : 0,
         dailyROI,
         totalCapitalINR,
         usdToInr: USD_TO_INR,
