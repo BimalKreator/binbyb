@@ -104,7 +104,8 @@ router.get("/metrics", async (req, res) => {
       totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
-    const currentCapital = binanceBalance + bybitBalance;
+    // Calculate total capital from both exchanges
+    const currentBalance = binanceBalance + bybitBalance;
 
     const logs = await FundLog.find().lean();
     let totalDeposits = 0;
@@ -116,10 +117,11 @@ router.get("/metrics", async (req, res) => {
       if (log.type === "withdrawal") totalWithdrawals += amt;
     }
 
-    const profit = currentCapital - openingBalance;
-    const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
-    // CRITICAL: Divide by full dailyOpeningBalance (default 3450), not raw exchange balance
+    // Net Profit calculation (openingBalance set above from dailyOpeningBalance)
+    const profit = currentBalance - openingBalance;
+    // Profit % based on the starting $3450 capital
     const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
+    const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
     const totalCapitalINR = currentBalance * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
@@ -131,8 +133,8 @@ router.get("/metrics", async (req, res) => {
         bybitBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
         binanceWallet,
         bybitWallet,
-        totalCapital: currentCapital,
-        currentBalance: currentCapital,
+        totalCapital: currentBalance,
+        currentBalance,
         openingBalance,
         totalDeposits,
         totalWithdrawals,
