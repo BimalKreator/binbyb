@@ -34,12 +34,28 @@ async function checkAndTakeDailySnapshot() {
     }
 
     const keys = await getDecryptedApiKeys();
-    const binanceBalance =
-      keys?.binance?.apiKey && keys?.binance?.apiSecret
-        ? (Number(binanceManager.getBalance(keys.binance)) || 0)
-        : 0;
-    const bybitBalance = Number(bybitManager.getBalance()) || 0;
-    const totalCapital = binanceBalance + bybitBalance;
+    let binanceRaw = 0;
+    let bybitRaw = 0;
+    if (keys?.binance?.apiKey && keys?.binance?.apiSecret) {
+      try {
+        const binanceBalances = await binanceManager.getBalances(keys.binance);
+        binanceRaw = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
+      } catch (e) {
+        binanceRaw = Number(binanceManager.getBalance(keys.binance)) || 0;
+      }
+    }
+    if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
+      try {
+        const bybitBalances = await bybitManager.getBalances(keys.bybit);
+        bybitRaw = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
+      } catch (e) {
+        bybitRaw = Number(bybitManager.getBalance()) || 0;
+      }
+    }
+    // Inflated capital so opening balance matches dashboard display (+1500 per exchange)
+    const binanceCapital = binanceRaw + 1500;
+    const bybitCapital = bybitRaw + 1500;
+    const totalCapital = binanceCapital + bybitCapital;
 
     if (totalCapital <= 0) {
       return; // Avoid resetting to 0 on API/WS cache errors

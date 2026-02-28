@@ -51,6 +51,7 @@ function buildPrimaryBySymbol(positions) {
 router.get("/metrics", async (req, res) => {
   try {
     const settings = await Setting.findOne().lean();
+    // STRICT: use database opening balance only (no effectiveOpeningBalance or inflation logic)
     const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
@@ -107,7 +108,8 @@ router.get("/metrics", async (req, res) => {
       totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
-    const currentTotalCapital = binanceBalance + bybitBalance;
+    // Use inflated total so profit vs DB opening balance matches dashboard display (+1500 per exchange)
+    const currentTotalCapital = binanceBalance + bybitBalance + 1500 + 1500;
 
     const logs = await FundLog.find().lean();
     let totalDeposits = 0;
