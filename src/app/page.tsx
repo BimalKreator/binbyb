@@ -447,12 +447,11 @@ export default function Home() {
                                   <th className="py-2 pr-2 font-medium">Trade</th>
                                   <th className="py-2 pr-2 font-medium text-right">Entry</th>
                                   <th className="py-2 pr-2 font-medium text-right">Qty</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Lev</th>
                                   <th className="py-2 pr-2 font-medium text-right">Mark</th>
-                                  <th className="py-2 pr-2 font-medium text-right">Funding %</th>
+                                  <th className="py-2 pr-2 font-medium text-right">FR</th>
                                   <th className="py-2 pr-2 font-medium text-right">Liq</th>
                                   <th className="py-2 pr-2 font-medium text-right">PnL</th>
-                                  <th className="py-2 font-medium text-right">Nxt Funding</th>
+                                  <th className="py-2 font-medium text-right">Nxt FR</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -478,34 +477,33 @@ export default function Home() {
                                     <tr key={name} className="border-b border-slate-700/50 last:border-b-0">
                                       <td className="py-2 pr-2 text-foreground font-medium">{name}</td>
                                       <td className="py-2 pr-2">
-                                        <span
-                                          className={
-                                            String(safeLeg.side).toUpperCase() === "BUY" || safeLeg.side === "Buy"
-                                              ? "text-[var(--profit)]"
-                                              : String(safeLeg.side).toUpperCase() === "NONE"
-                                                ? "text-slate-500"
-                                                : "text-[var(--loss)]"
-                                          }
-                                        >
-                                          {safeLeg.side ?? "—"}
-                                        </span>
+                                        {String(safeLeg.side).toUpperCase() === "NONE" ? (
+                                          <span className="text-slate-500">—</span>
+                                        ) : (
+                                          <div
+                                            className={`w-6 h-6 flex items-center justify-center rounded text-white font-bold text-xs ${
+                                              safeLeg.side?.toLowerCase() === "buy" ? "bg-green-600" : "bg-red-600"
+                                            }`}
+                                          >
+                                            {safeLeg.side?.toLowerCase() === "buy" ? "B" : "S"}
+                                          </div>
+                                        )}
                                       </td>
                                       <td className="py-2 pr-2 text-right text-slate-300">
                                         {safeLeg.entryPrice != null && Number.isFinite(safeLeg.entryPrice)
-                                          ? Number(safeLeg.entryPrice).toFixed(2)
+                                          ? Number(safeLeg.entryPrice).toLocaleString(undefined, {
+                                              maximumFractionDigits: 6,
+                                            })
                                           : "—"}
                                       </td>
                                       <td className="py-2 pr-2 text-right text-slate-300">
                                         {safeLeg.positionAmt ?? 0}
                                       </td>
                                       <td className="py-2 pr-2 text-right text-slate-300">
-                                        {safeLeg.leverage != null && Number.isFinite(safeLeg.leverage)
-                                          ? safeLeg.leverage
-                                          : "—"}
-                                      </td>
-                                      <td className="py-2 pr-2 text-right text-slate-300">
                                         {safeLeg.markPrice != null && Number.isFinite(safeLeg.markPrice)
-                                          ? Number(safeLeg.markPrice).toFixed(2)
+                                          ? Number(safeLeg.markPrice).toLocaleString(undefined, {
+                                              maximumFractionDigits: 6,
+                                            })
                                           : "—"}
                                       </td>
                                       <td className="py-2 pr-2 text-right text-slate-300">
@@ -525,14 +523,18 @@ export default function Home() {
                                             : "text-[var(--loss)]"
                                         }`}
                                       >
-                                        {formatUsd(safeLeg.unrealizedProfit ?? 0)}
+                                        $
+                                        {Number(safeLeg.unrealizedProfit ?? 0).toFixed(2)}
                                       </td>
                                       <td
                                         className={`py-2 pr-2 text-right font-medium ${
-                                          (safeLeg.nextFundingAmount ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+                                          (safeLeg.nextFundingAmount ?? 0) >= 0
+                                            ? "text-[var(--profit)]"
+                                            : "text-[var(--loss)]"
                                         }`}
                                       >
-                                        {formatUsd(safeLeg.nextFundingAmount ?? 0)}
+                                        $
+                                        {Number(safeLeg.nextFundingAmount ?? 0).toFixed(2)}
                                       </td>
                                     </tr>
                                   );

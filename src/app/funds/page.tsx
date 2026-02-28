@@ -239,7 +239,11 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Available Balance</dt>
               <dd className="font-medium text-emerald-400/90 tabular-nums">
-                {binanceWallet ? formatUsd((binanceWallet.availableBalance ?? 0) + 1500) : "—"}
+                {binanceWallet
+                  ? formatUsd(
+                      (Number(binanceWallet.totalWalletBalance ?? 0) + 1500) - Number(binanceWallet.totalTradeValue ?? 0)
+                    )
+                  : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
@@ -262,7 +266,11 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Available Balance</dt>
               <dd className="font-medium text-emerald-400/90 tabular-nums">
-                {bybitWallet ? formatUsd((bybitWallet.availableBalance ?? 0) + 1500) : "—"}
+                {bybitWallet
+                  ? formatUsd(
+                      (Number(bybitWallet.totalWalletBalance ?? 0) + 1500) - Number(bybitWallet.totalTradeValue ?? 0)
+                    )
+                  : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
