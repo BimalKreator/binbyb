@@ -51,7 +51,7 @@ function buildPrimaryBySymbol(positions) {
 router.get("/metrics", async (req, res) => {
   try {
     const settings = await Setting.findOne().lean();
-    const openingBalance = Number(settings?.openingBalance) || 0;
+    const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
     // getBalance() is synchronous (reads from WS cache); no await, no REST. Safe fallback to 0.
@@ -91,7 +91,7 @@ router.get("/metrics", async (req, res) => {
       if (log.type === "withdrawal") totalWithdrawals += amt;
     }
 
-    const profit = currentBalance - openingBalance - totalDeposits + totalWithdrawals;
+    const profit = currentBalance - openingBalance;
     const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
     const profitPercent =
       openingBalance !== 0 && Number.isFinite(openingBalance)

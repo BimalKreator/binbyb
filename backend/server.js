@@ -21,6 +21,7 @@ const autoTrader = require("./services/autoTrader");
 const tradeMonitor = require("./services/tradeMonitor");
 const logService = require("./services/logService");
 const livePnlService = require("./services/livePnlService");
+const snapshotService = require("./services/snapshotService");
 
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/binbyb";
@@ -76,6 +77,7 @@ mongoose
       autoTrader.start(1000);
       livePnlService.init(io, binanceManager, bybitManager);
       tradeMonitor.start();
+      snapshotService.start();
       server.listen(PORT, () => {
         console.log("Server running on port", PORT);
       });

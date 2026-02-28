@@ -15,7 +15,9 @@ const settingSchema = new mongoose.Schema(
     entryTimeMs: { type: Number, default: 1000 }, // ms before funding to execute entry
     entrySlippagePct: { type: Number, default: 2 }, // IOC limit order slippage %
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
-    openingBalance: { type: Number, default: 0 }, // USDT balance at start (for Profit = Current - Opening - Deposits + Withdrawals)
+    openingBalance: { type: Number, default: 0 }, // USDT balance at start (legacy; use dailyOpeningBalance for daily snapshot)
+    dailyOpeningBalance: { type: Number, default: 3450 }, // Snapshot of total capital at 00:00 IST each day
+    lastSnapshotDate: { type: String, default: "" }, // YYYY-MM-DD in IST
     binanceDepositAddress: { type: String, default: "" },
     binanceNetwork: { type: String, default: "" }, // e.g. TRC20, BEP20
     bybitDepositAddress: { type: String, default: "" },
