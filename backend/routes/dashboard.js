@@ -77,6 +77,9 @@ router.get("/metrics", async (req, res) => {
     const binanceBalance = binanceCapitalBase;
     const bybitBalance = bybitCapitalBase;
 
+    const binanceAvailableBalance = parseFloat(binanceBalances.availableBalance || 0) || 0;
+    const bybitAvailableBalance = parseFloat(bybitBalances.availableBalance || bybitBalances.availableToWithdraw || 0) || 0;
+
     const binancePositions = keys?.binance?.apiKey ? binanceManager.getLivePositions() || [] : [];
     const bybitPositions = keys?.bybit?.apiKey ? bybitManager.getLivePositions() || [] : [];
     const binanceUsedMargin = binancePositions.reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
@@ -119,7 +122,7 @@ router.get("/metrics", async (req, res) => {
 
     // Net Profit calculation (openingBalance set above from dailyOpeningBalance)
     const profit = currentBalance - openingBalance;
-    // Profit % based on the starting $3450 capital
+    // STRICT FORMULA: (Net Profit * 100) / Opening Balance
     const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
     const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
     const totalCapitalINR = currentBalance * USD_TO_INR;
@@ -144,6 +147,8 @@ router.get("/metrics", async (req, res) => {
         totalCapitalINR,
         usdToInr: USD_TO_INR,
         volatilityMeter,
+        binanceAvailableBalance: Number.isFinite(binanceAvailableBalance) ? binanceAvailableBalance : 0,
+        bybitAvailableBalance: Number.isFinite(bybitAvailableBalance) ? bybitAvailableBalance : 0,
       },
     });
   } catch (e) {
