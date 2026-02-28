@@ -36,11 +36,6 @@ type LogEntry = {
 
 const LIMIT = 20;
 
-type MetricsPayload = {
-  binanceAvailableBalance?: number;
-  bybitAvailableBalance?: number;
-};
-
 function reasonColor(reason: string): string {
   switch (reason) {
     case "Target":
@@ -68,23 +63,8 @@ export default function TradesPage() {
   const [connected, setConnected] = useState(false);
   const [logFilter, setLogFilter] = useState<"all" | "entry" | "exit" | "error">("all");
   const logsBottomRef = useRef<HTMLDivElement>(null);
-  const [metrics, setMetrics] = useState<MetricsPayload | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
-
-  useEffect(() => {
-    api
-      .get<{ success: boolean; data: MetricsPayload }>("/dashboard/metrics")
-      .then(({ data }) => {
-        if (data.success && data.data) {
-          setMetrics({
-            binanceAvailableBalance: data.data.binanceAvailableBalance,
-            bybitAvailableBalance: data.data.bybitAvailableBalance,
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   /** Group trades by groupId; legacy/single-leg trades become a group of one. */
   const tradeGroups = useMemo(() => {
@@ -167,12 +147,6 @@ export default function TradesPage() {
 
   return (
     <div className="min-h-[50dvh] w-full px-4 py-4">
-      <p className="text-sm text-slate-400 mb-3">
-        Available:{" "}
-        <span className="text-amber-400/90">Binance ${metrics?.binanceAvailableBalance?.toFixed(2) ?? "—"}</span>
-        {" · "}
-        <span className="text-sky-400/90">Bybit ${metrics?.bybitAvailableBalance?.toFixed(2) ?? "—"}</span>
-      </p>
       <div className="flex gap-1 p-1 rounded-lg bg-slate-800/50 border border-slate-700 mb-4">
         <button
           type="button"

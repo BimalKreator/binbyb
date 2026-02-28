@@ -65,11 +65,38 @@ export default function ScreenerPage() {
   const [leverage, setLeverage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [metrics, setMetrics] = useState<{
+    binanceAvailableBalance?: number;
+    bybitAvailableBalance?: number;
+  } | null>(null);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
+
+  useEffect(() => {
+    if (!popupToken) {
+      setMetrics(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get<{ success: boolean; data?: { binanceAvailableBalance?: number; bybitAvailableBalance?: number } }>(
+        "/dashboard/metrics"
+      )
+      .then(({ data }) => {
+        if (cancelled || !data?.success || !data?.data) return;
+        setMetrics({
+          binanceAvailableBalance: data.data.binanceAvailableBalance,
+          bybitAvailableBalance: data.data.bybitAvailableBalance,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [popupToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,6 +324,20 @@ export default function ScreenerPage() {
               </button>
             </div>
             <div className="p-4 space-y-4">
+              <div className="mb-4 p-2 bg-slate-800 rounded text-xs flex justify-between text-slate-300">
+                <span>
+                  Binance Free:{" "}
+                  <span className="text-amber-400 font-bold">
+                    ${metrics?.binanceAvailableBalance?.toFixed(2) ?? "0.00"}
+                  </span>
+                </span>
+                <span>
+                  Bybit Free:{" "}
+                  <span className="text-sky-400 font-bold">
+                    ${metrics?.bybitAvailableBalance?.toFixed(2) ?? "0.00"}
+                  </span>
+                </span>
+              </div>
               <p className="text-xs text-slate-400">
                 Mark price: {popupToken.markPrice != null && !Number.isNaN(Number(popupToken.markPrice))
                   ? Number(popupToken.markPrice).toFixed(2)

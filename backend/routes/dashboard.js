@@ -51,7 +51,7 @@ function buildPrimaryBySymbol(positions) {
 router.get("/metrics", async (req, res) => {
   try {
     const settings = await Setting.findOne().lean();
-    const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
+    const baseOpeningBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
     let binanceBalances = { totalMarginBalance: 0, totalWalletBalance: 0, availableBalance: 0 };
@@ -107,8 +107,7 @@ router.get("/metrics", async (req, res) => {
       totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
-    // Calculate total capital from both exchanges
-    const currentBalance = binanceBalance + bybitBalance;
+    const currentTotalCapital = binanceBalance + bybitBalance;
 
     const logs = await FundLog.find().lean();
     let totalDeposits = 0;
@@ -120,12 +119,10 @@ router.get("/metrics", async (req, res) => {
       if (log.type === "withdrawal") totalWithdrawals += amt;
     }
 
-    // Net Profit calculation (openingBalance set above from dailyOpeningBalance)
-    const profit = currentBalance - openingBalance;
-    // STRICT FORMULA: (Net Profit * 100) / Opening Balance
-    const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
-    const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
-    const totalCapitalINR = currentBalance * USD_TO_INR;
+    const profit = currentTotalCapital - baseOpeningBalance;
+    const profitPercent = baseOpeningBalance > 0 ? (profit / baseOpeningBalance) * 100 : 0;
+    const dailyROI = baseOpeningBalance > 0 ? (profit / baseOpeningBalance) * 100 : null;
+    const totalCapitalINR = currentTotalCapital * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
     console.log("[Dashboard API] Metrics requested. Balances:", { binanceBalance, bybitBalance });
@@ -136,9 +133,9 @@ router.get("/metrics", async (req, res) => {
         bybitBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
         binanceWallet,
         bybitWallet,
-        totalCapital: currentBalance,
-        currentBalance,
-        openingBalance,
+        totalCapital: currentTotalCapital,
+        currentBalance: currentTotalCapital,
+        openingBalance: baseOpeningBalance,
         totalDeposits,
         totalWithdrawals,
         profit,

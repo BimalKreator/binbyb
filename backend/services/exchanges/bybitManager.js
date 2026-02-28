@@ -746,9 +746,13 @@ async function getBalances(credentials) {
       if (usdtCoin) break;
     }
     if (usdtCoin) {
-      out.totalEquity = parseFloat(usdtCoin.equity ?? 0) || 0;
-      out.totalWalletBalance = parseFloat(usdtCoin.walletBalance ?? 0) || 0;
-      out.availableBalance = parseFloat(usdtCoin.availableToWithdraw ?? usdtCoin.walletBalance ?? 0) || 0;
+      const coinData = usdtCoin;
+      out.totalEquity = parseFloat(coinData.equity ?? coinData.walletBalance ?? 0) || 0;
+      out.totalWalletBalance = parseFloat(coinData.walletBalance ?? 0) || 0;
+      const availableBalance = parseFloat(
+        coinData.availableToWithdraw ?? coinData.free ?? coinData.walletBalance ?? 0
+      ) || 0;
+      out.availableBalance = availableBalance;
     }
   } catch (e) {
     console.warn("[Bybit] getBalances failed:", e?.message ?? e);

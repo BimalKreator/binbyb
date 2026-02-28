@@ -305,9 +305,6 @@ export default function Home() {
               {formatUsdStandard((m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500)}
             </p>
             <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3450</p>
-            <p className="text-xs text-slate-500 mt-1">
-              Available (free): Binance ${Number(m.binanceAvailableBalance ?? 0).toFixed(2)} · Bybit ${Number(m.bybitAvailableBalance ?? 0).toFixed(2)}
-            </p>
           </div>
 
           {/* Profit — display: Total Capital - 3450 - today deposit - today withdrawal; opening balance hardcoded */}
