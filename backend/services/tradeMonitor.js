@@ -120,6 +120,25 @@ function getCombinedUnrealizedPnL(symbol, binancePos, bybitPos) {
 }
 
 /**
+ * Live exit spread in % for funding flip convergence (0 spread) exit.
+ * SELL (Short Bin, Long Byb) -> exit = Buy Bin, Sell Byb: (bybitBid - binanceAsk) / binanceAsk * 100.
+ * BUY (Long Bin, Short Byb) -> exit = Sell Bin, Buy Byb: (binanceBid - bybitAsk) / bybitAsk * 100.
+ * Returns null if either book is missing.
+ */
+function calculateLiveExitSpread(symbol, currentBinanceSide) {
+  const binanceBook = binanceManager.getTopOfBook(symbol);
+  const bybitBook = bybitManager.getTopOfBook(symbol);
+  if (!binanceBook || !bybitBook) return null;
+  if (currentBinanceSide === "SELL") {
+    return ((bybitBook.topBidPrice - binanceBook.topAskPrice) / binanceBook.topAskPrice) * 100;
+  }
+  if (currentBinanceSide === "BUY") {
+    return ((binanceBook.topBidPrice - bybitBook.topAskPrice) / bybitBook.topAskPrice) * 100;
+  }
+  return null;
+}
+
+/**
  * Close paired positions using split IOC limit orders (getOrderbookPrice slippage). No REST polling.
  */
 async function closePair(credentials, symbol, binancePos, bybitPos, reason, exitReasonOverride) {
@@ -630,9 +649,12 @@ async function runMonitor() {
     const totalFundingIncome = binanceFee + bybitFee;
     const isFundingFlipped = totalFundingIncome < 0;
     if (isFundingFlipped && nextFundingTime != null && Number.isFinite(nextFundingTime)) {
-      const timeLeft = nextFundingTime - now;
-      if (timeLeft <= FUNDING_WINDOW_MS) {
-        console.log("[TradeMonitor] Funding flip exit (within 10 min)", symbol);
+      const currentBinanceSide = binanceIsLong ? "BUY" : "SELL";
+      const exitSpread = calculateLiveExitSpread(symbol, currentBinanceSide);
+      if (exitSpread === null || exitSpread < 0) {
+        console.log("[TradeMonitor] Funding flipped for", symbol, "but exit spread is", exitSpread?.toFixed(4), "%. Waiting for Convergence (0 Spread).");
+      } else {
+        console.log("[TradeMonitor] Executing Flip Exit at 0 Spread convergence for", symbol);
         try {
           await closePair(keys, symbol, binancePos, bybitPos, "Target", "Funding Flip Exit (Combined)");
           delete failedClosesUntil[symbol];
