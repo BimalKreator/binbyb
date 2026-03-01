@@ -1,6 +1,7 @@
 const express = require("express");
 const authRoutes = require("./auth");
 const { loginHandler } = require("./auth");
+const bansRoutes = require("./bans");
 const screenerRoutes = require("./screener");
 const apiKeysRoutes = require("./apiKeys");
 const settingsRoutes = require("./settings");
@@ -15,6 +16,7 @@ const transferRoutes = require("./transfer");
 const router = express.Router();
 
 router.post("/login", loginHandler);
+router.use("/bans", bansRoutes);
 router.use("/auth", authRoutes);
 router.use("/screener", screenerRoutes);
 router.use("/api-keys", apiKeysRoutes);

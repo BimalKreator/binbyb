@@ -555,8 +555,10 @@ async function runMonitor() {
     }
 
     const pnlPct = calculateRealtimePnlPercent(symbol, binancePos, bybitPos);
+    const useStoploss = Boolean(settings?.useStoploss);
+    const useTarget = Boolean(settings?.useTarget);
     if (pnlPct != null) {
-      if (stopLoss > 0 && pnlPct <= -stopLoss) {
+      if (useStoploss && stopLoss > 0 && pnlPct <= -stopLoss) {
         console.log("[TradeMonitor] SL exit", symbol, "PnL%", pnlPct.toFixed(2), "stopLoss", stopLoss);
         try {
           await closePair(keys, symbol, binancePos, bybitPos, "SL");
@@ -567,7 +569,7 @@ async function runMonitor() {
         }
         continue;
       }
-      if (takeProfit > 0 && pnlPct >= takeProfit) {
+      if (useTarget && takeProfit > 0 && pnlPct >= takeProfit) {
         console.log("[TradeMonitor] TP exit", symbol, "PnL%", pnlPct.toFixed(2), "takeProfit", takeProfit);
         try {
           await closePair(keys, symbol, binancePos, bybitPos, "Target");

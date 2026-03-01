@@ -320,13 +320,11 @@ function clearEntryFundingDirection(symbol) {
   delete entryFundingDirectionBySymbol[key];
 }
 
-/** Symbols whose trade lock expiry (nextFundingTime) is still in the future. */
-function getCoolingTokens() {
+/** Symbols whose trade lock expiry is still in the future (same as tradedCycles). */
+const getCoolingTokens = () => {
   const now = Date.now();
-  return Object.entries(tradedCycles)
-    .filter(([, expiry]) => Number(expiry) > now)
-    .map(([sym]) => String(sym).toUpperCase());
-}
+  return Object.keys(tradedCycles).filter((symbol) => tradedCycles[symbol] > now);
+};
 
 module.exports = {
   getAllocatedMargin,

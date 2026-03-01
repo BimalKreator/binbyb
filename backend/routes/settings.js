@@ -29,6 +29,8 @@ router.put("/", async (req, res) => {
       maxTrades,
       stopLoss,
       takeProfit,
+      useStoploss,
+      useTarget,
       autoTrade,
       autoTradeEnabled,
       autoExitEnabled,
@@ -51,6 +53,8 @@ router.put("/", async (req, res) => {
     if (maxTrades !== undefined) update.maxTrades = Number(maxTrades);
     if (stopLoss !== undefined) update.stopLoss = Number(stopLoss);
     if (takeProfit !== undefined) update.takeProfit = Number(takeProfit);
+    if (useStoploss !== undefined) update.useStoploss = Boolean(useStoploss);
+    if (useTarget !== undefined) update.useTarget = Boolean(useTarget);
     if (autoTrade !== undefined) update.autoTrade = Boolean(autoTrade);
     if (autoTradeEnabled !== undefined) update.autoTradeEnabled = Boolean(autoTradeEnabled);
     if (autoExitEnabled !== undefined) update.autoExitEnabled = Boolean(autoExitEnabled);

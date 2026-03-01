@@ -9,6 +9,8 @@ const settingSchema = new mongoose.Schema(
     takeProfit: { type: Number, default: 0 },
     slPercent: { type: Number, default: 0 },   // combined PnL % to trigger stop (e.g. -2)
     tpPercent: { type: Number, default: 0 },   // combined PnL % to trigger take profit (e.g. 1)
+    useStoploss: { type: Boolean, default: false },
+    useTarget: { type: Boolean, default: false },
     autoTrade: { type: Boolean, default: false },
     autoTradeEnabled: { type: Boolean, default: false },
     autoExitEnabled: { type: Boolean, default: false },

@@ -15,6 +15,8 @@ type SettingRecord = {
   maxTrades: number;
   stopLoss: number;
   takeProfit: number;
+  useStoploss?: boolean;
+  useTarget?: boolean;
   autoTrade: boolean;
   autoTradeEnabled?: boolean;
   autoExitEnabled?: boolean;
@@ -43,6 +45,8 @@ export default function SettingsPage() {
   const [maxTrades, setMaxTrades] = useState(5);
   const [stopLoss, setStopLoss] = useState(0);
   const [takeProfit, setTakeProfit] = useState(0);
+  const [useStoploss, setUseStoploss] = useState(false);
+  const [useTarget, setUseTarget] = useState(false);
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [autoExitEnabled, setAutoExitEnabled] = useState(false);
   const [mismatchMinNotionalFilter, setMismatchMinNotionalFilter] = useState(true);
@@ -76,6 +80,8 @@ export default function SettingsPage() {
           setMaxTrades(s.maxTrades ?? 5);
           setStopLoss(s.stopLoss ?? 0);
           setTakeProfit(s.takeProfit ?? 0);
+          setUseStoploss(s.useStoploss ?? false);
+          setUseTarget(s.useTarget ?? false);
           setAutoTradeEnabled(s.autoTradeEnabled ?? false);
           setAutoExitEnabled(s.autoExitEnabled ?? false);
           setMismatchMinNotionalFilter(s.mismatchMinNotionalFilter ?? true);
@@ -182,6 +188,8 @@ export default function SettingsPage() {
         maxTrades,
         stopLoss,
         takeProfit,
+        useStoploss,
+        useTarget,
         autoTrade: autoTradeEnabled,
         autoTradeEnabled,
         autoExitEnabled,
@@ -437,8 +445,23 @@ export default function SettingsPage() {
             <div>
               <span className={labelClass}>SL/TP %</span>
               <div className="grid grid-cols-2 gap-3 mt-1">
-                <label className="block">
-                  <span className="text-xs text-slate-500 mb-1 block">Stop Loss</span>
+                <div className="block">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-slate-500">Stop Loss</span>
+                    <label className="inline-flex items-center gap-2 cursor-pointer flex-shrink-0">
+                      <div className="relative w-10 h-5 flex-shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={useStoploss}
+                          onChange={(e) => setUseStoploss(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+                        <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+                      </div>
+                      <span className="text-xs font-medium text-slate-400">{useStoploss ? "ON" : "OFF"}</span>
+                    </label>
+                  </div>
                   <input
                     type="number"
                     min={0}
@@ -447,9 +470,24 @@ export default function SettingsPage() {
                     onChange={(e) => setStopLoss(Number(e.target.value) ?? 0)}
                     className={inputClass}
                   />
-                </label>
-                <label className="block">
-                  <span className="text-xs text-slate-500 mb-1 block">Take Profit</span>
+                </div>
+                <div className="block">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-slate-500">Take Profit</span>
+                    <label className="inline-flex items-center gap-2 cursor-pointer flex-shrink-0">
+                      <div className="relative w-10 h-5 flex-shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={useTarget}
+                          onChange={(e) => setUseTarget(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+                        <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+                      </div>
+                      <span className="text-xs font-medium text-slate-400">{useTarget ? "ON" : "OFF"}</span>
+                    </label>
+                  </div>
                   <input
                     type="number"
                     min={0}
@@ -458,7 +496,7 @@ export default function SettingsPage() {
                     onChange={(e) => setTakeProfit(Number(e.target.value) ?? 0)}
                     className={inputClass}
                   />
-                </label>
+                </div>
               </div>
             </div>
             <label className="block">
