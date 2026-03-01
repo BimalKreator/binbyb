@@ -6,6 +6,8 @@
 const axios = require("axios");
 axios.defaults.family = 4;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const BINANCE_FAPI = "https://fapi.binance.com";
 const BINANCE_FUTURES_DATA = "https://fapi.binance.com/futures/data";
 const BYBIT_REST = "https://api.bybit.com";
@@ -137,7 +139,7 @@ async function fetchBybitKlines(symbol) {
  */
 async function refreshRankingCache() {
   const symbols = symbolList.length > 0 ? symbolList : ["BTCUSDT", "ETHUSDT"];
-  console.log("[RankingService] Refreshing cache for", symbols.length, "symbols (30d funding, OI, klines)...");
+  console.log(`[RankingService] Refreshing cache for ${symbols.length} symbols. Throttling with 1.5s delay per symbol to prevent rate limits...`);
   const start = Date.now();
   for (const symbol of symbols) {
     try {
@@ -161,6 +163,7 @@ async function refreshRankingCache() {
     } catch (e) {
       console.warn("[RankingService] Failed for", symbol, e?.message ?? e);
     }
+    await sleep(1500); // 1.5 seconds delay between each symbol
   }
   console.log("[RankingService] Cache refresh done in", ((Date.now() - start) / 1000).toFixed(1), "s");
 }
