@@ -84,7 +84,8 @@ function computeSpread(fundingBinance, fundingBybit, userMinSpreadPct) {
   const grossSigned = (Number.isNaN(bin) ? 0 : bin) - (Number.isNaN(byb) ? 0 : byb);
   const spreadAbs = Math.abs(grossSigned);
   const userMinSpreadDecimal = (Number(userMinSpreadPct) || 0) / 100;
-  const net = grossSigned - userMinSpreadDecimal;
+  // Use absolute spread gap for net calculation
+  const net = spreadAbs - userMinSpreadDecimal;
   return {
     grossPct: Number.isFinite(grossSigned * 100) ? grossSigned * 100 : 0,
     netPct: Number.isFinite(net * 100) ? net * 100 : 0,

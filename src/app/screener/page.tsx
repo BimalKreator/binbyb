@@ -248,7 +248,7 @@ export default function ScreenerPage() {
     if (q) list = list.filter((t) => t.symbol.toLowerCase().includes(q));
     list = list.filter((t) => allowedIntervals.includes(t.intervalHours ?? 8));
     const minSpread = parseFloat(minSpreadPct);
-    if (!Number.isNaN(minSpread)) list = list.filter((t) => t.netPct >= minSpread);
+    if (!Number.isNaN(minSpread)) list = list.filter((t) => (t.spreadPctAbs ?? 0) >= minSpread);
     const l2SpreadNum = parseFloat(minL2SpreadFilter);
     if (!Number.isNaN(l2SpreadNum)) {
       list = list.filter((t) => t.livePriceSpread != null && t.livePriceSpread >= l2SpreadNum);
@@ -484,8 +484,6 @@ export default function ScreenerPage() {
                   const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
                   const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
                   const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
-                  const netPctNum = Number(row.netPct);
-                  const hasNetPct = !Number.isNaN(netPctNum);
                   return (
                     <tr key={row.symbol} className="border-b border-slate-700/50">
                       <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
@@ -517,12 +515,8 @@ export default function ScreenerPage() {
                         </span>
                       </td>
                       <td className="py-1 px-2 text-right">
-                        <span
-                          className={
-                            hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
-                          }
-                        >
-                          {formatNetPct(row.netPct)}
+                        <span className="text-[var(--profit)] font-medium">
+                          {row.spreadPctAbs != null ? row.spreadPctAbs.toFixed(4) + "%" : "—"}
                         </span>
                       </td>
                       <td className="py-1 px-2 text-right">
@@ -612,8 +606,6 @@ export default function ScreenerPage() {
                       const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
                       const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
                       const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
-                      const netPctNum = Number(row.netPct);
-                      const hasNetPct = !Number.isNaN(netPctNum);
                       const isCooling = coolingSet.has(row.symbol.toUpperCase());
                       const isBanned = bannedSet.has(row.symbol.toUpperCase());
                       return (
@@ -647,12 +639,8 @@ export default function ScreenerPage() {
                             </span>
                           </td>
                           <td className="py-1 px-2 text-right">
-                            <span
-                              className={
-                                hasNetPct && netPctNum >= 0 ? "text-[var(--profit)]" : hasNetPct ? "text-[var(--loss)]" : "text-slate-500"
-                              }
-                            >
-                              {formatNetPct(row.netPct)}
+                            <span className="text-[var(--profit)] font-medium">
+                              {row.spreadPctAbs != null ? row.spreadPctAbs.toFixed(4) + "%" : "—"}
                             </span>
                           </td>
                           <td className="py-1 px-2 text-right">

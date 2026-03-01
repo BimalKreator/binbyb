@@ -209,7 +209,7 @@ async function runAutoEntry() {
     if (countdownMs < windowEndMs) continue; // Missed strict window
     if (tradedCycles[sym] === nextFundingTime) continue; // Already traded
     if (countdownMs <= 0 || countdownMs > entryTimeMs) continue; // Expired or Too early
-    if ((token.grossPct || 0) < minFundingSpread) continue; // Skip if funding spread is too low
+    if ((token.spreadPctAbs || 0) < minFundingSpread) continue; // Use Absolute gap for bot filter
     if (lastEntryTimeBySymbol[sym] && now - lastEntryTimeBySymbol[sym] < ENTRY_BUFFER_MS) continue;
 
     // Await inside loop is fine here as it's limited to 10 iterations max
