@@ -6,7 +6,7 @@ axios.interceptors.request.use((request) => {
   return request;
 });
 const CryptoJS = require("crypto-js");
-const { logLatency } = require("./latencyTracker");
+const { formatMs, logLatency } = require("./latencyTracker");
 
 const PUBLIC_WS_BASE = "wss://fstream.binance.com";
 const WS_FAPI_BASE = "wss://ws-fapi.binance.com/ws-fapi/v1";
@@ -267,6 +267,7 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
     price: priceStr,
     timeInForce: "IOC",
     timestamp,
+    newOrderRespType: "RESULT",
   };
   if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
   if (opts.reduceOnly === true) params.reduceOnly = "true";
@@ -366,6 +367,45 @@ function executeWSTrade(preComputedJsonPayload) {
   }
 }
 
+/**
+ * Send pre-computed order payload over WS and wait for the response by matching id in incoming messages.
+ * Resolves with the order result (executedQty, etc.); rejects on error or timeout. No REST.
+ * @param {string} preComputedJsonPayload - result of prepareOrderPayload()
+ * @returns {Promise<object>} result from WS response (e.g. { executedQty, orderId, ... })
+ */
+function sendOrderPayloadAndWaitResponse(preComputedJsonPayload) {
+  let payload;
+  try {
+    payload = JSON.parse(preComputedJsonPayload);
+  } catch (e) {
+    return Promise.reject(new Error("Invalid order payload JSON"));
+  }
+  const id = payload?.id;
+  if (!id) {
+    return Promise.reject(new Error("Order payload missing id"));
+  }
+  return new Promise((resolve, reject) => {
+    connectApiWs()
+      .then(() => {
+        const timeoutId = setTimeout(() => {
+          if (pendingRequests.has(id)) {
+            pendingRequests.delete(id);
+            reject(new Error("sendOrderPayloadAndWaitResponse timeout"));
+          }
+        }, PLACE_WS_ORDER_TIMEOUT_MS);
+        pendingRequests.set(id, { resolve, reject, timeoutId });
+        try {
+          apiWs.send(preComputedJsonPayload);
+        } catch (e) {
+          pendingRequests.delete(id);
+          clearTimeout(timeoutId);
+          reject(e);
+        }
+      })
+      .catch(reject);
+  });
+}
+
 /** Slippage 1% so IOC orders get filled. */
 const ORDERBOOK_SLIPPAGE_PCT = 0.01;
 
@@ -454,6 +494,8 @@ const lastFundingEmitBySymbol = {};
 const lastMarkPriceBySymbol = {};
 /** Best bid/ask from !bookTicker stream: { bestBid, bestBidQty, bestAsk, bestAskQty } */
 const bookTickerBySymbol = {};
+/** L2 top of book for sweeper: { topBidPrice, topBidQty, topAskPrice, topAskQty } from b, B, a, A */
+const topOfBookBySymbol = {};
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
 
@@ -531,6 +573,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
               const bestAskQty = parseFloat(item.A) || 0;
               if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
                 bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
+                topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
               }
             }
             return;
@@ -593,6 +636,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           const bestAskQty = parseFloat(A) || 0;
           if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
             bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
+            topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
           }
         }
         return;
@@ -726,6 +770,7 @@ async function startPrivateStream(credentials) {
           orderId: o.i,
           filled: o.z,
           avgPrice: o.ap,
+          execTime: formatMs(msg.E),
         });
       }
     } catch (e) {
@@ -797,20 +842,22 @@ async function ensureExchangeInfoAndLeverageLoaded(credentials) {
           const s = (item.symbol || "").toUpperCase();
           if (!s) continue;
           if (!item.filters) {
-            symbolFiltersCache[s] = { stepSize: null, tickSize: null, maxOrderQty: null };
+            symbolFiltersCache[s] = { stepSize: null, tickSize: null, maxOrderQty: null, minOrderQty: null };
             continue;
           }
           let stepSize = null;
           let tickSize = null;
           let maxOrderQty = null;
+          let minOrderQty = null;
           for (const f of item.filters) {
             if (f.filterType === "LOT_SIZE") {
               stepSize = f.stepSize;
               maxOrderQty = f.maxQty;
+              minOrderQty = f.minQty ?? null;
             }
             if (f.filterType === "PRICE_FILTER") tickSize = f.tickSize;
           }
-          symbolFiltersCache[s] = { stepSize, tickSize, maxOrderQty };
+          symbolFiltersCache[s] = { stepSize, tickSize, maxOrderQty, minOrderQty };
         }
       } catch (e) {
         console.warn("[Binance] One-time exchangeInfo load failed:", e.message);
@@ -887,7 +934,7 @@ async function getSymbolFilters(symbol) {
   const sym = String(symbol).toUpperCase();
   if (symbolFiltersCache[sym]) return symbolFiltersCache[sym];
   await ensureExchangeInfoAndLeverageLoaded();
-  return symbolFiltersCache[sym] || { stepSize: null, tickSize: null, maxOrderQty: null };
+  return symbolFiltersCache[sym] || { stepSize: null, tickSize: null, maxOrderQty: null, minOrderQty: null };
 }
 
 /**
@@ -1132,6 +1179,7 @@ function stop() {
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   Object.keys(bookTickerBySymbol).forEach((k) => delete bookTickerBySymbol[k]);
+  Object.keys(topOfBookBySymbol).forEach((k) => delete topOfBookBySymbol[k]);
   console.log("[Binance] Manager stopped");
 }
 
@@ -1452,7 +1500,7 @@ async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts =
 const DEFAULT_SLIPPAGE_PCT = 0.1;
 
 /**
- * Get best bid/ask from WebSocket bookTicker cache. Returns null if not available.
+ * Get best bid/ask from WebSocket bookTicker cache (L2 top of book). Returns null if not available.
  * @param {string} symbol
  * @returns {{ bestBid: number, bestBidQty: number, bestAsk: number, bestAskQty: number } | null}
  */
@@ -1461,6 +1509,99 @@ function getBestBidAsk(symbol) {
   const book = bookTickerBySymbol[sym];
   if (!book || !Number.isFinite(book.bestBid) || !Number.isFinite(book.bestAsk)) return null;
   return book;
+}
+
+/**
+ * Get top of book for liquidity sweep: topBidPrice, topBidQty (SELL), topAskPrice, topAskQty (BUY).
+ * Uses live L2 state from !bookTicker (topOfBookBySymbol). No REST.
+ */
+function getTopOfBook(symbol) {
+  const sym = String(symbol).toUpperCase();
+  const top = topOfBookBySymbol[sym];
+  if (!top || !Number.isFinite(top.topBidPrice) || !Number.isFinite(top.topAskPrice)) return null;
+  return top;
+}
+
+const SWEEP_SLEEP_MS = 20;
+
+/**
+ * Dynamic L2 liquidity sweep (iceberg): while loop, place IOC chunks at live top-of-book via placeWSOrder.
+ * Uses getTopOfBook only; if missing, fallback to standard pricing and place one order then break.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} symbol - e.g. BTCUSDT
+ * @param {string} side - BUY | SELL
+ * @param {number} totalQtyRemaining - quantity left to fill
+ * @param {number} leverage - leverage for the order
+ * @param {number} [maxIterations=10] - max chunks per sweep
+ * @returns {Promise<{ totalFilled: number }>}
+ */
+async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemaining, leverage, maxIterations = 10) {
+  const sym = String(symbol).toUpperCase();
+  const sideNorm = String(side).toUpperCase();
+  if (sideNorm !== "BUY" && sideNorm !== "SELL") {
+    return { totalFilled: 0 };
+  }
+  if (totalQtyRemaining <= 0 || maxIterations <= 0) {
+    return { totalFilled: 0 };
+  }
+
+  await connectApiWs();
+  try {
+    await setLeverage(credentials, sym, leverage);
+  } catch (e) {
+    console.log("[Binance] executeLiquiditySweep setLeverage warning", sym, e?.message ?? e);
+  }
+
+  const filters = await getSymbolFilters(sym);
+  const stepSize = filters?.stepSize ?? null;
+  let totalFilled = 0;
+
+  while (totalQtyRemaining > 0 && maxIterations > 0) {
+    const topOfBook = getTopOfBook(sym);
+    let targetPrice;
+    let availableQty;
+
+    if (topOfBook && Number.isFinite(topOfBook.topBidPrice) && Number.isFinite(topOfBook.topAskPrice)) {
+      const isBuy = sideNorm === "BUY";
+      targetPrice = isBuy ? topOfBook.topAskPrice : topOfBook.topBidPrice;
+      availableQty = isBuy ? (topOfBook.topAskQty ?? 0) : (topOfBook.topBidQty ?? 0);
+    } else {
+      targetPrice = getOrderbookPrice(sym, sideNorm);
+      if (targetPrice == null || !Number.isFinite(targetPrice)) break;
+      availableQty = null;
+    }
+
+    let chunkQty = availableQty != null && Number.isFinite(availableQty) && availableQty > 0
+      ? Math.min(totalQtyRemaining, availableQty * 0.5)
+      : totalQtyRemaining;
+    if (stepSize) {
+      chunkQty = parseFloat(formatQuantityToStepSize(chunkQty, stepSize)) || 0;
+    }
+    if (chunkQty <= 0) break;
+
+    let res;
+    try {
+      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, targetPrice, { timeInForce: "IOC", leverage });
+    } catch (e) {
+      console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
+      break;
+    }
+    console.log("[Binance] executeLiquiditySweep order placed", {
+      sym,
+      orderId: res?.orderId,
+      execTime: formatMs(res?.updateTime ?? Date.now()),
+    });
+
+    const filledQty = Number.isFinite(parseFloat(res?.executedQty)) ? parseFloat(res.executedQty) : 0;
+    totalQtyRemaining -= filledQty;
+    totalFilled += filledQty;
+    maxIterations -= 1;
+
+    if (availableQty == null) break;
+    await new Promise((r) => setTimeout(r, SWEEP_SLEEP_MS));
+  }
+
+  return { totalFilled };
 }
 
 /**
@@ -1510,6 +1651,8 @@ module.exports = {
   intervalHoursFromHoursUntilNext,
   getOrderbookPrice,
   getBestBidAsk,
+  getTopOfBook,
+  executeLiquiditySweep,
   getBalance,
   getBalances,
   getPositionSymbols,

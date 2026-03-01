@@ -1,4 +1,15 @@
 /**
+ * Format a timestamp (ms) as HH:mm:ss.SSS for console logs.
+ * @param {number|string} timestamp - Milliseconds since epoch
+ * @returns {string} e.g. "14:32:01.234" or "N/A"
+ */
+function formatMs(timestamp) {
+  if (!timestamp) return "N/A";
+  const d = new Date(Number(timestamp));
+  return d.toISOString().split("T")[1].replace("Z", "");
+}
+
+/**
  * Logs message arrival latency (client receive time vs event time when provided).
  * Disabled to avoid terminal spam on every WebSocket message; re-enable for debugging.
  * @param {string} exchange - Exchange name (e.g. 'binance', 'bybit')
@@ -17,4 +28,4 @@ function logLatency(exchange, stream, eventTimeMs, meta = {}) {
   // }
 }
 
-module.exports = { logLatency };
+module.exports = { formatMs, logLatency };
