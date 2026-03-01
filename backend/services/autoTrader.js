@@ -106,6 +106,25 @@ async function computeQuantityChunks(allocatedMargin, leverage, currentTokenPric
 }
 
 /**
+ * Live entry spread in %: positive = favorable for entry.
+ * SELL (Short Bin, Long Byb): (binanceBid - bybitAsk) / bybitAsk * 100.
+ * BUY (Long Bin, Short Byb): (bybitBid - binanceAsk) / binanceAsk * 100.
+ * Returns null if either book is missing.
+ */
+function calculateLiveEntrySpread(symbol, binanceSide) {
+  const binanceBook = binanceManager.getTopOfBook(symbol);
+  const bybitBook = bybitManager.getTopOfBook(symbol);
+  if (!binanceBook || !bybitBook) return null;
+  if (binanceSide === "SELL") {
+    return ((binanceBook.topBidPrice - bybitBook.topAskPrice) / bybitBook.topAskPrice) * 100;
+  }
+  if (binanceSide === "BUY") {
+    return ((bybitBook.topBidPrice - binanceBook.topAskPrice) / binanceBook.topAskPrice) * 100;
+  }
+  return null;
+}
+
+/**
  * Count symbols that have an open position on both exchanges (arbitrage pairs).
  * Synchronous, in-memory only: uses getLivePositions() (no REST).
  */
@@ -202,6 +221,14 @@ async function runAutoEntry() {
 
   if (countdownMs > entryTimeMs) {
     return; // Too early; wait for next poll
+  }
+
+  const minSpreadPct = Number(settings?.minSpreadPct) ?? 0.15;
+  const { binanceSide } = getSidesFromToken(top);
+  const spread = calculateLiveEntrySpread(top.symbol, binanceSide);
+  if (spread == null || spread < minSpreadPct) {
+    console.log("[AutoTrader] Hunting Mode: Spread for", top.symbol, "is", spread?.toFixed(4), "%. Waiting for favorable >=", minSpreadPct, "%");
+    return;
   }
 
   const allocatedMargin = await getAllocatedMargin(keys);
