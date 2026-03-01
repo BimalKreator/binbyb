@@ -27,6 +27,7 @@ type SettingRecord = {
   liquidationAutoClose?: boolean;
   liquidationDistancePct?: number;
   cooldownMinutes?: number;
+  minFundingConsistency?: number;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -56,6 +57,7 @@ export default function SettingsPage() {
   const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
   const [entrySlippagePct, setEntrySlippagePct] = useState(0.1);
   const [cooldownMinutes, setCooldownMinutes] = useState(15);
+  const [minFundingConsistency, setMinFundingConsistency] = useState(75);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -106,6 +108,7 @@ export default function SettingsPage() {
           }
           setEntrySlippagePct(s.entrySlippagePct ?? 0.1);
           setCooldownMinutes(s.cooldownMinutes ?? 15);
+          setMinFundingConsistency(s.minFundingConsistency ?? 75);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -199,6 +202,7 @@ export default function SettingsPage() {
         entryTimeMs: entryTimeToMs(),
         entrySlippagePct,
         cooldownMinutes,
+        minFundingConsistency,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -551,6 +555,18 @@ export default function SettingsPage() {
               <span className="text-xs text-slate-500 mt-0.5 block">
                 Time to wait before the bot can re-enter the same token after a trade is closed.
               </span>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Min Funding Consistency (%)</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={minFundingConsistency}
+                onChange={(e) => setMinFundingConsistency(Math.max(0, Math.min(100, Number(e.target.value) ?? 75)))}
+                className={inputClass}
+                placeholder="75"
+              />
             </label>
             <button
               type="button"

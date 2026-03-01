@@ -29,6 +29,11 @@ const settingSchema = new mongoose.Schema(
     liquidationDistancePct: { type: Number, default: 25 },
     cooldownMinutes: { type: Number, default: 15 },
     bannedTokens: { type: [String], default: [] },
+    useAdvancedRanking: { type: Boolean, default: false },
+    rankStepA: { type: Boolean, default: true },
+    rankStepB: { type: Boolean, default: true },
+    rankStepC: { type: Boolean, default: true },
+    minFundingConsistency: { type: Number, default: 75 },
   },
   { timestamps: true }
 );

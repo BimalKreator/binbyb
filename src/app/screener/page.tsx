@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
@@ -73,6 +73,12 @@ export default function ScreenerPage() {
   const [coolingTokens, setCoolingTokens] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
+  const [useAdvancedRanking, setUseAdvancedRanking] = useState(false);
+  const [rankStepA, setRankStepA] = useState(true);
+  const [rankStepB, setRankStepB] = useState(true);
+  const [rankStepC, setRankStepC] = useState(true);
+  const [savingRanking, setSavingRanking] = useState(false);
+  const fetchScreenerRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -119,12 +125,27 @@ export default function ScreenerPage() {
         if (!cancelled) setLoading(false);
       }
     };
+    fetchScreenerRef.current = () => { fetchData(); };
     fetchData();
     const t = setInterval(fetchData, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(t);
     };
+  }, []);
+
+  useEffect(() => {
+    api
+      .get<{ success: boolean; data?: { useAdvancedRanking?: boolean; rankStepA?: boolean; rankStepB?: boolean; rankStepC?: boolean } }>("/settings")
+      .then(({ data }) => {
+        if (!data?.success || !data?.data) return;
+        const d = data.data;
+        if (d.useAdvancedRanking !== undefined) setUseAdvancedRanking(d.useAdvancedRanking);
+        if (d.rankStepA !== undefined) setRankStepA(d.rankStepA);
+        if (d.rankStepB !== undefined) setRankStepB(d.rankStepB);
+        if (d.rankStepC !== undefined) setRankStepC(d.rankStepC);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -153,6 +174,36 @@ export default function ScreenerPage() {
       if (Array.isArray(data?.bannedTokens)) setBannedTokens(data.bannedTokens);
     } catch (e) {
       toast.error("Failed to update ban.");
+    }
+  };
+
+  const handleRankingToggle = async (
+    field: "useAdvancedRanking" | "rankStepA" | "rankStepB" | "rankStepC",
+    value: boolean
+  ) => {
+    const next = {
+      useAdvancedRanking: field === "useAdvancedRanking" ? value : useAdvancedRanking,
+      rankStepA: field === "rankStepA" ? value : rankStepA,
+      rankStepB: field === "rankStepB" ? value : rankStepB,
+      rankStepC: field === "rankStepC" ? value : rankStepC,
+    };
+    setUseAdvancedRanking(next.useAdvancedRanking);
+    setRankStepA(next.rankStepA);
+    setRankStepB(next.rankStepB);
+    setRankStepC(next.rankStepC);
+    setSavingRanking(true);
+    try {
+      await api.put("/settings", {
+        useAdvancedRanking: next.useAdvancedRanking,
+        rankStepA: next.rankStepA,
+        rankStepB: next.rankStepB,
+        rankStepC: next.rankStepC,
+      });
+      fetchScreenerRef.current?.();
+    } catch (e) {
+      toast.error("Failed to save ranking settings.");
+    } finally {
+      setSavingRanking(false);
     }
   };
 
@@ -268,6 +319,71 @@ export default function ScreenerPage() {
           </select>
         </div>
       </div>
+
+      {/* Advanced Ranking toggles — persist to settings, refresh screener on change */}
+      <section className="mb-4 rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+        <h3 className="text-sm font-semibold text-foreground mb-3">Ranking system</h3>
+        <div className="space-y-3">
+          <label className="flex items-center justify-between gap-4 cursor-pointer p-2.5 rounded-lg bg-slate-700/50 hover:bg-slate-700/70 transition-colors">
+            <span className="text-sm font-medium text-foreground">Use Advanced Ranking System</span>
+            <div className="relative w-12 h-7 flex-shrink-0">
+              <input
+                type="checkbox"
+                checked={useAdvancedRanking}
+                disabled={savingRanking}
+                onChange={(e) => handleRankingToggle("useAdvancedRanking", e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+              <div className="absolute left-1 top-1 w-5 h-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+            </div>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-2 border-l-2 border-slate-600">
+            <label className="flex items-center justify-between gap-2 cursor-pointer p-2 rounded bg-slate-700/30 hover:bg-slate-700/50">
+              <span className="text-xs font-medium text-slate-300">Step A: Funding Persistence</span>
+              <div className="relative w-10 h-5 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={rankStepA}
+                  disabled={savingRanking}
+                  onChange={(e) => handleRankingToggle("rankStepA", e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+                <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+              </div>
+            </label>
+            <label className="flex items-center justify-between gap-2 cursor-pointer p-2 rounded bg-slate-700/30 hover:bg-slate-700/50">
+              <span className="text-xs font-medium text-slate-300">Step B: OI Trend Check</span>
+              <div className="relative w-10 h-5 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={rankStepB}
+                  disabled={savingRanking}
+                  onChange={(e) => handleRankingToggle("rankStepB", e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+                <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+              </div>
+            </label>
+            <label className="flex items-center justify-between gap-2 cursor-pointer p-2 rounded bg-slate-700/30 hover:bg-slate-700/50">
+              <span className="text-xs font-medium text-slate-300">Step C: Price Stability</span>
+              <div className="relative w-10 h-5 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={rankStepC}
+                  disabled={savingRanking}
+                  onChange={(e) => handleRankingToggle("rankStepC", e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="absolute inset-0 rounded-full bg-slate-600 peer-checked:bg-emerald-600 transition-colors" aria-hidden />
+                <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" aria-hidden />
+              </div>
+            </label>
+          </div>
+        </div>
+      </section>
 
       {loading ? (
         <div className="flex justify-center py-12">

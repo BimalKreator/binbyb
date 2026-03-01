@@ -46,6 +46,11 @@ router.put("/", async (req, res) => {
       binanceNetwork,
       bybitDepositAddress,
       bybitNetwork,
+      useAdvancedRanking,
+      rankStepA,
+      rankStepB,
+      rankStepC,
+      minFundingConsistency,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -70,6 +75,11 @@ router.put("/", async (req, res) => {
     if (binanceNetwork !== undefined) update.binanceNetwork = String(binanceNetwork ?? "").trim();
     if (bybitDepositAddress !== undefined) update.bybitDepositAddress = String(bybitDepositAddress ?? "").trim();
     if (bybitNetwork !== undefined) update.bybitNetwork = String(bybitNetwork ?? "").trim();
+    if (useAdvancedRanking !== undefined) update.useAdvancedRanking = Boolean(useAdvancedRanking);
+    if (rankStepA !== undefined) update.rankStepA = Boolean(rankStepA);
+    if (rankStepB !== undefined) update.rankStepB = Boolean(rankStepB);
+    if (rankStepC !== undefined) update.rankStepC = Boolean(rankStepC);
+    if (minFundingConsistency !== undefined) update.minFundingConsistency = Math.max(0, Math.min(100, Number(minFundingConsistency) ?? 75));
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

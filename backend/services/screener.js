@@ -7,6 +7,7 @@
 
 const Setting = require("../models/Setting");
 const { binanceManager, bybitManager } = require("./exchanges");
+const rankingService = require("./rankingService");
 
 const VOLATILITY_THRESHOLD_PCT = 0.5;
 /** Sort priority by interval string: 1h and 2h first (1), then 4h (2), then 8h (3). Lowest number first. */
@@ -202,7 +203,18 @@ async function runScreener() {
     }
 
     updateVolatilityMeter(tokens);
-    rankedTokens = sortByPriorityAndSpread(tokens);
+    const settings = await Setting.findOne().lean();
+    if (settings?.useAdvancedRanking) {
+      const withScore = [];
+      for (const token of tokens) {
+        const { rankScore, passed } = rankingService.calculateRankScore(token.symbol, settings);
+        if (!passed) continue;
+        withScore.push({ ...token, rankScore });
+      }
+      rankedTokens = withScore.sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
+    } else {
+      rankedTokens = sortByPriorityAndSpread(tokens);
+    }
   }, 80);
 }
 
