@@ -15,7 +15,7 @@ const settingSchema = new mongoose.Schema(
     autoTradeEnabled: { type: Boolean, default: false },
     autoExitEnabled: { type: Boolean, default: false },
     entryTimeMs: { type: Number, default: 1000 }, // ms before funding to execute entry
-    entrySlippagePct: { type: Number, default: 2 }, // IOC limit order slippage %
+    entrySlippagePct: { type: Number, default: 0.1 }, // IOC limit order slippage % (arbitrage needs tight slippage)
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
     openingBalance: { type: Number, default: 0 }, // USDT balance at start (legacy; use dailyOpeningBalance for daily snapshot)
     dailyOpeningBalance: { type: Number, default: 3450 }, // Snapshot of total capital at 00:00 IST each day

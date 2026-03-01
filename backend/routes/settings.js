@@ -62,7 +62,7 @@ router.put("/", async (req, res) => {
     if (liquidationAutoClose !== undefined) update.liquidationAutoClose = Boolean(liquidationAutoClose);
     if (liquidationDistancePct !== undefined) update.liquidationDistancePct = Math.max(0, Math.min(100, Number(liquidationDistancePct) ?? 25));
     if (entryTimeMs !== undefined) update.entryTimeMs = Math.max(0, Number(entryTimeMs) || 1000);
-    if (entrySlippagePct !== undefined) update.entrySlippagePct = Math.max(0, Math.min(100, Number(entrySlippagePct) ?? 2));
+    if (entrySlippagePct !== undefined) update.entrySlippagePct = Math.max(0, Math.min(100, Number(entrySlippagePct) ?? 0.1));
     if (cooldownMinutes !== undefined) update.cooldownMinutes = Math.max(0, Number(cooldownMinutes) ?? 15);
     if (userMinSpread !== undefined) update.userMinSpread = Number(userMinSpread);
     if (openingBalance !== undefined) update.openingBalance = Number(openingBalance);

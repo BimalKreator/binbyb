@@ -158,7 +158,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
 
 
   const settings = await Setting.findOne().lean();
-  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
 
   const binancePositionSideForClose =
     binancePositionSide === "LONG" || binancePositionSide === "SHORT"
@@ -173,6 +173,27 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
 
   const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? fallbackMarkPrice;
   const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? fallbackMarkPrice;
+
+  const binanceBook = binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(sym);
+  const bybitBook = bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(sym);
+  const binanceCloseIsBuy = String(binanceCloseSide).toUpperCase() === "BUY";
+  const bybitCloseIsBuy = String(bybitCloseSide).toLowerCase() === "buy";
+  if (binanceQty > 0 && binanceBook) {
+    const needQty = binanceCloseIsBuy ? binanceBook.bestAskQty : binanceBook.bestBidQty;
+    if (needQty < binanceQty) {
+      console.log("[TradeMonitor] Abort close: Binance top-of-book volume", needQty, "< close qty", binanceQty, sym);
+      closingSymbols.delete(sym);
+      return { binanceOk: false, bybitOk: false };
+    }
+  }
+  if (bybitQty > 0 && bybitBook) {
+    const needQty = bybitCloseIsBuy ? bybitBook.bestAskQty : bybitBook.bestBidQty;
+    if (needQty < bybitQty) {
+      console.log("[TradeMonitor] Abort close: Bybit top-of-book volume", needQty, "< close qty", bybitQty, sym);
+      closingSymbols.delete(sym);
+      return { binanceOk: false, bybitOk: false };
+    }
+  }
 
   const binancePromises = binanceChunks.map((qtyStr) => {
     const qty = parseFloat(qtyStr);
@@ -334,10 +355,19 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
   }
 
   const settings = await Setting.findOne().lean();
-  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
 
   const { computeQuantityChunks } = autoTrader;
   const chunks = (await computeQuantityChunks(qty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks;
+  const closeIsBuy = exchange === "binance" ? closeSide === "BUY" : closeSide.toLowerCase() === "buy";
+  const book = exchange === "binance" ? (binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(sym)) : (bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(sym));
+  if (book) {
+    const needQty = closeIsBuy ? book.bestAskQty : book.bestBidQty;
+    if (needQty < qty) {
+      console.log("[TradeMonitor] Abort orphan close: top-of-book volume", needQty, "< close qty", qty, sym, exchange);
+      return;
+    }
+  }
   const price = exchange === "binance"
     ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice)
     : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice);
@@ -675,7 +705,7 @@ async function runMonitor() {
           // skip this run
         } else if (availableBalance > requiredMargin) {
           const sym = String(symbol).toUpperCase();
-          const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+          const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
           const isLong = Number(lowPos?.positionAmt ?? lowPos?.size ?? 0) >= 0;
           const addSide = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
           const addPrice =

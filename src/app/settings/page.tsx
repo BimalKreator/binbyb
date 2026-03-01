@@ -54,7 +54,7 @@ export default function SettingsPage() {
   const [liquidationDistancePct, setLiquidationDistancePct] = useState(25);
   const [entryTimeRaw, setEntryTimeRaw] = useState("1");
   const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
-  const [entrySlippagePct, setEntrySlippagePct] = useState(2);
+  const [entrySlippagePct, setEntrySlippagePct] = useState(0.1);
   const [cooldownMinutes, setCooldownMinutes] = useState(15);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
@@ -104,7 +104,7 @@ export default function SettingsPage() {
             setEntryTimeRaw(String(ms));
             setEntryTimeUnit("ms");
           }
-          setEntrySlippagePct(s.entrySlippagePct ?? 2);
+          setEntrySlippagePct(s.entrySlippagePct ?? 0.1);
           setCooldownMinutes(s.cooldownMinutes ?? 15);
         }
       })
@@ -532,9 +532,9 @@ export default function SettingsPage() {
                 max={100}
                 step={0.1}
                 value={entrySlippagePct}
-                onChange={(e) => setEntrySlippagePct(Math.max(0, Math.min(100, Number(e.target.value) ?? 2)))}
+                onChange={(e) => setEntrySlippagePct(Math.max(0, Math.min(100, Number(e.target.value) ?? 0.1)))}
                 className={inputClass}
-                placeholder="2"
+                placeholder="0.1"
               />
             </label>
             <label className="block">

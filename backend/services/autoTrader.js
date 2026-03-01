@@ -226,7 +226,7 @@ async function runAutoEntry() {
   if (chunks.length === 0) return;
 
   const { binanceSide, bybitSide } = getSidesFromToken(top);
-  const slippagePct = Number.isFinite(settings.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 2;
+  const slippagePct = Number.isFinite(settings.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
 
   const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
     binanceManager.getOrderbookPrice(top.symbol, binanceSide, slippagePct),
@@ -248,6 +248,24 @@ async function runAutoEntry() {
       }
       const qty = parseFloat(qtyStr);
       if (qty <= 0) continue;
+      const bybitBook = bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(top.symbol);
+      const binanceBook = binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(top.symbol);
+      const bybitIsBuy = String(bybitSide).toLowerCase() === "buy";
+      const binanceIsBuy = String(binanceSide).toUpperCase() === "BUY";
+      if (bybitBook) {
+        const needQty = bybitIsBuy ? bybitBook.bestAskQty : bybitBook.bestBidQty;
+        if (needQty < qty) {
+          console.log("[AutoTrader] Abort entry: Bybit top-of-book volume", needQty, "< order qty", qty, top.symbol);
+          break;
+        }
+      }
+      if (binanceBook) {
+        const needQty = binanceIsBuy ? binanceBook.bestAskQty : binanceBook.bestBidQty;
+        if (needQty < qty) {
+          console.log("[AutoTrader] Abort entry: Binance top-of-book volume", needQty, "< order qty", qty, top.symbol);
+          break;
+        }
+      }
       try {
         // Sequential execution: Bybit first (primary leg), then Binance only if Bybit succeeds.
         let bybitResult;

@@ -915,21 +915,42 @@ async function placeMarketCloseOrder(credentials, symbol, side, qty) {
   return placeWSMarketOrder(credentials, symbol, side, Math.abs(qty));
 }
 
-/** Slippage 1% so IOC orders get filled. */
+const DEFAULT_SLIPPAGE_PCT = 0.1;
 
 /**
- * Get limit price for IOC from cached mark price + slippage. No REST orderbook.
- * BUY (Long): markPrice * (1 + slippagePct/100). SELL (Short): markPrice * (1 - slippagePct/100).
+ * Get best bid/ask from WebSocket ticker cache (bid1Price/ask1Price, bid1Size/ask1Size). Returns null if not available.
+ * @param {string} symbol
+ * @returns {{ bestBid: number, bestBidQty: number, bestAsk: number, bestAskQty: number } | null}
+ */
+function getBestBidAsk(symbol) {
+  const sym = String(symbol).toUpperCase();
+  const state = tickerStateBySymbol[sym];
+  if (!state) return null;
+  const bestBid = parseFloat(state.bid1Price);
+  const bestBidQty = parseFloat(state.bid1Size);
+  const bestAsk = parseFloat(state.ask1Price);
+  const bestAskQty = parseFloat(state.ask1Size);
+  if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) return null;
+  return { bestBid, bestBidQty: Number.isFinite(bestBidQty) ? bestBidQty : 0, bestAsk, bestAskQty: Number.isFinite(bestAskQty) ? bestAskQty : 0 };
+}
+
+/**
+ * Get limit price for IOC from real best bid/ask (WebSocket ticker). Fallback to mark ± slippage if no BBO.
+ * BUY: Best Ask * (1 + slippagePct/100). SELL: Best Bid * (1 - slippagePct/100).
  * @param {string} symbol
  * @param {string} side - Buy | Sell
- * @param {number} [slippagePct=2] - slippage in percent (e.g. 2 = 2%)
+ * @param {number} [slippagePct=0.1] - slippage in percent (e.g. 0.1 = 0.1%)
  */
-function getOrderbookPrice(symbol, side, slippagePct = 2) {
+function getOrderbookPrice(symbol, side, slippagePct = DEFAULT_SLIPPAGE_PCT) {
   const sym = String(symbol).toUpperCase();
+  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : DEFAULT_SLIPPAGE_PCT;
+  const isBuy = String(side).toLowerCase() === "buy";
+  const book = getBestBidAsk(sym);
+  if (book) {
+    return isBuy ? book.bestAsk * (1 + pct / 100) : book.bestBid * (1 - pct / 100);
+  }
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
-  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : 2;
-  const isBuy = String(side).toLowerCase() === "buy";
   return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
 }
 
@@ -1372,6 +1393,7 @@ module.exports = {
   getMaxLeverage,
   getPerpetualSymbols,
   getOrderbookPrice,
+  getBestBidAsk,
   getBalance,
   getBalances,
   getPositionSymbols,

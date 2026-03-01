@@ -371,6 +371,8 @@ let publicStopped = false;
 const lastFundingEmitBySymbol = {};
 /** markPrice per symbol from public stream (for getOrderbookPrice without REST). */
 const lastMarkPriceBySymbol = {};
+/** Best bid/ask from !bookTicker stream: { bestBid, bestBidQty, bestAsk, bestAskQty } */
+const bookTickerBySymbol = {};
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
 
@@ -420,10 +422,10 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected. Subscribing to all-market markPrice stream...");
+    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and bookTicker...");
     ws.send(JSON.stringify({
       method: "SUBSCRIBE",
-      params: ["!markPrice@arr@1s"],
+      params: ["!markPrice@arr@1s", "!bookTicker"],
       id: 1,
     }));
   });
@@ -439,6 +441,19 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
       if (Array.isArray(data)) {
         data.forEach((item) => {
+          if (item && item.e === "bookTicker") {
+            const sym = item.s ? String(item.s).toUpperCase() : "";
+            if (sym && item.b != null && item.a != null) {
+              const bestBid = parseFloat(item.b) || 0;
+              const bestBidQty = parseFloat(item.B) || 0;
+              const bestAsk = parseFloat(item.a) || 0;
+              const bestAskQty = parseFloat(item.A) || 0;
+              if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
+                bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
+              }
+            }
+            return;
+          }
           if (item && item.e === "markPriceUpdate") {
             const sym = item.s ? String(item.s).toUpperCase() : "";
             const mp = parseFloat(item.p);
@@ -487,6 +502,20 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
       }
 
+      if (payload && payload.e === "bookTicker") {
+        const { s, b, B, a, A } = payload;
+        const sym = s ? String(s).toUpperCase() : "";
+        if (sym && b != null && a != null) {
+          const bestBid = parseFloat(b) || 0;
+          const bestBidQty = parseFloat(B) || 0;
+          const bestAsk = parseFloat(a) || 0;
+          const bestAskQty = parseFloat(A) || 0;
+          if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
+            bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
+          }
+        }
+        return;
+      }
       if (payload && payload.e === "markPriceUpdate") {
         const { s, p, r, T, E } = payload;
         const sym = s ? String(s).toUpperCase() : s;
@@ -1017,6 +1046,7 @@ function stop() {
   Object.keys(cachedFundingRates).forEach((k) => delete cachedFundingRates[k]);
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
+  Object.keys(bookTickerBySymbol).forEach((k) => delete bookTickerBySymbol[k]);
   console.log("[Binance] Manager stopped");
 }
 
@@ -1334,19 +1364,37 @@ async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts =
   });
 }
 
+const DEFAULT_SLIPPAGE_PCT = 0.1;
+
 /**
- * Get limit price for IOC from cached mark price + slippage. No REST /depth.
- * BUY (Long): markPrice * (1 + slippagePct/100). SELL (Short): markPrice * (1 - slippagePct/100).
+ * Get best bid/ask from WebSocket bookTicker cache. Returns null if not available.
+ * @param {string} symbol
+ * @returns {{ bestBid: number, bestBidQty: number, bestAsk: number, bestAskQty: number } | null}
+ */
+function getBestBidAsk(symbol) {
+  const sym = String(symbol).toUpperCase();
+  const book = bookTickerBySymbol[sym];
+  if (!book || !Number.isFinite(book.bestBid) || !Number.isFinite(book.bestAsk)) return null;
+  return book;
+}
+
+/**
+ * Get limit price for IOC from real best bid/ask (WebSocket bookTicker). Fallback to mark ± slippage if no book.
+ * BUY: Best Ask * (1 + slippagePct/100). SELL: Best Bid * (1 - slippagePct/100).
  * @param {string} symbol
  * @param {string} side - BUY | SELL
- * @param {number} [slippagePct=2] - slippage in percent (e.g. 2 = 2%)
+ * @param {number} [slippagePct=0.1] - slippage in percent (e.g. 0.1 = 0.1%)
  */
-function getOrderbookPrice(symbol, side, slippagePct = 2) {
+function getOrderbookPrice(symbol, side, slippagePct = DEFAULT_SLIPPAGE_PCT) {
   const sym = String(symbol).toUpperCase();
+  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : DEFAULT_SLIPPAGE_PCT;
+  const isBuy = String(side).toUpperCase() === "BUY";
+  const book = bookTickerBySymbol[sym];
+  if (book && Number.isFinite(book.bestBid) && Number.isFinite(book.bestAsk) && book.bestBid > 0 && book.bestAsk > 0) {
+    return isBuy ? book.bestAsk * (1 + pct / 100) : book.bestBid * (1 - pct / 100);
+  }
   const mark = lastMarkPriceBySymbol[sym];
   if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
-  const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : 2;
-  const isBuy = String(side).toUpperCase() === "BUY";
   return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
 }
 
@@ -1373,6 +1421,7 @@ module.exports = {
   syncFundingIntervals,
   intervalHoursFromHoursUntilNext,
   getOrderbookPrice,
+  getBestBidAsk,
   getBalance,
   getBalances,
   getPositionSymbols,
