@@ -53,6 +53,8 @@ let cachedWalletBalance = 0;
 /** Pending WS trade requests: reqId -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let tradeWsConnectPromise = null;
+const TRADE_WS_PING_INTERVAL_MS = 20000;
+let tradeWsPingTimer = null;
 
 function getLivePositions() {
   return Object.values(livePositionsByKey);
@@ -155,6 +157,16 @@ function connectTradeWs(credentials) {
             tradeWsReconnectAttempts = 0;
             console.log("[Bybit] Trade WebSocket authenticated");
             tradeWsConnectPromise = null;
+            if (tradeWsPingTimer) clearInterval(tradeWsPingTimer);
+            tradeWsPingTimer = setInterval(() => {
+              if (tradeWs && tradeWs.readyState === WebSocket.OPEN) {
+                try {
+                  tradeWs.send(JSON.stringify({ op: "ping" }));
+                } catch (e) {
+                  // ignore
+                }
+              }
+            }, TRADE_WS_PING_INTERVAL_MS);
             resolve();
           } else {
             tradeWsConnectPromise = null;
@@ -181,6 +193,10 @@ function connectTradeWs(credentials) {
       }
     });
     ws.on("close", (code, reason) => {
+      if (tradeWsPingTimer) {
+        clearInterval(tradeWsPingTimer);
+        tradeWsPingTimer = null;
+      }
       console.log("[Bybit] Trade WebSocket closed", code, reason?.toString());
       tradeWs = null;
       tradeWsConnectPromise = null;
@@ -268,6 +284,74 @@ async function placeWSOrder(credentials, symbol, side, qty, price, opts = {}) {
       reject(e);
     }
   });
+}
+
+/**
+ * Build the exact stringified JSON payload for an IOC limit order. Sync only: no async, REST, or DB.
+ * Uses in-memory bybitSymbolFiltersCache for stepSize/tickSize; call ensureInstrumentsLoaded first.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} symbol - e.g. BTCUSDT
+ * @param {string} side - Buy | Sell
+ * @param {number} quantity - in base/contracts
+ * @param {number} price - limit price
+ * @param {object} [options] - optional overrides for args (e.g. orderLinkId)
+ * @returns {string} JSON string to send over WS
+ */
+function prepareOrderPayload(credentials, symbol, side, quantity, price, options = {}) {
+  const sym = String(symbol).toUpperCase();
+  const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
+  if (sideNorm !== "Buy" && sideNorm !== "Sell") {
+    throw new Error("side must be Buy or Sell");
+  }
+  const filters = bybitSymbolFiltersCache[sym] || {};
+  const qtyStr = filters.stepSize
+    ? formatQuantityToStepSize(quantity, filters.stepSize)
+    : String(quantity);
+  const priceStr = filters.tickSize
+    ? formatPriceToTickSize(price, filters.tickSize)
+    : String(price);
+
+  const timestamp = Date.now();
+  const recvWindow = 5000;
+  const args = [
+    {
+      category: "linear",
+      symbol: sym,
+      side: sideNorm,
+      orderType: "Limit",
+      qty: qtyStr,
+      price: priceStr,
+      timeInForce: "IOC",
+      ...options,
+    },
+  ];
+  const rawBody = JSON.stringify(args[0]);
+  const signStr = `${timestamp}${credentials.apiKey}${recvWindow}${rawBody}`;
+  const signature = signMessage(signStr, credentials.apiSecret);
+
+  const reqId = `order_${timestamp}_${Math.random().toString(36).slice(2, 10)}`;
+  const payload = {
+    reqId,
+    header: {
+      "X-BAPI-TIMESTAMP": String(timestamp),
+      "X-BAPI-RECV-WINDOW": String(recvWindow),
+      "X-BAPI-SIGN": signature,
+    },
+    op: "order.create",
+    args,
+  };
+
+  return JSON.stringify(payload);
+}
+
+/**
+ * Fire-and-forget: send pre-computed order payload over Trade WS. No await, no Promise.
+ * @param {string} preComputedJsonPayload - result of prepareOrderPayload()
+ */
+function executeWSTrade(preComputedJsonPayload) {
+  if (tradeWs && tradeWs.readyState === WebSocket.OPEN) {
+    tradeWs.send(preComputedJsonPayload);
+  }
 }
 
 const FUNDING_THROTTLE_MS = 500;
@@ -1104,6 +1188,10 @@ function stop() {
   }
   pendingRequests.clear();
   tradeWsConnectPromise = null;
+  if (tradeWsPingTimer) {
+    clearInterval(tradeWsPingTimer);
+    tradeWsPingTimer = null;
+  }
   if (tradeWs) {
     tradeWs.removeAllListeners?.();
     tradeWs.close();
@@ -1377,6 +1465,9 @@ module.exports = {
   getOrderFilledQty,
   setLeverage,
   placeWSOrder,
+  prepareOrderPayload,
+  executeWSTrade,
+  connectTradeWs,
   transferUnifiedToFunding,
   withdrawCreate,
   placeMarketCloseOrder,

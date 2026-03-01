@@ -12,7 +12,15 @@ const orderCircuitBreaker = require("./orderCircuitBreaker");
 
 const ENTRY_BUFFER_MS = 60 * 1000; // 60 seconds per symbol before re-entry
 const STRICT_ENTRY_WINDOW_MS = 120000; // 2-minute window: only enter when countdown in [entryTimeMs - 2min, entryTimeMs]
+const PREPARE_BEFORE_TRIGGER_MS = 500; // prepare order payloads at least this many ms before firing
 const DEFAULT_LEVERAGE = 5;
+
+/** Prepared WS payloads for ultra-low-latency fire (by cycle key). */
+let preparedBybitPayload = null;
+let preparedBinancePayload = null;
+let preparedCycleKey = null;
+let entryFireTimeoutId = null;
+let lastFiredCycleKey = null;
 
 /** Global execution lock: prevents concurrent trades before DB/WS registers the first. */
 let isExecutingTrade = false;
@@ -186,9 +194,6 @@ async function runAutoEntry() {
   const now = Date.now();
   const countdownMs = nextFundingTime - now;
 
-  if (countdownMs > entryTimeMs) {
-    return; // Silently wait, too early
-  }
   const windowEndMs = Math.max(0, entryTimeMs - STRICT_ENTRY_WINDOW_MS);
   if (countdownMs < windowEndMs) {
     console.log(`[AutoTrader] Skipped: ${symbol} missed the strict entry window. Waiting for next cycle.`);
@@ -208,11 +213,13 @@ async function runAutoEntry() {
     console.log(`[AutoTrader] Skipping: ${symbol} countdown expired (${countdownMs}ms <= 0).`);
     return;
   }
-
-  console.log(`[AutoTrader] Executing trade for ${symbol}...`);
-
   if (lastEntryTimeBySymbol[top.symbol] && now - lastEntryTimeBySymbol[top.symbol] < ENTRY_BUFFER_MS) {
-    return; // buffer: skip
+    return;
+  }
+
+  // Proceed only when within 0–500ms of trigger so we can prepare then fire at exact trigger ms
+  if (countdownMs > entryTimeMs + PREPARE_BEFORE_TRIGGER_MS) {
+    return; // Too early; wait for next poll
   }
 
   const allocatedMargin = await getAllocatedMargin(keys);
@@ -228,82 +235,95 @@ async function runAutoEntry() {
   const { binanceSide, bybitSide } = getSidesFromToken(top);
   const slippagePct = Number.isFinite(settings.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
 
-  const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
-    binanceManager.getOrderbookPrice(top.symbol, binanceSide, slippagePct),
-    bybitManager.getOrderbookPrice(top.symbol, bybitSide, slippagePct),
-  ]);
-  const binancePrice = Number.isFinite(binanceOrderbookPrice) && binanceOrderbookPrice > 0
-    ? binanceOrderbookPrice
-    : markPrice;
-  const bybitPrice = Number.isFinite(bybitOrderbookPrice) && bybitOrderbookPrice > 0
-    ? bybitOrderbookPrice
-    : markPrice;
+  const cycleKey = `${symbol}_${nextFundingTime}`;
+  if (lastFiredCycleKey === cycleKey) return;
 
-  isExecutingTrade = true;
+  // Ensure WS connections before preparing payloads
+  await Promise.all([
+    bybitManager.connectTradeWs(keys.bybit),
+    binanceManager.connectApiWs(),
+  ]);
+
   try {
-    for (const qtyStr of chunks) {
-      if (!orderCircuitBreaker.canPlaceOrder()) {
-        console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);
-        break;
-      }
-      const qty = parseFloat(qtyStr);
-      if (qty <= 0) continue;
-      const bybitBook = bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(top.symbol);
-      const binanceBook = binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(top.symbol);
-      const bybitIsBuy = String(bybitSide).toLowerCase() === "buy";
-      const binanceIsBuy = String(binanceSide).toUpperCase() === "BUY";
-      if (bybitBook) {
-        const needQty = bybitIsBuy ? bybitBook.bestAskQty : bybitBook.bestBidQty;
-        if (needQty < qty) {
-          console.log("[AutoTrader] Abort entry: Bybit top-of-book volume", needQty, "< order qty", qty, top.symbol);
-          break;
-        }
-      }
-      if (binanceBook) {
-        const needQty = binanceIsBuy ? binanceBook.bestAskQty : binanceBook.bestBidQty;
-        if (needQty < qty) {
-          console.log("[AutoTrader] Abort entry: Binance top-of-book volume", needQty, "< order qty", qty, top.symbol);
-          break;
-        }
-      }
-      try {
-        // Sequential execution: Bybit first (primary leg), then Binance only if Bybit succeeds.
-        let bybitResult;
-        try {
-          bybitResult = await bybitManager.placeIOCLimitOrder(keys.bybit, top.symbol, bybitSide, qty, bybitPrice, { leverage: levInt });
-          orderCircuitBreaker.recordOrderPlaced();
-        } catch (e) {
-          console.log("[Entry-Logic] Bybit failed, skipping Binance to save fees.", top.symbol, e?.message ?? e);
-          break;
-        }
-        const orderId = bybitResult?.result?.orderId ?? bybitResult?.orderId;
-        if (!orderId) {
-          console.log("[Entry-Logic] Bybit returned no orderId, skipping Binance to save fees.", top.symbol);
-          break;
-        }
-        const filledQty = await bybitManager.getOrderFilledQty(keys.bybit, orderId);
-        const binanceQty = filledQty > 0 ? filledQty : qty;
-        if (filledQty > 0 && filledQty < qty) {
-          console.log("[AutoTrader] Bybit partial fill", top.symbol, "requested", qty, "filled", filledQty, "- Binance matching", binanceQty);
-        }
-        if (binanceQty <= 0) {
-          console.log("[Entry-Logic] Bybit filled 0, skipping Binance.", top.symbol);
-          break;
-        }
-        await binanceManager.placeIOCLimitOrder(keys.binance, top.symbol, binanceSide, binanceQty, binancePrice, { leverage: levInt });
-        orderCircuitBreaker.recordOrderPlaced();
-        tradedCycles[symbol] = nextFundingTime;
-        console.log(`[AutoTrader] Locked ${symbol} for the current cycle. Will not re-enter until next funding time.`);
-        lastEntryTimeBySymbol[top.symbol] = now;
-        entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
-        console.log("[AutoTrader] Entry", top.symbol, binanceSide, bybitSide, "qty", binanceQty === qty ? qtyStr : String(binanceQty));
-      } catch (e) {
-        console.error("[AutoTrader] Entry failed", top.symbol, e.message || e);
-        break; // no retry — single attempt per chunk to avoid rate limits
-      }
+    await Promise.all([
+      bybitManager.setLeverage(keys.bybit, top.symbol, levInt),
+      binanceManager.setLeverage(keys.binance, top.symbol, levInt),
+    ]);
+  } catch (e) {
+    console.log("[AutoTrader] setLeverage warning", top.symbol, e?.message ?? e);
+  }
+
+  const binanceOrderbookPrice = binanceManager.getOrderbookPrice(top.symbol, binanceSide, slippagePct);
+  const bybitOrderbookPrice = bybitManager.getOrderbookPrice(top.symbol, bybitSide, slippagePct);
+  const binancePrice = Number.isFinite(binanceOrderbookPrice) && binanceOrderbookPrice > 0 ? binanceOrderbookPrice : markPrice;
+  const bybitPrice = Number.isFinite(bybitOrderbookPrice) && bybitOrderbookPrice > 0 ? bybitOrderbookPrice : markPrice;
+
+  const qtyStr = chunks[0];
+  const qty = parseFloat(qtyStr);
+  if (qty <= 0) return;
+  if (!orderCircuitBreaker.canPlaceOrder()) {
+    console.error("[AutoTrader] Order circuit breaker: trading paused, skipping entry", top.symbol);
+    return;
+  }
+
+  const bybitBook = bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(top.symbol);
+  const binanceBook = binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(top.symbol);
+  const bybitIsBuy = String(bybitSide).toLowerCase() === "buy";
+  const binanceIsBuy = String(binanceSide).toUpperCase() === "BUY";
+  if (bybitBook && (bybitIsBuy ? bybitBook.bestAskQty : bybitBook.bestBidQty) < qty) {
+    console.log("[AutoTrader] Abort entry: Bybit top-of-book volume < order qty", top.symbol);
+    return;
+  }
+  if (binanceBook && (binanceIsBuy ? binanceBook.bestAskQty : binanceBook.bestBidQty) < qty) {
+    console.log("[AutoTrader] Abort entry: Binance top-of-book volume < order qty", top.symbol);
+    return;
+  }
+
+  // Prepare payloads at least 500ms before trigger (sync; no await)
+  if (preparedCycleKey !== cycleKey) {
+    if (entryFireTimeoutId) {
+      clearTimeout(entryFireTimeoutId);
+      entryFireTimeoutId = null;
     }
-  } finally {
-    isExecutingTrade = false;
+    try {
+      preparedBybitPayload = bybitManager.prepareOrderPayload(keys.bybit, top.symbol, bybitSide, qty, bybitPrice, {});
+      preparedBinancePayload = binanceManager.prepareOrderPayload(keys.binance, top.symbol, binanceSide, qty, binancePrice, { positionSide: "BOTH" });
+      preparedCycleKey = cycleKey;
+    } catch (e) {
+      console.error("[AutoTrader] prepareOrderPayload failed", top.symbol, e?.message ?? e);
+      return;
+    }
+  }
+
+  const delayFireMs = Math.max(0, countdownMs - entryTimeMs);
+
+  function fireAtTrigger() {
+    entryFireTimeoutId = null;
+    if (lastFiredCycleKey === cycleKey) return;
+    if (!preparedBybitPayload || !preparedBinancePayload) return;
+    isExecutingTrade = true;
+    try {
+      bybitManager.executeWSTrade(preparedBybitPayload);
+      binanceManager.executeWSTrade(preparedBinancePayload);
+      orderCircuitBreaker.recordOrderPlaced();
+      orderCircuitBreaker.recordOrderPlaced();
+      lastFiredCycleKey = cycleKey;
+      tradedCycles[symbol] = nextFundingTime;
+      lastEntryTimeBySymbol[top.symbol] = Date.now();
+      entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
+      console.log("[AutoTrader] Entry (WS fire)", top.symbol, binanceSide, bybitSide, "qty", qtyStr);
+    } finally {
+      preparedBybitPayload = null;
+      preparedBinancePayload = null;
+      preparedCycleKey = null;
+      isExecutingTrade = false;
+    }
+  }
+
+  if (delayFireMs <= 0) {
+    fireAtTrigger();
+  } else {
+    entryFireTimeoutId = setTimeout(fireAtTrigger, delayFireMs);
   }
 }
 
@@ -319,6 +339,14 @@ function start(intervalMs = 1000) {
 }
 
 function stop() {
+  if (entryFireTimeoutId) {
+    clearTimeout(entryFireTimeoutId);
+    entryFireTimeoutId = null;
+  }
+  preparedBybitPayload = null;
+  preparedBinancePayload = null;
+  preparedCycleKey = null;
+  lastFiredCycleKey = null;
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;

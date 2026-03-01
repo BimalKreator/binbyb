@@ -94,6 +94,8 @@ const pendingRequests = new Map();
 let apiWsConnectPromise = null;
 let apiWsReconnectAttempts = 0;
 let apiWsReconnectTimer = null;
+const API_WS_PING_INTERVAL_MS = 30000;
+let apiWsPingTimer = null;
 
 /** Global cache: symbol -> funding interval hours (1, 2, 4, 8). Filled by syncFundingIntervals(); never cleared. */
 let fundingIntervalCache = {};
@@ -167,6 +169,16 @@ function connectApiWs() {
       console.log("[Binance] WS-FAPI (order API) connected");
       apiWsReconnectAttempts = 0;
       apiWsConnectPromise = null;
+      if (apiWsPingTimer) clearInterval(apiWsPingTimer);
+      apiWsPingTimer = setInterval(() => {
+        if (apiWs && apiWs.readyState === WebSocket.OPEN) {
+          try {
+            apiWs.send(JSON.stringify({ method: "ping", id: Date.now() }));
+          } catch (e) {
+            // ignore
+          }
+        }
+      }, API_WS_PING_INTERVAL_MS);
       resolve();
     });
     ws.on("message", (data) => {
@@ -190,6 +202,10 @@ function connectApiWs() {
       }
     });
     ws.on("close", (code, reason) => {
+      if (apiWsPingTimer) {
+        clearInterval(apiWsPingTimer);
+        apiWsPingTimer = null;
+      }
       console.log("[Binance] WS-FAPI closed", code, reason?.toString());
       apiWs = null;
       apiWsConnectPromise = null;
@@ -283,6 +299,71 @@ async function placeWSOrder(credentials, symbol, side, quantity, price, opts = {
       reject(e);
     }
   });
+}
+
+/**
+ * Build the exact stringified JSON payload for an IOC limit order. Sync only: no async, REST, or DB.
+ * Uses in-memory symbolFiltersCache for stepSize/tickSize; call ensureExchangeInfoAndLeverageLoaded first.
+ * @param {object} credentials - { apiKey, apiSecret }
+ * @param {string} symbol - e.g. BTCUSDT
+ * @param {string} side - BUY | SELL
+ * @param {number} quantity - in base/contracts
+ * @param {number} price - limit price
+ * @param {object} [options] - { positionSide } (default BOTH)
+ * @returns {string} JSON string to send over WS
+ */
+function prepareOrderPayload(credentials, symbol, side, qty, price, options = {}) {
+  const sym = String(symbol).toUpperCase();
+  const sideNorm = String(side).toUpperCase();
+  if (sideNorm !== "BUY" && sideNorm !== "SELL") {
+    throw new Error("side must be BUY or SELL");
+  }
+  const filters = symbolFiltersCache[sym] || {};
+  const qtyStr = filters.stepSize
+    ? formatQuantityToStepSize(qty, filters.stepSize)
+    : String(qty);
+  const priceStr = filters.tickSize
+    ? formatPriceToTickSize(price, filters.tickSize)
+    : String(price);
+  const positionSide = options.positionSide != null ? options.positionSide : "BOTH";
+
+  const timestamp = Date.now();
+  const id = `order_${timestamp}_${Math.random().toString(36).slice(2, 10)}`;
+  const params = {
+    apiKey: credentials.apiKey,
+    symbol: sym,
+    side: sideNorm,
+    type: "LIMIT",
+    quantity: qtyStr,
+    price: priceStr,
+    timeInForce: "IOC",
+    timestamp,
+  };
+  if (positionSide && positionSide !== "BOTH") params.positionSide = positionSide;
+  if (options.reduceOnly === true) params.reduceOnly = "true";
+  if (params.positionSide && (params.positionSide.toUpperCase() === "LONG" || params.positionSide.toUpperCase() === "SHORT")) {
+    delete params.reduceOnly;
+  }
+
+  const queryString = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+    .join("&");
+  const signature = signQueryString(queryString, credentials.apiSecret);
+  params.signature = signature;
+
+  const payload = { id, method: "order.place", params };
+  return JSON.stringify(payload);
+}
+
+/**
+ * Fire-and-forget: send pre-computed order payload over WS. No await, no Promise.
+ * @param {string} preComputedJsonPayload - result of prepareOrderPayload()
+ */
+function executeWSTrade(preComputedJsonPayload) {
+  if (apiWs && apiWs.readyState === WebSocket.OPEN) {
+    apiWs.send(preComputedJsonPayload);
+  }
 }
 
 /** Slippage 1% so IOC orders get filled. */
@@ -1018,6 +1099,10 @@ function stop() {
   }
   pendingRequests.clear();
   apiWsConnectPromise = null;
+  if (apiWsPingTimer) {
+    clearInterval(apiWsPingTimer);
+    apiWsPingTimer = null;
+  }
   if (apiWs) {
     apiWs.removeAllListeners?.();
     apiWs.close();
@@ -1403,6 +1488,9 @@ module.exports = {
   stop,
   placeIOCLimitOrder,
   placeWSOrder,
+  prepareOrderPayload,
+  executeWSTrade,
+  connectApiWs,
   placeMarketCloseOrder,
   getCredentials: () => privateCredentials,
   setOnFundingUpdate,
@@ -1427,6 +1515,7 @@ module.exports = {
   getPositionSymbols,
   getPositionDetails,
   getSymbolFilters,
+  setLeverage,
   hydratePositionsFromRest,
   futuresTransferToSpot,
   withdrawSpot,
