@@ -224,7 +224,7 @@ async function runAutoEntry() {
   }
 
   const minSpreadPct = Number(settings?.minSpreadPct) ?? 0.15;
-  const { binanceSide } = getSidesFromToken(top);
+  const { binanceSide, bybitSide } = getSidesFromToken(top);
   const spread = calculateLiveEntrySpread(top.symbol, binanceSide);
   if (spread == null || spread < minSpreadPct) {
     console.log("[AutoTrader] Hunting Mode: Spread for", top.symbol, "is", spread?.toFixed(4), "%. Waiting for favorable >=", minSpreadPct, "%");
@@ -251,8 +251,6 @@ async function runAutoEntry() {
   const maxOrderQty = (maxB <= 0 || maxY <= 0) ? Infinity : Math.min(maxB, maxY);
   if (Number.isFinite(maxOrderQty)) totalQuantity = Math.min(totalQuantity, maxOrderQty);
   if (totalQuantity <= 0) return;
-
-  const { binanceSide, bybitSide } = getSidesFromToken(top);
 
   const cycleKey = `${symbol}_${nextFundingTime}`;
   if (lastFiredCycleKey === cycleKey) return;
