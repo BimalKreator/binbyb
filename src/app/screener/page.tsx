@@ -61,10 +61,7 @@ export default function ScreenerPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [allowedIntervals, setAllowedIntervals] = useState<number[]>([1, 2, 4, 8]);
-  const [minSpreadPct, setMinSpreadPct] = useState<string>(() => {
-    if (typeof window === "undefined") return "-100";
-    return localStorage.getItem("screener_minSpreadPct") ?? "-100";
-  });
+  const [minSpreadPct, setMinSpreadPct] = useState<string>("-100");
   const [minL2SpreadFilter, setMinL2SpreadFilter] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem("screener_minL2Spread") ?? "";
@@ -94,9 +91,6 @@ export default function ScreenerPage() {
     return () => clearInterval(tick);
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("screener_minSpreadPct", minSpreadPct);
-  }, [minSpreadPct]);
   useEffect(() => {
     localStorage.setItem("screener_minL2Spread", minL2SpreadFilter);
   }, [minL2SpreadFilter]);
@@ -160,6 +154,7 @@ export default function ScreenerPage() {
           rankStepB?: boolean;
           rankStepC?: boolean;
           allowedIntervals?: number[];
+          minFundingSpread?: number;
         };
       }>("/settings")
       .then(({ data }) => {
@@ -172,6 +167,7 @@ export default function ScreenerPage() {
         if (Array.isArray(d.allowedIntervals) && d.allowedIntervals.length > 0) {
           setAllowedIntervals(d.allowedIntervals.filter((n) => [1, 2, 4, 8].includes(Number(n))));
         }
+        if (d.minFundingSpread !== undefined) setMinSpreadPct(String(d.minFundingSpread));
       })
       .catch(() => {});
   }, []);
@@ -195,6 +191,15 @@ export default function ScreenerPage() {
       clearInterval(t);
     };
   }, []);
+
+  const handleSaveMinFundingSpread = async (val: string) => {
+    try {
+      await api.put("/settings", { minFundingSpread: Number(val) });
+      toast.success("Min Funding Spread updated for Bot!");
+    } catch (e) {
+      toast.error("Failed to update min funding spread.");
+    }
+  };
 
   const handleToggleBan = async (symbol: string, action: "ban" | "unban") => {
     try {
@@ -336,6 +341,7 @@ export default function ScreenerPage() {
               step="any"
               value={minSpreadPct}
               onChange={(e) => setMinSpreadPct(e.target.value)}
+              onBlur={(e) => handleSaveMinFundingSpread(e.target.value)}
               placeholder="-100"
               className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             />

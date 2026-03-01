@@ -195,6 +195,7 @@ async function runAutoEntry() {
   const windowEndMs = Math.max(0, entryTimeMs - STRICT_ENTRY_WINDOW_MS);
   const cooldownMs = (settings?.cooldownMinutes ?? 15) * 60 * 1000;
   const minL2Spread = Number(settings?.minL2Spread) ?? 0.15;
+  const minFundingSpread = Number(settings?.minFundingSpread) ?? 0.15;
   const now = Date.now();
 
   // Hunt in the top 10 eligible tokens
@@ -208,6 +209,7 @@ async function runAutoEntry() {
     if (countdownMs < windowEndMs) continue; // Missed strict window
     if (tradedCycles[sym] === nextFundingTime) continue; // Already traded
     if (countdownMs <= 0 || countdownMs > entryTimeMs) continue; // Expired or Too early
+    if ((token.grossPct || 0) < minFundingSpread) continue; // Skip if funding spread is too low
     if (lastEntryTimeBySymbol[sym] && now - lastEntryTimeBySymbol[sym] < ENTRY_BUFFER_MS) continue;
 
     // Await inside loop is fine here as it's limited to 10 iterations max

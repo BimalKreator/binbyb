@@ -52,6 +52,7 @@ router.put("/", async (req, res) => {
       rankStepB,
       rankStepC,
       minFundingConsistency,
+      minFundingSpread,
       allowedIntervals,
     } = req.body;
     const update = {};
@@ -83,6 +84,7 @@ router.put("/", async (req, res) => {
     if (rankStepB !== undefined) update.rankStepB = Boolean(rankStepB);
     if (rankStepC !== undefined) update.rankStepC = Boolean(rankStepC);
     if (minFundingConsistency !== undefined) update.minFundingConsistency = Math.max(0, Math.min(100, Number(minFundingConsistency) ?? 75));
+    if (minFundingSpread !== undefined) update.minFundingSpread = Number(minFundingSpread);
     if (allowedIntervals !== undefined) {
       update.allowedIntervals = Array.isArray(allowedIntervals)
         ? allowedIntervals.map((n) => Number(n)).filter((n) => Number.isFinite(n) && [1, 2, 4, 8].includes(n))

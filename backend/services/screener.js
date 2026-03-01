@@ -235,21 +235,33 @@ async function runScreener() {
     } else {
       rankedTokens = sortByPriorityAndSpread(tokens);
     }
-    const autoTrader = require("./autoTrader");
-    const activeSet = new Set(
-      (binanceManager.getLivePositions() || [])
-        .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0)) > 0)
-        .map((p) => String(p.symbol).toUpperCase())
-    );
-    const coolingSet = new Set((autoTrader.getCoolingTokens() || []).map((s) => String(s).toUpperCase()));
-    for (const t of rankedTokens) {
-      t.botState = activeSet.has(String(t.symbol).toUpperCase()) ? "Active" : (coolingSet.has(String(t.symbol).toUpperCase()) ? "Last" : null);
-    }
-    for (let i = 0; i < Math.min(10, rankedTokens.length); i++) {
-      if (rankedTokens[i].botState == null) {
-        rankedTokens[i].botState = "Next";
-        break;
+
+    // Apply Active, Last, Next labels
+    try {
+      const autoTrader = require("./autoTrader");
+      const activeTokens = new Set(
+        (binanceManager.getLivePositions() || [])
+          .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0)) > 0)
+          .map((p) => String(p.symbol).toUpperCase())
+      );
+      const coolingTokens = new Set((autoTrader.getCoolingTokens() || []).map((s) => s.toUpperCase()));
+
+      let nextAssigned = false;
+      for (const t of rankedTokens) {
+        const sym = String(t.symbol || "").toUpperCase();
+        if (activeTokens.has(sym)) {
+          t.botState = "Active";
+        } else if (coolingTokens.has(sym)) {
+          t.botState = "Last";
+        } else if (!nextAssigned) {
+          t.botState = "Next";
+          nextAssigned = true;
+        } else {
+          t.botState = null;
+        }
       }
+    } catch (err) {
+      console.error("[Screener] Error applying labels:", err.message);
     }
   }, 80);
 }
@@ -423,14 +435,32 @@ function buildRankedTokensFromCurrentData() {
       botState,
     };
   });
-  const sorted = sortByPriorityAndSpread(tokens);
-  for (let i = 0; i < Math.min(10, sorted.length); i++) {
-    if (sorted[i].botState == null) {
-      sorted[i].botState = "Next";
-      break;
+  const sortedTokens = sortByPriorityAndSpread(tokens);
+  try {
+    const autoTrader = require("./autoTrader");
+    const activeTokens = new Set(
+      (binanceManager.getLivePositions() || [])
+        .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0)) > 0)
+        .map((p) => String(p.symbol).toUpperCase())
+    );
+    const coolingTokens = new Set((autoTrader.getCoolingTokens() || []).map((s) => s.toUpperCase()));
+
+    let nextAssigned = false;
+    for (const t of sortedTokens) {
+      const sym = String(t.symbol || "").toUpperCase();
+      if (activeTokens.has(sym)) {
+        t.botState = "Active";
+      } else if (coolingTokens.has(sym)) {
+        t.botState = "Last";
+      } else if (!nextAssigned) {
+        t.botState = "Next";
+        nextAssigned = true;
+      } else {
+        t.botState = null;
+      }
     }
-  }
-  return sorted;
+  } catch (err) {}
+  return sortedTokens;
 }
 
 function getSnapshot() {
