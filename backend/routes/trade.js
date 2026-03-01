@@ -62,55 +62,30 @@ router.post("/arbitrage", async (req, res) => {
     const bybitSideApi = bybitSideNorm === "buy" ? "Buy" : "Sell";
     const levInt = Math.max(1, Math.min(125, Math.floor(Number(leverage)) || 1));
 
-    const [binanceOrderbookPrice, bybitOrderbookPrice] = await Promise.all([
-      binanceManager.getOrderbookPrice(symbol, binanceSideNorm),
-      bybitManager.getOrderbookPrice(symbol, bybitSideApi),
-    ]);
-    const binancePrice = Number.isFinite(binanceOrderbookPrice) && binanceOrderbookPrice > 0
-      ? binanceOrderbookPrice
-      : price;
-    const bybitPrice = Number.isFinite(bybitOrderbookPrice) && bybitOrderbookPrice > 0
-      ? bybitOrderbookPrice
-      : price;
-
     if (!orderCircuitBreaker.canPlaceOrder()) {
       return res.status(503).json({
         success: false,
         message: "Order rate limit reached; trading paused. Try again later.",
       });
     }
-    // Sequential execution: Bybit first (primary leg), then Binance only if Bybit succeeds.
-    let bybitResult;
-    try {
-      bybitResult = await bybitManager.placeIOCLimitOrder(keys.bybit, symbol, bybitSideApi, qty, bybitPrice, { leverage: levInt });
-      orderCircuitBreaker.recordOrderPlaced();
-    } catch (e) {
-      console.log("[Entry-Logic] Bybit failed, skipping Binance to save fees.", symbol, e?.message ?? e);
+
+    const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, qty, levInt, 10);
+
+    if (!bybitRes || bybitRes.totalFilled <= 0) {
       return res.status(400).json({
         success: false,
-        message: e?.message ?? "Bybit order failed; Binance not placed to avoid orphan.",
+        message: "No liquidity available on Bybit to execute the manual trade.",
       });
     }
-    const orderId = bybitResult?.result?.orderId ?? bybitResult?.orderId;
-    if (!orderId) {
-      console.log("[Entry-Logic] Bybit returned no orderId, skipping Binance to save fees.", symbol);
-      return res.status(400).json({
-        success: false,
-        message: "Bybit returned no orderId; Binance not placed to avoid orphan.",
-      });
-    }
-    const filledQty = await bybitManager.getOrderFilledQty(keys.bybit, orderId);
-    const binanceQty = filledQty > 0 ? filledQty : qty;
-    let binanceResult = null;
-    if (binanceQty > 0) {
-      binanceResult = await binanceManager.placeIOCLimitOrder(keys.binance, symbol, binanceSideNorm, binanceQty, binancePrice, { leverage: levInt });
-      orderCircuitBreaker.recordOrderPlaced();
-    }
+
+    orderCircuitBreaker.recordOrderPlaced();
+    await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, bybitRes.totalFilled, levInt, 10);
+    orderCircuitBreaker.recordOrderPlaced();
 
     return res.json({
       success: true,
-      data: { binance: binanceResult, bybit: bybitResult },
-      message: binanceQty > 0 ? "Arbitrage orders submitted." : "Bybit filled; Binance skipped (no fill).",
+      data: { bybitTotalFilled: bybitRes.totalFilled },
+      message: `Arbitrage executed. Bybit filled ${bybitRes.totalFilled}; Binance matched.`,
     });
   } catch (e) {
     const msg = e.response?.data?.message || e.message;

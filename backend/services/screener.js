@@ -185,6 +185,19 @@ async function runScreener() {
       }
 
       const markPrice = bin?.markPrice ?? byb?.markPrice ?? null;
+
+      const binTop = binanceManager.getTopOfBook(symbol);
+      const bybTop = bybitManager.getTopOfBook(symbol);
+      let livePriceSpread = null;
+      if (binTop && bybTop) {
+        const isBinanceShort = (fundingBinance || 0) > (fundingBybit || 0);
+        if (isBinanceShort) {
+          livePriceSpread = ((binTop.topBidPrice - bybTop.topAskPrice) / bybTop.topAskPrice) * 100;
+        } else {
+          livePriceSpread = ((bybTop.topBidPrice - binTop.topAskPrice) / binTop.topAskPrice) * 100;
+        }
+      }
+
       tokens.push({
         symbol,
         fundingBinance: bin?.fundingRate ?? 0,
@@ -199,6 +212,7 @@ async function runScreener() {
         net,
         maxLeverage,
         markPrice,
+        livePriceSpread,
       });
     }
 
@@ -347,6 +361,19 @@ function buildRankedTokensFromCurrentData() {
     );
     const exactHours = binanceManager.getFundingIntervalHours(symbol) || 8;
     const intervalDisplay = exactHours + "h";
+
+    let livePriceSpread = null;
+    const binTop = binanceManager.getTopOfBook(symbol);
+    const bybTop = bybitManager.getTopOfBook(symbol);
+    if (binTop && bybTop) {
+      const isBinanceShort = (fundingBinance || 0) > (fundingBybit || 0);
+      if (isBinanceShort) {
+        livePriceSpread = ((binTop.topBidPrice - bybTop.topAskPrice) / bybTop.topAskPrice) * 100;
+      } else {
+        livePriceSpread = ((bybTop.topBidPrice - binTop.topAskPrice) / binTop.topAskPrice) * 100;
+      }
+    }
+
     return {
       symbol,
       fundingBinance,
@@ -361,6 +388,7 @@ function buildRankedTokensFromCurrentData() {
       net,
       maxLeverage: maxLeverageCache[symbol] ?? null,
       markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
+      livePriceSpread,
     };
   });
   return sortByPriorityAndSpread(tokens);
