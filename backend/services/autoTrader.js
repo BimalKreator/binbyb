@@ -264,35 +264,42 @@ async function runAutoEntry() {
         return;
     }
 
-    const bybitRes = await bybitManager.executeLiquiditySweep(
-      keys.bybit,
-      top.symbol,
-      bybitSide,
-      totalQuantity,
-      levInt,
-      10
-    );
-    if ((bybitRes?.totalFilled ?? 0) <= 0) {
-      console.log("[AutoTrader] Bybit liquidity sweep filled 0", top.symbol);
+    console.log(`[AutoTrader] Initiating Interleaved Sweep for ${totalQuantity} ${top.symbol}...`);
+    let remainingQty = totalQuantity;
+    let totalBybitFilled = 0;
+    let totalBinanceFilled = 0;
+    let maxSweeps = 15;
+
+    while (remainingQty > 0 && maxSweeps > 0) {
+      // 1. Fire ONE chunk on Bybit (maxIterations = 1)
+      const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, remainingQty, levInt, 1);
+      const chunkFilled = bybitRes?.totalFilled || 0;
+
+      if (chunkFilled <= 0) break; // Liquidity dried up or error
+
+      orderCircuitBreaker.recordOrderPlaced();
+      totalBybitFilled += chunkFilled;
+      remainingQty -= chunkFilled;
+
+      // 2. IMMEDIATELY hedge that exact chunk on Binance (maxIterations = 10 to ensure it fills despite slippage)
+      const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, chunkFilled, levInt, 10);
+      orderCircuitBreaker.recordOrderPlaced();
+      totalBinanceFilled += (binanceRes?.totalFilled || 0);
+
+      maxSweeps--;
+    }
+
+    if (totalBybitFilled <= 0) {
+      console.log(`[AutoTrader] Sweep failed or 0 filled on Bybit for ${top.symbol}. Aborting.`);
+      isExecutingTrade = false;
       return;
     }
-    orderCircuitBreaker.recordOrderPlaced();
-
-    await binanceManager.executeLiquiditySweep(
-      keys.binance,
-      top.symbol,
-      binanceSide,
-      bybitRes.totalFilled,
-      levInt,
-      10
-    );
-    orderCircuitBreaker.recordOrderPlaced();
 
     lastFiredCycleKey = cycleKey;
     tradedCycles[symbol] = nextFundingTime;
     lastEntryTimeBySymbol[top.symbol] = Date.now();
     entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
-    console.log("[AutoTrader] Entry (liquidity sweep)", top.symbol, binanceSide, bybitSide, "bybitFilled", bybitRes.totalFilled);
+    console.log("[AutoTrader] Entry (liquidity sweep)", top.symbol, binanceSide, bybitSide, "bybitFilled", totalBybitFilled);
   } finally {
     isExecutingTrade = false;
   }

@@ -70,13 +70,30 @@ router.post("/arbitrage", async (req, res) => {
     }
 
     try {
-      console.log(`[Manual Trade] Initiating Bybit Sweep for ${qty} ${symbol}...`);
-      const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, qty, levInt, 10);
-      orderCircuitBreaker.recordOrderPlaced();
+      console.log(`[Manual Trade] Initiating Interleaved Sweep for ${qty} ${symbol}...`);
+      let remainingQty = qty;
+      let totalBybitFilled = 0;
+      let totalBinanceFilled = 0;
+      let maxSweeps = 15;
 
-      const filledOnBybit = bybitRes?.totalFilled || 0;
+      while (remainingQty > 0 && maxSweeps > 0) {
+        const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, remainingQty, levInt, 1);
+        const chunkFilled = bybitRes?.totalFilled || 0;
 
-      if (filledOnBybit <= 0) {
+        if (chunkFilled <= 0) break;
+
+        orderCircuitBreaker.recordOrderPlaced();
+        totalBybitFilled += chunkFilled;
+        remainingQty -= chunkFilled;
+
+        const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, chunkFilled, levInt, 10);
+        orderCircuitBreaker.recordOrderPlaced();
+        totalBinanceFilled += (binanceRes?.totalFilled || 0);
+
+        maxSweeps--;
+      }
+
+      if (totalBybitFilled <= 0) {
         console.log(`[Manual Trade] Bybit sweep filled 0. Aborting Binance leg.`);
         return res.status(400).json({
           success: false,
@@ -84,14 +101,10 @@ router.post("/arbitrage", async (req, res) => {
         });
       }
 
-      console.log(`[Manual Trade] Bybit filled ${filledOnBybit}. Initiating Binance Hedge...`);
-      const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, filledOnBybit, levInt, 10);
-      orderCircuitBreaker.recordOrderPlaced();
-
       return res.json({
         success: true,
-        data: { bybitTotalFilled: filledOnBybit, binanceTotalFilled: binanceRes?.totalFilled || 0 },
-        message: `Arbitrage executed. Bybit filled ${filledOnBybit}; Binance matched.`,
+        data: { bybitTotalFilled: totalBybitFilled, binanceTotalFilled: totalBinanceFilled },
+        message: `Arbitrage executed. Bybit filled ${totalBybitFilled}; Binance matched.`,
       });
 
     } catch (err) {
