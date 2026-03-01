@@ -178,8 +178,14 @@ async function runAutoEntry() {
   const rankedTokens = screener.getRankedTokens();
   if (!rankedTokens || rankedTokens.length === 0) return;
 
+  const allowedIntervals = settings?.allowedIntervals?.length > 0 ? settings.allowedIntervals : [1, 2, 4, 8];
   const bannedSet = new Set((settings.bannedTokens || []).map((s) => String(s).toUpperCase()));
-  const eligible = rankedTokens.filter((t) => !bannedSet.has(String(t.symbol).toUpperCase()));
+  const eligible = rankedTokens.filter((t) => {
+    if (bannedSet.has(String(t.symbol).toUpperCase())) return false;
+    const tokenInterval = parseInt(String(t.intervalHours ?? t.interval ?? "8"), 10) || 8;
+    if (!allowedIntervals.includes(tokenInterval)) return false;
+    return true;
+  });
   if (eligible.length === 0) return;
 
   let selectedToken = null;

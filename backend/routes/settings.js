@@ -52,6 +52,7 @@ router.put("/", async (req, res) => {
       rankStepB,
       rankStepC,
       minFundingConsistency,
+      allowedIntervals,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -82,6 +83,11 @@ router.put("/", async (req, res) => {
     if (rankStepB !== undefined) update.rankStepB = Boolean(rankStepB);
     if (rankStepC !== undefined) update.rankStepC = Boolean(rankStepC);
     if (minFundingConsistency !== undefined) update.minFundingConsistency = Math.max(0, Math.min(100, Number(minFundingConsistency) ?? 75));
+    if (allowedIntervals !== undefined) {
+      update.allowedIntervals = Array.isArray(allowedIntervals)
+        ? allowedIntervals.map((n) => Number(n)).filter((n) => Number.isFinite(n) && [1, 2, 4, 8].includes(n))
+        : [1, 2, 4, 8];
+    }
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

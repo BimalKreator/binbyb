@@ -35,6 +35,7 @@ const settingSchema = new mongoose.Schema(
     rankStepB: { type: Boolean, default: true },
     rankStepC: { type: Boolean, default: true },
     minFundingConsistency: { type: Number, default: 75 },
+    allowedIntervals: { type: [Number], default: [1, 2, 4, 8] },
   },
   { timestamps: true }
 );

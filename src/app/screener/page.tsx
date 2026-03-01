@@ -60,7 +60,7 @@ export default function ScreenerPage() {
   const [data, setData] = useState<{ rankedTokens: RankedToken[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [intervalFilter, setIntervalFilter] = useState<number | null>(null);
+  const [allowedIntervals, setAllowedIntervals] = useState<number[]>([1, 2, 4, 8]);
   const [minSpreadPct, setMinSpreadPct] = useState<string>(() => {
     if (typeof window === "undefined") return "-100";
     return localStorage.getItem("screener_minSpreadPct") ?? "-100";
@@ -152,7 +152,16 @@ export default function ScreenerPage() {
 
   useEffect(() => {
     api
-      .get<{ success: boolean; data?: { useAdvancedRanking?: boolean; rankStepA?: boolean; rankStepB?: boolean; rankStepC?: boolean } }>("/settings")
+      .get<{
+        success: boolean;
+        data?: {
+          useAdvancedRanking?: boolean;
+          rankStepA?: boolean;
+          rankStepB?: boolean;
+          rankStepC?: boolean;
+          allowedIntervals?: number[];
+        };
+      }>("/settings")
       .then(({ data }) => {
         if (!data?.success || !data?.data) return;
         const d = data.data;
@@ -160,6 +169,9 @@ export default function ScreenerPage() {
         if (d.rankStepA !== undefined) setRankStepA(d.rankStepA);
         if (d.rankStepB !== undefined) setRankStepB(d.rankStepB);
         if (d.rankStepC !== undefined) setRankStepC(d.rankStepC);
+        if (Array.isArray(d.allowedIntervals) && d.allowedIntervals.length > 0) {
+          setAllowedIntervals(d.allowedIntervals.filter((n) => [1, 2, 4, 8].includes(Number(n))));
+        }
       })
       .catch(() => {});
   }, []);
@@ -229,7 +241,7 @@ export default function ScreenerPage() {
     let list = data.rankedTokens;
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((t) => t.symbol.toLowerCase().includes(q));
-    if (intervalFilter != null) list = list.filter((t) => t.intervalHours === intervalFilter);
+    list = list.filter((t) => allowedIntervals.includes(t.intervalHours ?? 8));
     const minSpread = parseFloat(minSpreadPct);
     if (!Number.isNaN(minSpread)) list = list.filter((t) => t.netPct >= minSpread);
     const l2SpreadNum = parseFloat(minL2SpreadFilter);
@@ -237,7 +249,7 @@ export default function ScreenerPage() {
       list = list.filter((t) => t.livePriceSpread != null && t.livePriceSpread >= l2SpreadNum);
     }
     return list;
-  }, [data?.rankedTokens, search, intervalFilter, minSpreadPct, minL2SpreadFilter]);
+  }, [data?.rankedTokens, search, allowedIntervals, minSpreadPct, minL2SpreadFilter]);
 
   const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
   const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
@@ -339,17 +351,38 @@ export default function ScreenerPage() {
               className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             />
           </label>
-          <select
-            value={intervalFilter ?? ""}
-            onChange={(e) => setIntervalFilter(e.target.value === "" ? null : Number(e.target.value))}
-            className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-xs focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-          >
-            <option value="">All intervals</option>
-            <option value="1">1h</option>
-            <option value="2">2h</option>
-            <option value="4">4h</option>
-            <option value="8">8h</option>
-          </select>
+          <div className="flex flex-1 items-center gap-1.5 flex-wrap">
+            <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Intervals</span>
+            {([1, 2, 4, 8] as const).map((h) => {
+              const isOn = allowedIntervals.includes(h);
+              return (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={async () => {
+                    const next = isOn
+                      ? allowedIntervals.filter((x) => x !== h)
+                      : [...allowedIntervals, h].sort((a, b) => a - b);
+                    if (next.length === 0) return;
+                    setAllowedIntervals(next);
+                    try {
+                      await api.put("/settings", { allowedIntervals: next });
+                    } catch (e) {
+                      toast.error("Failed to save interval filter.");
+                      setAllowedIntervals(allowedIntervals);
+                    }
+                  }}
+                  className={`h-9 px-2.5 rounded-lg text-xs font-medium border shrink-0 ${
+                    isOn
+                      ? "bg-[var(--primary)]/20 text-[var(--primary)] border-[var(--primary)]/50"
+                      : "bg-slate-800/50 text-slate-500 border-slate-600"
+                  }`}
+                >
+                  {h}h
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
