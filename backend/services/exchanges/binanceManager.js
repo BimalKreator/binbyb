@@ -1571,6 +1571,17 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       availableQty = null;
     }
 
+    // Add 0.05% Execution Buffer to prevent IOC expiration
+    let bufferedPrice = targetPrice;
+    if (sideNorm.toUpperCase() === "BUY") {
+      bufferedPrice = targetPrice * 1.0005; // Pay slightly more to guarantee hitting the ask
+    } else {
+      bufferedPrice = targetPrice * 0.9995; // Sell for slightly less to guarantee hitting the bid
+    }
+    if (filters?.tickSize) {
+      bufferedPrice = parseFloat(formatPriceToTickSize(bufferedPrice, filters.tickSize)) || bufferedPrice;
+    }
+
     let chunkQty = availableQty != null && Number.isFinite(availableQty) && availableQty > 0
       ? Math.min(totalQtyRemaining, availableQty * 0.5)
       : totalQtyRemaining;
@@ -1589,7 +1600,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
 
     let res;
     try {
-      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, targetPrice, { timeInForce: "IOC", leverage });
+      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, { timeInForce: "IOC", leverage });
     } catch (e) {
       console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
       break;
