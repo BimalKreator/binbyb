@@ -59,7 +59,10 @@ export default function ScreenerPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [intervalFilter, setIntervalFilter] = useState<number | null>(null);
-  const [minSpreadPct, setMinSpreadPct] = useState<string>("-100");
+  const [minSpreadPct, setMinSpreadPct] = useState<string>(() => {
+    if (typeof window === "undefined") return "-100";
+    return localStorage.getItem("screener_minSpreadPct") ?? "-100";
+  });
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -84,6 +87,10 @@ export default function ScreenerPage() {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("screener_minSpreadPct", minSpreadPct);
+  }, [minSpreadPct]);
 
   useEffect(() => {
     if (!popupToken) {
@@ -234,6 +241,8 @@ export default function ScreenerPage() {
   const page = Math.max(1, Math.min(currentPage, totalPages));
   const startIdx = (page - 1) * itemsPerPage;
   const currentItems = mainList.slice(startIdx, startIdx + itemsPerPage);
+  /** Token the bot would pick next (first in eligible list: filtered, then minus banned/cooling). */
+  const nextTradeToken = mainList[0] ?? null;
 
   const markPrice = popupToken?.markPrice ?? 0;
   const qtyNum = parseFloat(quantity) || 0;
@@ -415,7 +424,16 @@ export default function ScreenerPage() {
                   const hasNetPct = !Number.isNaN(netPctNum);
                   return (
                     <tr key={row.symbol} className="border-b border-slate-700/50">
-                      <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
+                      <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {row.symbol}
+                          {nextTradeToken && row.symbol === nextTradeToken.symbol && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold text-emerald-600 border border-emerald-500/70 bg-emerald-500/10 shrink-0">
+                              Next
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
                         <span className="block leading-tight">
                           {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
