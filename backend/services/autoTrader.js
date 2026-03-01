@@ -106,25 +106,6 @@ async function computeQuantityChunks(allocatedMargin, leverage, currentTokenPric
 }
 
 /**
- * Live entry spread in %: positive = favorable for entry.
- * SELL (Short Bin, Long Byb): (binanceBid - bybitAsk) / bybitAsk * 100.
- * BUY (Long Bin, Short Byb): (bybitBid - binanceAsk) / binanceAsk * 100.
- * Returns null if either book is missing.
- */
-function calculateLiveEntrySpread(symbol, binanceSide) {
-  const binanceBook = binanceManager.getTopOfBook(symbol);
-  const bybitBook = bybitManager.getTopOfBook(symbol);
-  if (!binanceBook || !bybitBook) return null;
-  if (binanceSide === "SELL") {
-    return ((binanceBook.topBidPrice - bybitBook.topAskPrice) / bybitBook.topAskPrice) * 100;
-  }
-  if (binanceSide === "BUY") {
-    return ((bybitBook.topBidPrice - binanceBook.topAskPrice) / binanceBook.topAskPrice) * 100;
-  }
-  return null;
-}
-
-/**
  * Count symbols that have an open position on both exchanges (arbitrage pairs).
  * Synchronous, in-memory only: uses getLivePositions() (no REST).
  */
@@ -157,6 +138,19 @@ function getSidesFromToken(token) {
     binanceSide: binanceHigher ? "SELL" : "BUY",
     bybitSide: binanceHigher ? "Buy" : "Sell",
   };
+}
+
+function calculateLiveEntrySpread(symbol, binanceSide) {
+  const binanceBook = binanceManager.getTopOfBook(symbol);
+  const bybitBook = bybitManager.getTopOfBook(symbol);
+  if (!binanceBook || !bybitBook) return null;
+  if (binanceSide === "SELL") {
+    return ((binanceBook.topBidPrice - bybitBook.topAskPrice) / bybitBook.topAskPrice) * 100;
+  }
+  if (binanceSide === "BUY") {
+    return ((bybitBook.topBidPrice - binanceBook.topAskPrice) / binanceBook.topAskPrice) * 100;
+  }
+  return null;
 }
 
 /**
@@ -223,11 +217,12 @@ async function runAutoEntry() {
     return; // Too early; wait for next poll
   }
 
-  const minSpreadPct = Number(settings?.minSpreadPct) ?? 0.15;
   const { binanceSide, bybitSide } = getSidesFromToken(top);
-  const spread = calculateLiveEntrySpread(top.symbol, binanceSide);
-  if (spread == null || spread < minSpreadPct) {
-    console.log("[AutoTrader] Hunting Mode: Spread for", top.symbol, "is", spread?.toFixed(4), "%. Waiting for favorable >=", minSpreadPct, "%");
+  const minSpreadPct = Number(settings?.minSpreadPct) || 0.15;
+  const currentSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
+
+  if (currentSpread === null || currentSpread < minSpreadPct) {
+    console.log(`[AutoTrader] Hunting Mode: Spread for ${top.symbol} is ${currentSpread?.toFixed(4)}%. Waiting for favorable >= ${minSpreadPct}%`);
     return;
   }
 
@@ -264,10 +259,11 @@ async function runAutoEntry() {
   try {
     const finalSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
     if (finalSpread === null || finalSpread < 0) {
-      console.warn(`[AutoTrader-Failsafe] Aborting execution for ${top.symbol}! Final L2 Expected Spread dropped below 0 (${finalSpread}%).`);
-      isExecutingTrade = false;
-      return;
+        console.warn(`[AutoTrader-Failsafe] Aborting execution for ${top.symbol}! Final L2 Expected Spread dropped below 0 (${finalSpread}%).`);
+        isExecutingTrade = false;
+        return;
     }
+
     const bybitRes = await bybitManager.executeLiquiditySweep(
       keys.bybit,
       top.symbol,
