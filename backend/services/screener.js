@@ -211,7 +211,13 @@ async function runScreener() {
         if (!passed) continue;
         withScore.push({ ...token, rankScore });
       }
-      rankedTokens = withScore.sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
+      // Primary: spread (percentage difference between exchanges) descending; tie-break: rankScore descending
+      rankedTokens = withScore.sort((a, b) => {
+        const spreadA = a.spreadPctAbs ?? 0;
+        const spreadB = b.spreadPctAbs ?? 0;
+        if (spreadB !== spreadA) return spreadB - spreadA;
+        return (b.rankScore ?? 0) - (a.rankScore ?? 0);
+      });
     } else {
       rankedTokens = sortByPriorityAndSpread(tokens);
     }
