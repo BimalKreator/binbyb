@@ -182,49 +182,56 @@ async function runAutoEntry() {
   const eligible = rankedTokens.filter((t) => !bannedSet.has(String(t.symbol).toUpperCase()));
   if (eligible.length === 0) return;
 
-  const top = eligible[0];
-  const symbol = top.symbol;
+  let selectedToken = null;
+  let selectedBinanceSide = null;
+  let selectedBybitSide = null;
   const entryTimeMs = Math.max(0, Number(settings.entryTimeMs) ?? 1000);
-  const nextFundingTime = top.nextFundingTime;
-  if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) return;
-  const now = Date.now();
-  const countdownMs = nextFundingTime - now;
-
   const windowEndMs = Math.max(0, entryTimeMs - STRICT_ENTRY_WINDOW_MS);
-  if (countdownMs < windowEndMs) {
-    console.log(`[AutoTrader] Skipped: ${symbol} missed the strict entry window. Waiting for next cycle.`);
-    return;
-  }
-  if (tradedCycles[symbol] === nextFundingTime) {
-    console.log(`[AutoTrader] Skipped: ${symbol} already traded for this cycle. Waiting for next funding.`);
-    return;
-  }
   const cooldownMs = (settings?.cooldownMinutes ?? 15) * 60 * 1000;
-  const lastTrade = await TradeLog.findOne({ symbol }).sort({ exitTime: -1 }).lean();
-  if (lastTrade?.exitTime && (Date.now() - new Date(lastTrade.exitTime).getTime()) < cooldownMs) {
-    console.log(`[AutoTrader] Cooldown: ${symbol} recently closed. Waiting ${settings?.cooldownMinutes ?? 15} min before re-entry.`);
-    return;
-  }
-  if (countdownMs <= 0) {
-    console.log(`[AutoTrader] Skipping: ${symbol} countdown expired (${countdownMs}ms <= 0).`);
-    return;
-  }
-  if (lastEntryTimeBySymbol[top.symbol] && now - lastEntryTimeBySymbol[top.symbol] < ENTRY_BUFFER_MS) {
-    return;
-  }
-
-  if (countdownMs > entryTimeMs) {
-    return; // Too early; wait for next poll
-  }
-
-  const { binanceSide, bybitSide } = getSidesFromToken(top);
   const minL2Spread = Number(settings?.minL2Spread) ?? 0.15;
-  const currentSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
+  const now = Date.now();
 
-  if (currentSpread === null || currentSpread < minL2Spread) {
-    console.log(`[AutoTrader] Hunting Mode: Spread for ${top.symbol} is ${currentSpread?.toFixed(4)}%. Waiting for favorable >= ${minL2Spread}%`);
+  // Hunt in the top 10 eligible tokens
+  for (const token of eligible.slice(0, 10)) {
+    const sym = token.symbol;
+    const nextFundingTime = token.nextFundingTime;
+    if (nextFundingTime == null || !Number.isFinite(nextFundingTime)) continue;
+
+    const countdownMs = nextFundingTime - now;
+
+    if (countdownMs < windowEndMs) continue; // Missed strict window
+    if (tradedCycles[sym] === nextFundingTime) continue; // Already traded
+    if (countdownMs <= 0 || countdownMs > entryTimeMs) continue; // Expired or Too early
+    if (lastEntryTimeBySymbol[sym] && now - lastEntryTimeBySymbol[sym] < ENTRY_BUFFER_MS) continue;
+
+    // Await inside loop is fine here as it's limited to 10 iterations max
+    const lastTrade = await TradeLog.findOne({ symbol: sym }).sort({ exitTime: -1 }).lean();
+    if (lastTrade?.exitTime && (Date.now() - new Date(lastTrade.exitTime).getTime()) < cooldownMs) continue;
+
+    const { binanceSide, bybitSide } = getSidesFromToken(token);
+    const currentSpread = calculateLiveEntrySpread(sym, binanceSide);
+
+    if (currentSpread === null || currentSpread < minL2Spread) {
+      continue; // Keep hunting
+    }
+
+    // Found the perfect token!
+    selectedToken = token;
+    selectedBinanceSide = binanceSide;
+    selectedBybitSide = bybitSide;
+    break;
+  }
+
+  if (!selectedToken) {
+    // Silent return if no token in top 10 meets criteria to avoid log spam
     return;
   }
+
+  const top = selectedToken;
+  const symbol = top.symbol;
+  const binanceSide = selectedBinanceSide;
+  const bybitSide = selectedBybitSide;
+  const nextFundingTime = top.nextFundingTime;
 
   const allocatedMargin = await getAllocatedMargin(keys);
   if (allocatedMargin <= 0) return;

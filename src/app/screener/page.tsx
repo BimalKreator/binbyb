@@ -18,6 +18,7 @@ type RankedToken = {
   fundingBinance?: number;
   fundingBybit?: number;
   livePriceSpread?: number | null;
+  botState?: "Active" | "Last" | "Next" | null;
 };
 
 const POLL_MS = 1000;
@@ -449,14 +450,24 @@ export default function ScreenerPage() {
                   return (
                     <tr key={row.symbol} className="border-b border-slate-700/50">
                       <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
-                        <span className="inline-flex items-center gap-1.5">
-                          {row.symbol}
-                          {nextTradeToken && row.symbol === nextTradeToken.symbol && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold text-emerald-600 border border-emerald-500/70 bg-emerald-500/10 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-100">{row.symbol}</span>
+                          {row.botState === "Active" && (
+                            <span className="bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-blue-500/30">
+                              Active
+                            </span>
+                          )}
+                          {row.botState === "Last" && (
+                            <span className="bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-orange-500/30">
+                              Last
+                            </span>
+                          )}
+                          {row.botState === "Next" && (
+                            <span className="bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-green-500/30">
                               Next
                             </span>
                           )}
-                        </span>
+                        </div>
                       </td>
                       <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
                         <span className="block leading-tight">
@@ -568,7 +579,26 @@ export default function ScreenerPage() {
                       const isBanned = bannedSet.has(row.symbol.toUpperCase());
                       return (
                         <tr key={row.symbol} className="border-b border-slate-700/50">
-                          <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>{row.symbol}</td>
+                          <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-100">{row.symbol}</span>
+                              {row.botState === "Active" && (
+                                <span className="bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-blue-500/30">
+                                  Active
+                                </span>
+                              )}
+                              {row.botState === "Last" && (
+                                <span className="bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-orange-500/30">
+                                  Last
+                                </span>
+                              )}
+                              {row.botState === "Next" && (
+                                <span className="bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-green-500/30">
+                                  Next
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
                             <span className="block leading-tight">
                               {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}

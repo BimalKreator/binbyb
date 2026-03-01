@@ -235,6 +235,22 @@ async function runScreener() {
     } else {
       rankedTokens = sortByPriorityAndSpread(tokens);
     }
+    const autoTrader = require("./autoTrader");
+    const activeSet = new Set(
+      (binanceManager.getLivePositions() || [])
+        .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0)) > 0)
+        .map((p) => String(p.symbol).toUpperCase())
+    );
+    const coolingSet = new Set((autoTrader.getCoolingTokens() || []).map((s) => String(s).toUpperCase()));
+    for (const t of rankedTokens) {
+      t.botState = activeSet.has(String(t.symbol).toUpperCase()) ? "Active" : (coolingSet.has(String(t.symbol).toUpperCase()) ? "Last" : null);
+    }
+    for (let i = 0; i < Math.min(10, rankedTokens.length); i++) {
+      if (rankedTokens[i].botState == null) {
+        rankedTokens[i].botState = "Next";
+        break;
+      }
+    }
   }, 80);
 }
 
@@ -342,6 +358,14 @@ function getMaxLeverage(symbol) {
  * Includes ALL matched symbols; interval from cache or '8h' (never drop for missing interval).
  */
 function buildRankedTokensFromCurrentData() {
+  const autoTrader = require("./autoTrader");
+  const activeTokens = new Set(
+    (binanceManager.getLivePositions() || [])
+      .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0)) > 0)
+      .map((p) => String(p.symbol).toUpperCase())
+  );
+  const coolingTokens = new Set((autoTrader.getCoolingTokens() || []).map((s) => s.toUpperCase()));
+
   const binanceKeys = Object.keys(binanceData);
   const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
   let symbols = binanceKeys.filter((s) => bybitUpper.has(s.toUpperCase()));
@@ -374,6 +398,13 @@ function buildRankedTokensFromCurrentData() {
       }
     }
 
+    let botState = null;
+    if (activeTokens.has(symbol)) {
+      botState = "Active";
+    } else if (coolingTokens.has(symbol)) {
+      botState = "Last";
+    }
+
     return {
       symbol,
       fundingBinance,
@@ -389,9 +420,17 @@ function buildRankedTokensFromCurrentData() {
       maxLeverage: maxLeverageCache[symbol] ?? null,
       markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
       livePriceSpread,
+      botState,
     };
   });
-  return sortByPriorityAndSpread(tokens);
+  const sorted = sortByPriorityAndSpread(tokens);
+  for (let i = 0; i < Math.min(10, sorted.length); i++) {
+    if (sorted[i].botState == null) {
+      sorted[i].botState = "Next";
+      break;
+    }
+  }
+  return sorted;
 }
 
 function getSnapshot() {
