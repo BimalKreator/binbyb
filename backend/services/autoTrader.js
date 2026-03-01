@@ -262,6 +262,12 @@ async function runAutoEntry() {
 
   isExecutingTrade = true;
   try {
+    const finalSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
+    if (finalSpread === null || finalSpread < 0) {
+      console.warn(`[AutoTrader-Failsafe] Aborting execution for ${top.symbol}! Final L2 Expected Spread dropped below 0 (${finalSpread}%).`);
+      isExecutingTrade = false;
+      return;
+    }
     const bybitRes = await bybitManager.executeLiquiditySweep(
       keys.bybit,
       top.symbol,
