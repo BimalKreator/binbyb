@@ -75,12 +75,24 @@ router.post("/arbitrage", async (req, res) => {
       let totalBybitFilled = 0;
       let totalBinanceFilled = 0;
       let maxSweeps = 15;
+      let emptyFillRetries = 0;
+      const MAX_EMPTY_FILL_RETRIES = 5;
 
       while (remainingQty > 0 && maxSweeps > 0) {
         const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, remainingQty, levInt, 1);
         const chunkFilled = bybitRes?.totalFilled || 0;
-        
-        if (chunkFilled <= 0) break;
+
+        if (chunkFilled <= 0) {
+          emptyFillRetries++;
+          if (emptyFillRetries >= MAX_EMPTY_FILL_RETRIES) {
+            console.log(`[Manual Trade] Liquidity dried up after ${MAX_EMPTY_FILL_RETRIES} retries for ${symbol}. Breaking sweep.`);
+            break;
+          }
+          console.log(`[Manual Trade] Bybit chunk filled 0. Retry ${emptyFillRetries}/${MAX_EMPTY_FILL_RETRIES}... Waiting 500ms.`);
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        emptyFillRetries = 0; // Reset on success
 
         orderCircuitBreaker.recordOrderPlaced();
         totalBybitFilled += chunkFilled;

@@ -282,12 +282,24 @@ async function runAutoEntry() {
     let totalBybitFilled = 0;
     let totalBinanceFilled = 0;
     let maxSweeps = 15;
+    let emptyFillRetries = 0;
+    const MAX_EMPTY_FILL_RETRIES = 5;
 
     while (remainingQty > 0 && maxSweeps > 0) {
       const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, remainingQty, levInt, 1);
       const chunkFilled = bybitRes?.totalFilled || 0;
 
-      if (chunkFilled <= 0) break;
+      if (chunkFilled <= 0) {
+        emptyFillRetries++;
+        if (emptyFillRetries >= MAX_EMPTY_FILL_RETRIES) {
+          console.log(`[AutoTrader] Liquidity dried up after ${MAX_EMPTY_FILL_RETRIES} retries for ${top.symbol}. Breaking sweep.`);
+          break;
+        }
+        console.log(`[AutoTrader] Bybit chunk filled 0. Retry ${emptyFillRetries}/${MAX_EMPTY_FILL_RETRIES}... Waiting 500ms.`);
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+      emptyFillRetries = 0; // Reset on success
 
       orderCircuitBreaker.recordOrderPlaced();
       totalBybitFilled += chunkFilled;
