@@ -271,17 +271,15 @@ async function runAutoEntry() {
     let maxSweeps = 15;
 
     while (remainingQty > 0 && maxSweeps > 0) {
-      // 1. Fire ONE chunk on Bybit (maxIterations = 1)
       const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, remainingQty, levInt, 1);
       const chunkFilled = bybitRes?.totalFilled || 0;
 
-      if (chunkFilled <= 0) break; // Liquidity dried up or error
+      if (chunkFilled <= 0) break;
 
       orderCircuitBreaker.recordOrderPlaced();
       totalBybitFilled += chunkFilled;
       remainingQty -= chunkFilled;
 
-      // 2. IMMEDIATELY hedge that exact chunk on Binance (maxIterations = 10 to ensure it fills despite slippage)
       const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, chunkFilled, levInt, 10);
       orderCircuitBreaker.recordOrderPlaced();
       totalBinanceFilled += (binanceRes?.totalFilled || 0);

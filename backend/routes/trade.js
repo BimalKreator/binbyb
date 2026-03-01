@@ -79,7 +79,7 @@ router.post("/arbitrage", async (req, res) => {
       while (remainingQty > 0 && maxSweeps > 0) {
         const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, remainingQty, levInt, 1);
         const chunkFilled = bybitRes?.totalFilled || 0;
-
+        
         if (chunkFilled <= 0) break;
 
         orderCircuitBreaker.recordOrderPlaced();
