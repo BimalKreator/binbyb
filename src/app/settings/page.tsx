@@ -22,6 +22,7 @@ type SettingRecord = {
   autoExitEnabled?: boolean;
   entryTimeMs?: number;
   entrySlippagePct?: number;
+  minL2Spread?: number;
   userMinSpread?: number;
   mismatchMinNotionalFilter?: boolean;
   liquidationAutoClose?: boolean;
@@ -57,6 +58,7 @@ export default function SettingsPage() {
   const [entryTimeUnit, setEntryTimeUnit] = useState<"ms" | "seconds" | "minutes" | "hours">("ms");
   const [entrySlippagePct, setEntrySlippagePct] = useState(0.1);
   const [cooldownMinutes, setCooldownMinutes] = useState(15);
+  const [minL2Spread, setMinL2Spread] = useState("0.15");
   const [minFundingConsistency, setMinFundingConsistency] = useState(75);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
@@ -108,6 +110,7 @@ export default function SettingsPage() {
           }
           setEntrySlippagePct(s.entrySlippagePct ?? 0.1);
           setCooldownMinutes(s.cooldownMinutes ?? 15);
+          setMinL2Spread(String(s.minL2Spread ?? 0.15));
           setMinFundingConsistency(s.minFundingConsistency ?? 75);
         }
       })
@@ -202,6 +205,7 @@ export default function SettingsPage() {
         entryTimeMs: entryTimeToMs(),
         entrySlippagePct,
         cooldownMinutes,
+        minL2Spread: Number(minL2Spread),
         minFundingConsistency,
       });
       if (data.success && data.data) setSettings(data.data);
@@ -554,6 +558,21 @@ export default function SettingsPage() {
               />
               <span className="text-xs text-slate-500 mt-0.5 block">
                 Time to wait before the bot can re-enter the same token after a trade is closed.
+              </span>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Min L2 Spread (%)</span>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={minL2Spread}
+                onChange={(e) => setMinL2Spread(e.target.value)}
+                className={inputClass}
+                placeholder="0.15"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">
+                Minimum live orderbook spread % required for bot entry (Phase 1 gate).
               </span>
             </label>
             <label className="block">

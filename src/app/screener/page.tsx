@@ -64,6 +64,10 @@ export default function ScreenerPage() {
     if (typeof window === "undefined") return "-100";
     return localStorage.getItem("screener_minSpreadPct") ?? "-100";
   });
+  const [minL2SpreadFilter, setMinL2SpreadFilter] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("screener_minL2Spread") ?? "";
+  });
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -92,6 +96,9 @@ export default function ScreenerPage() {
   useEffect(() => {
     localStorage.setItem("screener_minSpreadPct", minSpreadPct);
   }, [minSpreadPct]);
+  useEffect(() => {
+    localStorage.setItem("screener_minL2Spread", minL2SpreadFilter);
+  }, [minL2SpreadFilter]);
 
   useEffect(() => {
     if (!popupToken) {
@@ -224,8 +231,12 @@ export default function ScreenerPage() {
     if (intervalFilter != null) list = list.filter((t) => t.intervalHours === intervalFilter);
     const minSpread = parseFloat(minSpreadPct);
     if (!Number.isNaN(minSpread)) list = list.filter((t) => t.netPct >= minSpread);
+    const l2SpreadNum = parseFloat(minL2SpreadFilter);
+    if (!Number.isNaN(l2SpreadNum)) {
+      list = list.filter((t) => t.livePriceSpread != null && t.livePriceSpread >= l2SpreadNum);
+    }
     return list;
-  }, [data?.rankedTokens, search, intervalFilter, minSpreadPct]);
+  }, [data?.rankedTokens, search, intervalFilter, minSpreadPct, minL2SpreadFilter]);
 
   const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
   const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
@@ -304,7 +315,7 @@ export default function ScreenerPage() {
             className="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground placeholder:text-slate-500 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] text-sm"
           />
         </div>
-        <div className="flex w-full gap-2">
+        <div className="flex w-full gap-2 flex-wrap">
           <label className="flex flex-1 items-center gap-1.5 min-w-0">
             <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min Spread %</span>
             <input
@@ -313,6 +324,17 @@ export default function ScreenerPage() {
               value={minSpreadPct}
               onChange={(e) => setMinSpreadPct(e.target.value)}
               placeholder="-100"
+              className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+            />
+          </label>
+          <label className="flex flex-1 items-center gap-1.5 min-w-0">
+            <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min L2 Spread %</span>
+            <input
+              type="number"
+              step="any"
+              value={minL2SpreadFilter}
+              onChange={(e) => setMinL2SpreadFilter(e.target.value)}
+              placeholder="0.15"
               className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             />
           </label>

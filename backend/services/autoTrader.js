@@ -218,11 +218,11 @@ async function runAutoEntry() {
   }
 
   const { binanceSide, bybitSide } = getSidesFromToken(top);
-  const minSpreadPct = Number(settings?.minSpreadPct) || 0.15;
+  const minL2Spread = Number(settings?.minL2Spread) ?? 0.15;
   const currentSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
 
-  if (currentSpread === null || currentSpread < minSpreadPct) {
-    console.log(`[AutoTrader] Hunting Mode: Spread for ${top.symbol} is ${currentSpread?.toFixed(4)}%. Waiting for favorable >= ${minSpreadPct}%`);
+  if (currentSpread === null || currentSpread < minL2Spread) {
+    console.log(`[AutoTrader] Hunting Mode: Spread for ${top.symbol} is ${currentSpread?.toFixed(4)}%. Waiting for favorable >= ${minL2Spread}%`);
     return;
   }
 
