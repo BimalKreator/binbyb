@@ -1134,7 +1134,6 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
 
   const filters = await getSymbolFilters(sym);
   const stepSize = filters?.stepSize ?? null;
-  const minQty = filters?.minOrderQty ? parseFloat(filters.minOrderQty) : 0;
   let totalFilled = 0;
 
   while (totalQtyRemaining > 0 && maxIterations > 0) {
@@ -1158,11 +1157,14 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
     if (stepSize) {
       chunkQty = parseFloat(formatQuantityToStepSize(chunkQty, stepSize)) || 0;
     }
+
+    const minQty = filters?.minOrderQty ? parseFloat(filters.minOrderQty) : 0;
     if (chunkQty < minQty && totalQtyRemaining >= minQty) {
       chunkQty = minQty;
     } else if (chunkQty < minQty && totalQtyRemaining < minQty) {
-      chunkQty = totalQtyRemaining; // force the remaining tail piece
+      chunkQty = totalQtyRemaining;
     }
+
     if (chunkQty <= 0) break;
 
     let res;
