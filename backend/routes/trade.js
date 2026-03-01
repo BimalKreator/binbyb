@@ -69,24 +69,38 @@ router.post("/arbitrage", async (req, res) => {
       });
     }
 
-    const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, qty, levInt, 10);
+    try {
+      console.log(`[Manual Trade] Initiating Bybit Sweep for ${qty} ${symbol}...`);
+      const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, qty, levInt, 10);
+      orderCircuitBreaker.recordOrderPlaced();
 
-    if (!bybitRes || bybitRes.totalFilled <= 0) {
-      return res.status(400).json({
+      const filledOnBybit = bybitRes?.totalFilled || 0;
+
+      if (filledOnBybit <= 0) {
+        console.log(`[Manual Trade] Bybit sweep filled 0. Aborting Binance leg.`);
+        return res.status(400).json({
+          success: false,
+          message: "No liquidity available on Bybit to execute the manual trade at current prices.",
+        });
+      }
+
+      console.log(`[Manual Trade] Bybit filled ${filledOnBybit}. Initiating Binance Hedge...`);
+      const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, filledOnBybit, levInt, 10);
+      orderCircuitBreaker.recordOrderPlaced();
+
+      return res.json({
+        success: true,
+        data: { bybitTotalFilled: filledOnBybit, binanceTotalFilled: binanceRes?.totalFilled || 0 },
+        message: `Arbitrage executed. Bybit filled ${filledOnBybit}; Binance matched.`,
+      });
+
+    } catch (err) {
+      console.error("[Manual Trade Error]", err);
+      return res.status(500).json({
         success: false,
-        message: "No liquidity available on Bybit to execute the manual trade.",
+        message: "An error occurred during the liquidity sweep execution.",
       });
     }
-
-    orderCircuitBreaker.recordOrderPlaced();
-    await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, bybitRes.totalFilled, levInt, 10);
-    orderCircuitBreaker.recordOrderPlaced();
-
-    return res.json({
-      success: true,
-      data: { bybitTotalFilled: bybitRes.totalFilled },
-      message: `Arbitrage executed. Bybit filled ${bybitRes.totalFilled}; Binance matched.`,
-    });
   } catch (e) {
     const msg = e.response?.data?.message || e.message;
     console.error("[Trade/arbitrage] Error:", e.message || e);
