@@ -1382,12 +1382,18 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 }
 
 /**
- * Get USDT wallet balance from cache only. No REST calls (avoids IP bans).
- * Updated by ACCOUNT_UPDATE WebSocket and one-time startup hydration.
- * @returns {number} cached balance or 0 if not yet received
+ * Get Binance Margin Balance (wallet + total unrealized PnL) from cache. No REST calls (avoids IP bans).
+ * Margin Balance = cachedWalletBalance + sum(position unrealizedProfit) from WS position updates.
+ * @returns {number} margin balance or 0 if not yet received
  */
 function getBalance(credentials) {
-  return cachedWalletBalance ?? 0;
+  const wallet = cachedWalletBalance ?? 0;
+  const positions = getLivePositions();
+  const totalUnrealized = (positions || []).reduce(
+    (sum, p) => sum + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0),
+    0
+  );
+  return wallet + totalUnrealized;
 }
 
 /**
