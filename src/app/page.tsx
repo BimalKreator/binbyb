@@ -11,6 +11,7 @@ type VolatilityMeter = { level: string; count?: number };
 type MetricsData = {
   binanceBalance: number;
   bybitBalance: number;
+  totalCapital?: number;
   currentBalance: number;
   openingBalance: number;
   totalDeposits: number;
@@ -300,40 +301,31 @@ export default function Home() {
 
         {/* Top cards: compact grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {/* Capital — display only: +$1500 per exchange; backend/API unchanged */}
+          {/* Capital — from backend (display balances = actual + margin%×30 per exchange) */}
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Capital</p>
             <p className="text-xl font-semibold text-foreground">
-              {formatUsdStandard((m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500)}
+              {formatUsdStandard(m.totalCapital ?? (m.binanceBalance ?? 0) + (m.bybitBalance ?? 0))}
             </p>
-            <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3450</p>
+            <p className="text-sm text-slate-400 mt-0.5">
+              Opening Balance: {formatUsdStandard(m.openingBalance ?? 0)}
+            </p>
           </div>
 
-          {/* Profit — display: Total Capital - 3450 - today deposit - today withdrawal; opening balance hardcoded */}
+          {/* Profit — from backend (totalCapital, openingBalance, profit, profitPercent) */}
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Net Profit</p>
-            {(() => {
-              const OPENING_BALANCE = 3450;
-              const todaysDeposit = 0;
-              const todaysWithdrawal = 0;
-              const totalCapitalDisplay = (m.binanceBalance ?? 0) + 1500 + (m.bybitBalance ?? 0) + 1500;
-              const netProfitDisplay = totalCapitalDisplay - OPENING_BALANCE - todaysDeposit - todaysWithdrawal;
-              return (
-                <>
-                  <p
-                    className={`text-xl font-semibold ${
-                      netProfitDisplay >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
-                    }`}
-                  >
-                    {formatUsdStandard(netProfitDisplay)}
-                  </p>
-                  <p className="text-sm text-slate-400 mt-0.5">
-                    Profit % {m.profitPercent != null ? `${m.profitPercent.toFixed(2)}%` : "—"}
-                    {m.dailyROI != null ? ` · Daily ROI ${formatPct(m.dailyROI)}` : ""}
-                  </p>
-                </>
-              );
-            })()}
+            <p
+              className={`text-xl font-semibold ${
+                (m.profit ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
+              }`}
+            >
+              {formatUsdStandard(m.profit ?? 0)}
+            </p>
+            <p className="text-sm text-slate-400 mt-0.5">
+              Profit % {m.profitPercent != null ? `${m.profitPercent.toFixed(2)}%` : "—"}
+              {m.dailyROI != null ? ` · Daily ROI ${formatPct(m.dailyROI)}` : ""}
+            </p>
           </div>
 
           {/* Volatility */}

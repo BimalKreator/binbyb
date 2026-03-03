@@ -54,6 +54,8 @@ router.put("/", async (req, res) => {
       minFundingConsistency,
       minFundingSpread,
       allowedIntervals,
+      binanceMarginAllowedPct,
+      bybitMarginAllowedPct,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -90,6 +92,8 @@ router.put("/", async (req, res) => {
         ? allowedIntervals.map((n) => Number(n)).filter((n) => Number.isFinite(n) && [1, 2, 4, 8].includes(n))
         : [1, 2, 4, 8];
     }
+    if (binanceMarginAllowedPct !== undefined) update.binanceMarginAllowedPct = Math.max(0, Math.min(100, Number(binanceMarginAllowedPct) ?? 50));
+    if (bybitMarginAllowedPct !== undefined) update.bybitMarginAllowedPct = Math.max(0, Math.min(100, Number(bybitMarginAllowedPct) ?? 50));
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

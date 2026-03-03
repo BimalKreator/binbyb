@@ -233,7 +233,7 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Actual Balance</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {binanceWallet ? formatUsd((binanceWallet.totalWalletBalance ?? 0) + 1500) : "—"}
+                {binanceWallet ? formatUsd(binanceWallet.totalWalletBalance ?? 0) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
@@ -241,7 +241,7 @@ export default function FundsPage() {
               <dd className="font-medium text-emerald-400/90 tabular-nums">
                 {binanceWallet
                   ? formatUsd(
-                      (Number(binanceWallet.totalWalletBalance ?? 0) + 1500) - Number(binanceWallet.totalTradeValue ?? 0)
+                      Number(binanceWallet.totalWalletBalance ?? 0) - Number(binanceWallet.totalTradeValue ?? 0)
                     )
                   : "—"}
               </dd>
@@ -262,7 +262,7 @@ export default function FundsPage() {
             <div className="flex justify-between items-baseline">
               <dt className="text-slate-500">Actual Balance</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {bybitWallet ? formatUsd((bybitWallet.totalWalletBalance ?? 0) + 1500) : "—"}
+                {bybitWallet ? formatUsd(bybitWallet.totalWalletBalance ?? 0) : "—"}
               </dd>
             </div>
             <div className="flex justify-between items-baseline">
@@ -270,7 +270,7 @@ export default function FundsPage() {
               <dd className="font-medium text-emerald-400/90 tabular-nums">
                 {bybitWallet
                   ? formatUsd(
-                      (Number(bybitWallet.totalWalletBalance ?? 0) + 1500) - Number(bybitWallet.totalTradeValue ?? 0)
+                      Number(bybitWallet.totalWalletBalance ?? 0) - Number(bybitWallet.totalTradeValue ?? 0)
                     )
                   : "—"}
               </dd>

@@ -54,9 +54,11 @@ async function checkAndTakeDailySnapshot() {
         bybitRaw = Number(byb?.balance ?? byb) || 0;
       }
     }
-    // Inflated capital so opening balance matches dashboard display (+1500 per exchange)
-    const binanceCapital = binanceRaw + 1500;
-    const bybitCapital = bybitRaw + 1500;
+    // Use same display formula as dashboard: actual + (marginAllowedPct * 30)
+    const binanceMarginAllowedPct = Number(settings.binanceMarginAllowedPct) || 50;
+    const bybitMarginAllowedPct = Number(settings.bybitMarginAllowedPct) || 50;
+    const binanceCapital = binanceRaw + (binanceMarginAllowedPct * 30);
+    const bybitCapital = bybitRaw + (bybitMarginAllowedPct * 30);
     const totalCapital = binanceCapital + bybitCapital;
 
     if (totalCapital <= 0) {

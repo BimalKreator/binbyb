@@ -29,6 +29,8 @@ type SettingRecord = {
   liquidationDistancePct?: number;
   cooldownMinutes?: number;
   minFundingConsistency?: number;
+  binanceMarginAllowedPct?: number;
+  bybitMarginAllowedPct?: number;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -60,6 +62,8 @@ export default function SettingsPage() {
   const [cooldownMinutes, setCooldownMinutes] = useState(15);
   const [minL2Spread, setMinL2Spread] = useState("0.15");
   const [minFundingConsistency, setMinFundingConsistency] = useState(75);
+  const [binanceMarginAllowedPct, setBinanceMarginAllowedPct] = useState(50);
+  const [bybitMarginAllowedPct, setBybitMarginAllowedPct] = useState(50);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -112,6 +116,8 @@ export default function SettingsPage() {
           setCooldownMinutes(s.cooldownMinutes ?? 15);
           setMinL2Spread(String(s.minL2Spread ?? 0.15));
           setMinFundingConsistency(s.minFundingConsistency ?? 75);
+          setBinanceMarginAllowedPct(s.binanceMarginAllowedPct ?? 50);
+          setBybitMarginAllowedPct(s.bybitMarginAllowedPct ?? 50);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -207,6 +213,8 @@ export default function SettingsPage() {
         cooldownMinutes,
         minL2Spread: Number(minL2Spread),
         minFundingConsistency,
+        binanceMarginAllowedPct,
+        bybitMarginAllowedPct,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -586,6 +594,36 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="75"
               />
+            </label>
+            <label className="block">
+              <span className={labelClass}>Margin Use Allowed% Binance</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={binanceMarginAllowedPct}
+                onChange={(e) => setBinanceMarginAllowedPct(Math.max(0, Math.min(100, Number(e.target.value) ?? 50)))}
+                className={inputClass}
+                placeholder="50"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">
+                Used to compute display balance: actual + (this % × 30).
+              </span>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Margin Use Allowed% Bybit</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={bybitMarginAllowedPct}
+                onChange={(e) => setBybitMarginAllowedPct(Math.max(0, Math.min(100, Number(e.target.value) ?? 50)))}
+                className={inputClass}
+                placeholder="50"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">
+                Used to compute display balance: actual + (this % × 30).
+              </span>
             </label>
             <button
               type="button"

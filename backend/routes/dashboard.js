@@ -79,10 +79,12 @@ router.get("/metrics", async (req, res) => {
         availableBalance: Number.isFinite(bybitAvail) ? bybitAvail : 0,
       };
     }
-    const binanceCapitalBase = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
-    const bybitCapitalBase = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
-    const binanceBalance = binanceCapitalBase;
-    const bybitBalance = bybitCapitalBase;
+    const actualBinanceMarginBalance = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
+    const actualBybitEquity = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
+    const binanceMarginAllowedPct = Number(settings?.binanceMarginAllowedPct) || 50;
+    const bybitMarginAllowedPct = Number(settings?.bybitMarginAllowedPct) || 50;
+    const binanceBalance = actualBinanceMarginBalance + (binanceMarginAllowedPct * 30);
+    const bybitBalance = actualBybitEquity + (bybitMarginAllowedPct * 30);
 
     const binanceAvailableBalance = parseFloat(binanceBalances.availableBalance || 0) || 0;
     const bybitAvailableBalance = parseFloat(bybitBalances.availableBalance || bybitBalances.availableToWithdraw || 0) || 0;
@@ -114,8 +116,7 @@ router.get("/metrics", async (req, res) => {
       totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
-    // Use inflated total so profit vs DB opening balance matches dashboard display (+1500 per exchange)
-    const currentTotalCapital = binanceBalance + bybitBalance + 1500 + 1500;
+    const currentTotalCapital = binanceBalance + bybitBalance;
 
     const logs = await FundLog.find().lean();
     let totalDeposits = 0;
