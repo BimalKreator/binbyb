@@ -764,9 +764,9 @@ async function startPrivateStream(credentials) {
           }
         }
         // Recompute available: margin balance - total margin used (ACCOUNT_UPDATE does not send availableBalance).
-        const positions = getLivePositions();
-        const totalMarginUsed = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
-        const totalUnrealized = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
+        const livePositions = getLivePositions();
+        const totalMarginUsed = (livePositions || []).reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+        const totalUnrealized = (livePositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
         const marginBalance = (cachedWalletBalance ?? 0) + totalUnrealized;
         cachedAvailableBalance = Math.max(0, marginBalance - totalMarginUsed);
       } else if (msg.e === "ORDER_TRADE_UPDATE") {
