@@ -54,10 +54,12 @@ function floorToStepSize(quantity, stepSize) {
  * Allocated margin per trade = baseCapital * (capitalPercent / 100). Every trade gets the same size.
  */
 async function getAllocatedMargin(credentials) {
-  const [binanceActualBalance, bybitActualBalance] = await Promise.all([
+  const [binanceRes, bybitRes] = await Promise.all([
     binanceManager.getBalance(credentials.binance),
     bybitManager.getBalance(),
   ]);
+  const binanceActualBalance = Number(binanceRes?.balance ?? binanceRes) || 0;
+  const bybitActualBalance = Number(bybitRes?.balance ?? bybitRes) || 0;
   const baseCapital = Math.min(
     Number.isFinite(binanceActualBalance) ? binanceActualBalance : 0,
     Number.isFinite(bybitActualBalance) ? bybitActualBalance : 0

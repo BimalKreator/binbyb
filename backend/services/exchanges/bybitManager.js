@@ -50,8 +50,10 @@ let privateReconnectTimer = null;
 const livePositionsByKey = {};
 /** USDT wallet balance from private WS wallet topic and one-time REST at startup only. */
 let cachedWalletBalance = 0;
-/** USDT total equity (wallet + unrealized PnL) from private WS wallet topic. getBalance() returns this; no REST. */
+/** USDT total equity (wallet + unrealized PnL) from private WS wallet topic. */
 let cachedEquity = 0;
+/** USDT available/free balance to open new positions (from wallet topic or REST). */
+let cachedAvailableBalance = 0;
 /** Pending WS trade requests: reqId -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let tradeWsConnectPromise = null;
@@ -607,6 +609,8 @@ function openPrivateStream(credentials) {
             if (usdt) {
               cachedWalletBalance = parseFloat(usdt.walletBalance ?? 0) || 0;
               cachedEquity = parseFloat(usdt.equity ?? 0) || 0;
+              const avail = parseFloat(usdt.availableToWithdraw ?? usdt.availableBalance ?? usdt.walletBalance ?? 0);
+              cachedAvailableBalance = Number.isFinite(avail) ? avail : 0;
             }
           } else if (msg.topic === "order") {
             console.log("[Bybit] Order update", {
@@ -828,12 +832,13 @@ async function withdrawCreate(credentials, coin, chain, address, amount) {
 }
 
 /**
- * Get USDT total equity from cache only (wallet + unrealized PnL). No REST calls (avoids IP bans).
- * Updated by wallet WebSocket topic and one-time startup hydration.
- * @returns {number} cached equity or 0 if not yet received
+ * Get Bybit balance (equity) and available (free) balance from cache. No REST calls (avoids IP bans).
+ * @returns {{ balance: number, availableBalance: number }} balance = total equity; availableBalance = free to open new positions
  */
 function getBalance() {
-  return cachedEquity ?? 0;
+  const balance = cachedEquity ?? 0;
+  const availableBalance = cachedAvailableBalance ?? 0;
+  return { balance, availableBalance };
 }
 
 /**
@@ -1497,6 +1502,8 @@ async function start(credentials, options = {}) {
       if (usdtCoin) {
         cachedWalletBalance = parseFloat(usdtCoin.walletBalance ?? usdtCoin.availableToWithdraw ?? 0) || 0;
         cachedEquity = parseFloat(usdtCoin.equity ?? usdtCoin.walletBalance ?? 0) || 0;
+        const avail = parseFloat(usdtCoin.availableToWithdraw ?? usdtCoin.availableBalance ?? usdtCoin.free ?? 0);
+        cachedAvailableBalance = Number.isFinite(avail) ? avail : 0;
       }
     } catch (e) {
       console.warn("[Bybit] One-time balance hydration failed:", e.message);

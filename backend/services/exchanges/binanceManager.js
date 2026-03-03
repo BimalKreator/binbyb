@@ -87,8 +87,10 @@ let listenKeyKeepaliveTimer = null;
 let privateReconnectAttempts = 0;
 let privateReconnectTimer = null;
 const livePositionsByKey = {};
-/** USDT cached balance: updated by private WS ACCOUNT_UPDATE (msg.a.B) and one-time REST at startup only. getBalance() returns this; no REST. */
+/** USDT cached balance: updated by private WS ACCOUNT_UPDATE (msg.a.B) and one-time REST at startup only. */
 let cachedWalletBalance = 0;
+/** Free balance available to open new positions (from REST or computed as marginBalance - totalMarginUsed). */
+let cachedAvailableBalance = 0;
 /** Pending WS API requests: id -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let apiWsConnectPromise = null;
@@ -752,7 +754,7 @@ async function startPrivateStream(credentials) {
           }
           emitPositionUpdate();
         }
-        // Wallet balance: msg.a.B = balances array; USDT = walletBalance (wb) or asset (a)
+        // Wallet balance: msg.a.B = balances array; USDT = walletBalance (wb). Available not in stream → recompute.
         const balances = msg?.a?.B;
         if (Array.isArray(balances)) {
           const usdt = balances.find((b) => String(b?.a ?? b?.asset ?? "").toUpperCase() === "USDT");
@@ -761,6 +763,12 @@ async function startPrivateStream(credentials) {
             if (wb != null && String(wb).length > 0) cachedWalletBalance = parseFloat(wb) || 0;
           }
         }
+        // Recompute available: margin balance - total margin used (ACCOUNT_UPDATE does not send availableBalance).
+        const positions = getLivePositions();
+        const totalMarginUsed = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+        const totalUnrealized = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
+        const marginBalance = (cachedWalletBalance ?? 0) + totalUnrealized;
+        cachedAvailableBalance = Math.max(0, marginBalance - totalMarginUsed);
       } else if (msg.e === "ORDER_TRADE_UPDATE") {
         const o = msg.o || {};
         console.log("[Binance] Order update", {
@@ -1256,6 +1264,15 @@ async function start(credentials, options = {}) {
         const bal = usdt?.walletBalance ?? usdt?.availableBalance ?? 0;
         cachedWalletBalance = parseFloat(bal) || 0;
       }
+      const avail = parseFloat(data?.availableBalance ?? 0);
+      if (Number.isFinite(avail)) {
+        cachedAvailableBalance = avail;
+      } else {
+        const assets = Array.isArray(data?.assets) ? data.assets : [];
+        const usdt = assets.find((b) => (b.asset || "").toUpperCase() === "USDT");
+        const ab = usdt?.availableBalance ?? 0;
+        cachedAvailableBalance = parseFloat(ab) || 0;
+      }
     } catch (e) {
       console.warn("[Binance] One-time balance hydration failed:", e.message);
     }
@@ -1382,9 +1399,8 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 }
 
 /**
- * Get Binance Margin Balance (wallet + total unrealized PnL) from cache. No REST calls (avoids IP bans).
- * Margin Balance = cachedWalletBalance + sum(position unrealizedProfit) from WS position updates.
- * @returns {number} margin balance or 0 if not yet received
+ * Get Binance balance and available (free) balance from cache. No REST calls (avoids IP bans).
+ * @returns {{ balance: number, availableBalance: number }} balance = margin balance (wallet + unrealized PnL); availableBalance = free to open new positions
  */
 function getBalance(credentials) {
   const wallet = cachedWalletBalance ?? 0;
@@ -1393,7 +1409,10 @@ function getBalance(credentials) {
     (sum, p) => sum + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0),
     0
   );
-  return wallet + totalUnrealized;
+  const balance = wallet + totalUnrealized;
+  const totalMarginUsed = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
+  const availableBalance = Math.max(0, balance - totalMarginUsed);
+  return { balance, availableBalance };
 }
 
 /**

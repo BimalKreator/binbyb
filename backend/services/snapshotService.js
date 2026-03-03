@@ -41,7 +41,8 @@ async function checkAndTakeDailySnapshot() {
         const binanceBalances = await binanceManager.getBalances(keys.binance);
         binanceRaw = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
       } catch (e) {
-        binanceRaw = Number(binanceManager.getBalance(keys.binance)) || 0;
+        const bin = binanceManager.getBalance(keys.binance);
+        binanceRaw = Number(bin?.balance ?? bin) || 0;
       }
     }
     if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
@@ -49,7 +50,8 @@ async function checkAndTakeDailySnapshot() {
         const bybitBalances = await bybitManager.getBalances(keys.bybit);
         bybitRaw = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
       } catch (e) {
-        bybitRaw = Number(bybitManager.getBalance()) || 0;
+        const byb = bybitManager.getBalance();
+        bybitRaw = Number(byb?.balance ?? byb) || 0;
       }
     }
     // Inflated capital so opening balance matches dashboard display (+1500 per exchange)

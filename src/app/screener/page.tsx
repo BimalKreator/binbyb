@@ -712,13 +712,13 @@ export default function ScreenerPage() {
             <div className="p-4 space-y-4">
               <div className="mb-4 p-2 bg-slate-800 rounded text-xs flex justify-between text-slate-300">
                 <span>
-                  Binance Free:{" "}
+                  Binance Available:{" "}
                   <span className="text-amber-400 font-bold">
                     ${metrics?.binanceAvailableBalance?.toFixed(2) ?? "0.00"}
                   </span>
                 </span>
                 <span>
-                  Bybit Free:{" "}
+                  Bybit Available:{" "}
                   <span className="text-sky-400 font-bold">
                     ${metrics?.bybitAvailableBalance?.toFixed(2) ?? "0.00"}
                   </span>
