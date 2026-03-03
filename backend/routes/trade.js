@@ -258,9 +258,7 @@ router.post("/close-all", async (req, res) => {
 
     const binanceUnrealized = (binancePositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
     const bybitUnrealized = (bybitPositions || []).reduce((s, p) => s + (parseFloat(String(p?.unrealizedProfit ?? 0)) || 0), 0);
-    const snapshot = screener.getSnapshot();
-    const token = (snapshot?.rankedTokens || []).find((t) => String(t?.symbol || "").toUpperCase() === sym);
-    const markPrice = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : 0;
+    const markPrice = (token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : fallbackMark) ?? 0;
     const entryPrice = markPrice > 0 ? markPrice : 0;
     const exitPrice = markPrice > 0 ? markPrice : 0;
     const sideStr = (binancePositions?.[0]?.side === "BUY" || bybitPositions?.[0]?.side?.toLowerCase() === "buy") ? "long" : "short";
