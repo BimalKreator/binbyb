@@ -1596,6 +1596,22 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       chunkQty = totalQtyRemaining;
     }
 
+    // Force minimum notional of $5 (using $5.1 to be safe) for Binance
+    const chunkValue = chunkQty * targetPrice;
+    const minNotional = 5.1;
+
+    if (chunkQty > 0 && chunkValue < minNotional) {
+      const requiredQty = minNotional / targetPrice;
+      if (stepSize) {
+        const step = parseFloat(stepSize);
+        const steps = Math.ceil(requiredQty / step);
+        chunkQty = parseFloat((steps * step).toFixed(10));
+      } else {
+        chunkQty = requiredQty;
+      }
+      console.log(`[Binance Sweeper] Chunk value ($${chunkValue.toFixed(2)}) is below $5. Adjusted chunkQty to ${chunkQty} to meet Binance's minimum notional.`);
+    }
+
     if (chunkQty <= 0) break;
 
     let res;

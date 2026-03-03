@@ -632,7 +632,7 @@ async function runMonitor() {
     }
 
     const token = rankedTokens.find((t) => toUpperSymbol(t?.symbol) === symbol);
-    const nextFundingTime = token?.nextFundingTime ?? null;
+    const nextFundingTimeRaw = token?.nextFundingTime ?? null;
     const bFR = Number(token?.fundingBinance ?? binanceManager.getCachedFundingRate(symbol) ?? 0) || 0;
     const byFR = Number(token?.fundingBybit ?? bybitManager.getCachedFundingRate(symbol) ?? 0) || 0;
     const bQtyRaw = parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0;
@@ -648,19 +648,36 @@ async function runMonitor() {
     const bybitFee = bybitIsLong ? notionalBybit * -byFR : notionalBybit * byFR;
     const totalFundingIncome = binanceFee + bybitFee;
     const isFundingFlipped = totalFundingIncome < 0;
-    if (isFundingFlipped && nextFundingTime != null && Number.isFinite(nextFundingTime)) {
-      const currentBinanceSide = binanceIsLong ? "BUY" : "SELL";
-      const exitSpread = calculateLiveExitSpread(symbol, currentBinanceSide);
-      if (exitSpread === null || exitSpread < 0) {
-        console.log("[TradeMonitor] Funding flipped for", symbol, "but exit spread is", exitSpread?.toFixed(4), "%. Waiting for Convergence (0 Spread).");
-      } else {
-        console.log("[TradeMonitor] Executing Flip Exit at 0 Spread convergence for", symbol);
+    if (isFundingFlipped && nextFundingTimeRaw != null && Number.isFinite(nextFundingTimeRaw)) {
+      // Normalize to ms: APIs may send ms (13 digits) or seconds (10 digits)
+      const nextFundingTimeMs = nextFundingTimeRaw >= 1e12 ? nextFundingTimeRaw : nextFundingTimeRaw * 1000;
+      const msToFunding = nextFundingTimeMs - now;
+      const in10MinWindow = msToFunding >= 0 && msToFunding <= FUNDING_WINDOW_MS;
+
+      if (in10MinWindow) {
+        console.log("[TradeMonitor] Executing Flip Exit (10 min before funding) for", symbol, "msToFunding", Math.round(msToFunding / 1000), "s");
         try {
-          await closePair(keys, symbol, binancePos, bybitPos, "Target", "Funding Flip Exit (Combined)");
+          await closePair(keys, symbol, binancePos, bybitPos, "Target", "Funding Flip Exit (10 min before funding)");
           delete failedClosesUntil[symbol];
         } catch (e) {
-          console.error("[TradeMonitor] closePair (funding flip) failed", symbol, e.message || e);
+          console.error("[TradeMonitor] closePair (funding flip 10min) failed", symbol, e.message || e);
           failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
+        }
+      } else {
+        const currentBinanceSide = binanceIsLong ? "BUY" : "SELL";
+        const exitSpread = calculateLiveExitSpread(symbol, currentBinanceSide);
+        const l2Favorable = exitSpread != null && exitSpread >= 0;
+        if (l2Favorable) {
+          console.log("[TradeMonitor] Executing Flip Exit at favorable L2 spread for", symbol, "exitSpread", exitSpread?.toFixed(4), "%");
+          try {
+            await closePair(keys, symbol, binancePos, bybitPos, "Target", "Funding Flip Exit (Combined)");
+            delete failedClosesUntil[symbol];
+          } catch (e) {
+            console.error("[TradeMonitor] closePair (funding flip) failed", symbol, e.message || e);
+            failedClosesUntil[symbol] = now + FAILED_CLOSE_COOLDOWN_MS;
+          }
+        } else {
+          console.log("[TradeMonitor] Funding flipped for", symbol, "exit spread", exitSpread != null ? exitSpread.toFixed(4) + "%" : "null", ". Waiting for favorable L2 or 10 min window.");
         }
       }
     }

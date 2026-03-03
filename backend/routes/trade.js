@@ -5,6 +5,7 @@ const { binanceManager, bybitManager } = require("../services/exchanges");
 const autoTrader = require("../services/autoTrader");
 const screener = require("../services/screener");
 const TradeLog = require("../models/TradeLog");
+const Setting = require("../models/Setting");
 const orderCircuitBreaker = require("../services/orderCircuitBreaker");
 
 const router = express.Router();
@@ -147,7 +148,7 @@ router.post("/arbitrage", async (req, res) => {
 /**
  * POST /api/trade/close-all
  * Body: { symbol }
- * Closes all open positions for the symbol on both exchanges via Market orders.
+ * Closes all open positions for the symbol on both exchanges via IOC limit orders at L2 book prices.
  * Enforces Binance Hedge Mode: LONG -> SELL with positionSide LONG, SHORT -> BUY with positionSide SHORT.
  */
 router.post("/close-all", async (req, res) => {
@@ -190,6 +191,12 @@ router.post("/close-all", async (req, res) => {
       });
     }
 
+    const settings = await Setting.findOne().lean();
+    const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
+    const snapshot = screener.getSnapshot();
+    const token = (snapshot?.rankedTokens || []).find((t) => String(t?.symbol || "").toUpperCase() === sym);
+    const fallbackMark = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
+
     const results = { binance: [], bybit: [] };
 
     for (const pos of binancePositions) {
@@ -206,14 +213,21 @@ router.post("/close-all", async (req, res) => {
           : closeSide === "SELL"
             ? "LONG"
             : "SHORT";
+      const mark = parseFloat(pos?.markPrice ?? pos?.entryPrice) || fallbackMark || binanceManager.getMarkPrice(sym);
+      const price = binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? mark;
+      if (price == null || !Number.isFinite(price) || price <= 0) {
+        results.binance.push({ positionSide, qty, error: "No L2 price or mark available for IOC close" });
+        continue;
+      }
       try {
-        const order = await binanceManager.placeMarketCloseOrder(keys.binance, sym, closeSide, qty, {
+        const order = await binanceManager.placeIOCLimitOrder(keys.binance, sym, closeSide, qty, price, {
           positionSide,
+          reduceOnly: true,
         });
         orderCircuitBreaker.recordOrderPlaced();
         results.binance.push({ positionSide, qty, order });
       } catch (e) {
-        console.error("[Trade/close-all] Binance close failed", sym, positionSide, e.message);
+        console.error("[Trade/close-all] Binance IOC close failed", sym, positionSide, e.message);
         results.binance.push({ positionSide, qty, error: e.response?.data?.msg || e.message });
       }
     }
@@ -226,12 +240,18 @@ router.post("/close-all", async (req, res) => {
         continue;
       }
       const closeSide = String(pos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
+      const mark = parseFloat(pos?.markPrice ?? pos?.entryPrice ?? pos?.avgPrice) || fallbackMark || bybitManager.getMarkPrice(sym);
+      const price = bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? mark;
+      if (price == null || !Number.isFinite(price) || price <= 0) {
+        results.bybit.push({ side: pos.side, qty, error: "No L2 price or mark available for IOC close" });
+        continue;
+      }
       try {
-        const order = await bybitManager.placeMarketCloseOrder(keys.bybit, sym, closeSide, qty);
+        const order = await bybitManager.placeIOCLimitOrder(keys.bybit, sym, closeSide, qty, price, { reduceOnly: true });
         orderCircuitBreaker.recordOrderPlaced();
         results.bybit.push({ side: pos.side, qty, order });
       } catch (e) {
-        console.error("[Trade/close-all] Bybit close failed", sym, e.message);
+        console.error("[Trade/close-all] Bybit IOC close failed", sym, e.message);
         results.bybit.push({ side: pos.side, qty, error: e.response?.data?.retMsg || e.message });
       }
     }
