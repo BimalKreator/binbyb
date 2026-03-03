@@ -51,8 +51,7 @@ function buildPrimaryBySymbol(positions) {
 router.get("/metrics", async (req, res) => {
   try {
     const settings = await Setting.findOne().lean();
-    // STRICT: use database opening balance only (no effectiveOpeningBalance or inflation logic)
-    const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
+    const OPENING_BALANCE = 3450;
 
     const keys = await getDecryptedApiKeys();
     // Strictly use WebSocket-cached values only. No REST to avoid IP bans.
@@ -85,6 +84,7 @@ router.get("/metrics", async (req, res) => {
     const bybitMarginAllowedPct = Number(settings?.bybitMarginAllowedPct) || 50;
     const binanceBalance = actualBinanceMarginBalance + (binanceMarginAllowedPct * 30);
     const bybitBalance = actualBybitEquity + (bybitMarginAllowedPct * 30);
+    const totalCapital = (actualBinanceMarginBalance + (binanceMarginAllowedPct * 30)) + (actualBybitEquity + (bybitMarginAllowedPct * 30));
 
     const binanceAvailableBalance = parseFloat(binanceBalances.availableBalance || 0) || 0;
     const bybitAvailableBalance = parseFloat(bybitBalances.availableBalance || bybitBalances.availableToWithdraw || 0) || 0;
@@ -116,8 +116,6 @@ router.get("/metrics", async (req, res) => {
       totalTradeValue: Number.isFinite(bybitTotalTradeValue) ? bybitTotalTradeValue : 0,
     };
 
-    const currentTotalCapital = binanceBalance + bybitBalance;
-
     const logs = await FundLog.find().lean();
     let totalDeposits = 0;
     let totalWithdrawals = 0;
@@ -128,11 +126,10 @@ router.get("/metrics", async (req, res) => {
       if (log.type === "withdrawal") totalWithdrawals += amt;
     }
 
-    const profit = currentTotalCapital - openingBalance;
-    // Strict Percentage Formula: (Net Profit / Opening Balance) * 100
-    const profitPercent = openingBalance > 0 ? (profit / openingBalance) * 100 : 0;
-    const dailyROI = openingBalance > 0 ? (profit / openingBalance) * 100 : null;
-    const totalCapitalINR = currentTotalCapital * USD_TO_INR;
+    const profit = totalCapital - OPENING_BALANCE;
+    const profitPercent = (profit / OPENING_BALANCE) * 100;
+    const dailyROI = (profit / OPENING_BALANCE) * 100;
+    const totalCapitalINR = totalCapital * USD_TO_INR;
     const volatilityMeter = screener.getVolatilityMeter();
 
     console.log("[Dashboard API] Metrics requested. Balances:", { binanceBalance, bybitBalance });
@@ -143,9 +140,9 @@ router.get("/metrics", async (req, res) => {
         bybitBalance: Number.isFinite(bybitBalance) ? bybitBalance : 0,
         binanceWallet,
         bybitWallet,
-        totalCapital: currentTotalCapital,
-        currentBalance: currentTotalCapital,
-        openingBalance,
+        totalCapital,
+        currentBalance: totalCapital,
+        openingBalance: OPENING_BALANCE,
         totalDeposits,
         totalWithdrawals,
         profit,

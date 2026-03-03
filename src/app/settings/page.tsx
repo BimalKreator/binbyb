@@ -606,9 +606,6 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="50"
               />
-              <span className="text-xs text-slate-500 mt-0.5 block">
-                Used to compute display balance: actual + (this % × 30).
-              </span>
             </label>
             <label className="block">
               <span className={labelClass}>Margin Use Allowed% Bybit</span>
@@ -621,9 +618,6 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="50"
               />
-              <span className="text-xs text-slate-500 mt-0.5 block">
-                Used to compute display balance: actual + (this % × 30).
-              </span>
             </label>
             <button
               type="button"

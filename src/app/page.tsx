@@ -301,15 +301,13 @@ export default function Home() {
 
         {/* Top cards: compact grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-          {/* Capital — from backend (display balances = actual + margin%×30 per exchange) */}
+          {/* Capital — totalCapital from backend; opening balance fixed at 3450 */}
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
             <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Capital</p>
             <p className="text-xl font-semibold text-foreground">
               {formatUsdStandard(m.totalCapital ?? (m.binanceBalance ?? 0) + (m.bybitBalance ?? 0))}
             </p>
-            <p className="text-sm text-slate-400 mt-0.5">
-              Opening Balance: {formatUsdStandard(m.openingBalance ?? 0)}
-            </p>
+            <p className="text-sm text-slate-400 mt-0.5">Opening Balance: $3,450.00</p>
           </div>
 
           {/* Profit — from backend (totalCapital, openingBalance, profit, profitPercent) */}
