@@ -74,33 +74,40 @@ router.post("/arbitrage", async (req, res) => {
       let remainingQty = qty;
       let totalBybitFilled = 0;
       let totalBinanceFilled = 0;
-      let maxSweeps = 15;
-      let emptyFillRetries = 0;
-      const MAX_EMPTY_FILL_RETRIES = 5;
+      let maxSweeps = 500;
 
       while (remainingQty > 0 && maxSweeps > 0) {
         const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, remainingQty, levInt, 1);
         const chunkFilled = bybitRes?.totalFilled || 0;
 
         if (chunkFilled <= 0) {
-          emptyFillRetries++;
-          if (emptyFillRetries >= MAX_EMPTY_FILL_RETRIES) {
-            console.log(`[Manual Trade] Liquidity dried up after ${MAX_EMPTY_FILL_RETRIES} retries for ${symbol}. Breaking sweep.`);
-            break;
-          }
-          console.log(`[Manual Trade] Bybit chunk filled 0. Retry ${emptyFillRetries}/${MAX_EMPTY_FILL_RETRIES}... Waiting 500ms.`);
+          console.log(`[Manual Trade] Bybit chunk filled 0. Waiting 500ms for liquidity...`);
           await new Promise((r) => setTimeout(r, 500));
+          maxSweeps--;
           continue;
         }
-        emptyFillRetries = 0; // Reset on success
 
         orderCircuitBreaker.recordOrderPlaced();
         totalBybitFilled += chunkFilled;
         remainingQty -= chunkFilled;
 
-        const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, chunkFilled, levInt, 10);
-        orderCircuitBreaker.recordOrderPlaced();
-        totalBinanceFilled += (binanceRes?.totalFilled || 0);
+        let binanceRemaining = chunkFilled;
+        let binanceFailsafe = 100;
+        while (binanceRemaining > 0 && binanceFailsafe > 0) {
+          const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, binanceRemaining, levInt, 5);
+          const bFilled = binanceRes?.totalFilled || 0;
+
+          if (bFilled > 0) orderCircuitBreaker.recordOrderPlaced();
+
+          totalBinanceFilled += bFilled;
+          binanceRemaining -= bFilled;
+
+          if (binanceRemaining > 0) {
+            console.log(`[Manual Trade] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 500ms...`);
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          binanceFailsafe--;
+        }
 
         maxSweeps--;
       }
