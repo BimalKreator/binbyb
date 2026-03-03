@@ -61,15 +61,23 @@ router.get("/metrics", async (req, res) => {
     let bybitBalances = { totalEquity: 0, totalWalletBalance: 0, availableBalance: 0 };
     if (keys?.binance?.apiKey && keys?.binance?.apiSecret) {
       const bin = binanceManager.getBalance(keys.binance);
-      const marginBalance = Number(bin?.balance ?? bin) || 0;
-      const binanceAvail = Number(bin?.availableBalance ?? 0) || 0;
-      binanceBalances = { totalMarginBalance: marginBalance, totalWalletBalance: marginBalance, availableBalance: binanceAvail };
+      const marginBalance = typeof bin === "object" && bin != null ? Number(bin.balance) : Number(bin);
+      const binanceAvail = typeof bin === "object" && bin != null ? Number(bin.availableBalance) : 0;
+      binanceBalances = {
+        totalMarginBalance: Number.isFinite(marginBalance) ? marginBalance : 0,
+        totalWalletBalance: Number.isFinite(marginBalance) ? marginBalance : 0,
+        availableBalance: Number.isFinite(binanceAvail) ? binanceAvail : 0,
+      };
     }
     if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
       const byb = bybitManager.getBalance();
-      const totalEquity = Number(byb?.balance ?? byb) || 0;
-      const bybitAvail = Number(byb?.availableBalance ?? 0) || 0;
-      bybitBalances = { totalEquity, totalWalletBalance: totalEquity, availableBalance: bybitAvail };
+      const totalEquity = typeof byb === "object" && byb != null ? Number(byb.balance) : Number(byb);
+      const bybitAvail = typeof byb === "object" && byb != null ? Number(byb.availableBalance) : 0;
+      bybitBalances = {
+        totalEquity: Number.isFinite(totalEquity) ? totalEquity : 0,
+        totalWalletBalance: Number.isFinite(totalEquity) ? totalEquity : 0,
+        availableBalance: Number.isFinite(bybitAvail) ? bybitAvail : 0,
+      };
     }
     const binanceCapitalBase = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
     const bybitCapitalBase = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;

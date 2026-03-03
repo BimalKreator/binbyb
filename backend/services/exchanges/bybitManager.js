@@ -604,13 +604,24 @@ function openPrivateStream(credentials) {
           if (eventTime) logLatency("bybit", msg.topic, eventTime);
 
           if (msg.topic === "wallet") {
-            const coins = d.coin || [];
-            const usdt = coins.find((c) => (c.coin || "").toUpperCase() === "USDT");
-            if (usdt) {
-              cachedWalletBalance = parseFloat(usdt.walletBalance ?? 0) || 0;
-              cachedEquity = parseFloat(usdt.equity ?? 0) || 0;
-              const avail = parseFloat(usdt.availableToWithdraw ?? usdt.availableBalance ?? usdt.walletBalance ?? 0);
-              cachedAvailableBalance = Number.isFinite(avail) ? avail : 0;
+            const coins = Array.isArray(d.coin) ? d.coin : [];
+            const usdt = coins.find((c) => String(c?.coin || "").toUpperCase() === "USDT");
+            const totalAvailStr = d.totalAvailableBalance;
+            const totalEquityStr = d.totalEquity;
+            const totalWalletStr = d.totalWalletBalance;
+            if (usdt != null) {
+              cachedWalletBalance = parseFloat(String(usdt.walletBalance ?? 0)) || 0;
+              cachedEquity = parseFloat(String(usdt.equity ?? 0)) || 0;
+              const availStr = usdt.availableToWithdraw ?? usdt.availableBalance ?? "";
+              const avail = parseFloat(String(availStr));
+              cachedAvailableBalance = Number.isFinite(avail) ? avail : parseFloat(String(totalAvailStr)) || 0;
+            } else {
+              if (totalEquityStr != null && String(totalEquityStr).length > 0)
+                cachedEquity = parseFloat(String(totalEquityStr)) || 0;
+              if (totalWalletStr != null && String(totalWalletStr).length > 0)
+                cachedWalletBalance = parseFloat(String(totalWalletStr)) || 0;
+              if (totalAvailStr != null && String(totalAvailStr).length > 0)
+                cachedAvailableBalance = parseFloat(String(totalAvailStr)) || 0;
             }
           } else if (msg.topic === "order") {
             console.log("[Bybit] Order update", {
@@ -836,8 +847,8 @@ async function withdrawCreate(credentials, coin, chain, address, amount) {
  * @returns {{ balance: number, availableBalance: number }} balance = total equity; availableBalance = free to open new positions
  */
 function getBalance() {
-  const balance = cachedEquity ?? 0;
-  const availableBalance = cachedAvailableBalance ?? 0;
+  const balance = cachedEquity != null && Number.isFinite(cachedEquity) ? cachedEquity : 0;
+  const availableBalance = cachedAvailableBalance != null && Number.isFinite(cachedAvailableBalance) ? cachedAvailableBalance : 0;
   return { balance, availableBalance };
 }
 
@@ -1490,20 +1501,31 @@ async function start(credentials, options = {}) {
       }
 
       let usdtCoin = null;
+      let firstAccount = list[0];
       for (const item of list) {
         if (Array.isArray(item.coin)) {
-          usdtCoin = item.coin.find((c) => (c.coin || "").toUpperCase() === "USDT");
-        } else if ((item.coin || "").toUpperCase() === "USDT") {
+          usdtCoin = item.coin.find((c) => String(c?.coin || "").toUpperCase() === "USDT");
+        } else if (String(item?.coin || "").toUpperCase() === "USDT") {
           usdtCoin = item;
         }
-        if (usdtCoin) break;
+        if (usdtCoin) {
+          firstAccount = item;
+          break;
+        }
       }
 
       if (usdtCoin) {
-        cachedWalletBalance = parseFloat(usdtCoin.walletBalance ?? usdtCoin.availableToWithdraw ?? 0) || 0;
-        cachedEquity = parseFloat(usdtCoin.equity ?? usdtCoin.walletBalance ?? 0) || 0;
-        const avail = parseFloat(usdtCoin.availableToWithdraw ?? usdtCoin.availableBalance ?? usdtCoin.free ?? 0);
-        cachedAvailableBalance = Number.isFinite(avail) ? avail : 0;
+        cachedWalletBalance = parseFloat(String(usdtCoin.walletBalance ?? 0)) || 0;
+        cachedEquity = parseFloat(String(usdtCoin.equity ?? usdtCoin.walletBalance ?? 0)) || 0;
+        const availStr = usdtCoin.availableToWithdraw ?? usdtCoin.availableBalance ?? usdtCoin.free ?? "";
+        const avail = parseFloat(String(availStr));
+        if (Number.isFinite(avail)) {
+          cachedAvailableBalance = avail;
+        } else if (firstAccount && firstAccount.totalAvailableBalance != null) {
+          cachedAvailableBalance = parseFloat(String(firstAccount.totalAvailableBalance)) || 0;
+        }
+      } else if (firstAccount && firstAccount.totalAvailableBalance != null) {
+        cachedAvailableBalance = parseFloat(String(firstAccount.totalAvailableBalance)) || 0;
       }
     } catch (e) {
       console.warn("[Bybit] One-time balance hydration failed:", e.message);

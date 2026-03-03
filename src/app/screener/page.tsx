@@ -714,13 +714,13 @@ export default function ScreenerPage() {
                 <span>
                   Binance Available:{" "}
                   <span className="text-amber-400 font-bold">
-                    ${metrics?.binanceAvailableBalance?.toFixed(2) ?? "0.00"}
+                    ${Number(metrics?.binanceAvailableBalance ?? 0).toFixed(2)}
                   </span>
                 </span>
                 <span>
                   Bybit Available:{" "}
                   <span className="text-sky-400 font-bold">
-                    ${metrics?.bybitAvailableBalance?.toFixed(2) ?? "0.00"}
+                    ${Number(metrics?.bybitAvailableBalance ?? 0).toFixed(2)}
                   </span>
                 </span>
               </div>

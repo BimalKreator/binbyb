@@ -1400,6 +1400,7 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 
 /**
  * Get Binance balance and available (free) balance from cache. No REST calls (avoids IP bans).
+ * Prefer cachedAvailableBalance from REST/ACCOUNT_UPDATE when set; else compute as marginBalance - totalMarginUsed.
  * @returns {{ balance: number, availableBalance: number }} balance = margin balance (wallet + unrealized PnL); availableBalance = free to open new positions
  */
 function getBalance(credentials) {
@@ -1411,7 +1412,11 @@ function getBalance(credentials) {
   );
   const balance = wallet + totalUnrealized;
   const totalMarginUsed = (positions || []).reduce((s, p) => s + (parseFloat(String(p?.marginUsed ?? 0)) || 0), 0);
-  const availableBalance = Math.max(0, balance - totalMarginUsed);
+  const computedAvailable = Math.max(0, balance - totalMarginUsed);
+  const availableBalance =
+    cachedAvailableBalance != null && Number.isFinite(cachedAvailableBalance) && cachedAvailableBalance >= 0
+      ? cachedAvailableBalance
+      : computedAvailable;
   return { balance, availableBalance };
 }
 
