@@ -48,7 +48,7 @@ let tradeWsReconnectTimer = null;
 let privateReconnectAttempts = 0;
 let privateReconnectTimer = null;
 const livePositionsByKey = {};
-/** USDT wallet balance/equity from private WS wallet topic. No REST in getBalance(). */
+/** USDT cached balance: updated by private WS wallet topic and one-time REST at startup only. getBalance() returns this; no REST. */
 let cachedWalletBalance = 0;
 /** Pending WS trade requests: reqId -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
@@ -823,10 +823,12 @@ async function withdrawCreate(credentials, coin, chain, address, amount) {
 }
 
 /**
- * Get USDT wallet balance from WebSocket cache (private wallet topic). Synchronous; no REST.
+ * Get USDT wallet balance from cache only. No REST calls (avoids IP bans).
+ * Updated by wallet WebSocket topic and one-time startup hydration.
+ * @returns {number} cached balance or 0 if not yet received
  */
 function getBalance() {
-  return cachedWalletBalance || 0;
+  return cachedWalletBalance ?? 0;
 }
 
 /**

@@ -87,7 +87,7 @@ let listenKeyKeepaliveTimer = null;
 let privateReconnectAttempts = 0;
 let privateReconnectTimer = null;
 const livePositionsByKey = {};
-/** USDT wallet balance from ACCOUNT_UPDATE (msg.a.B). No REST in getBalance(). */
+/** USDT cached balance: updated by private WS ACCOUNT_UPDATE (msg.a.B) and one-time REST at startup only. getBalance() returns this; no REST. */
 let cachedWalletBalance = 0;
 /** Pending WS API requests: id -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
@@ -1382,11 +1382,12 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 }
 
 /**
- * Get USDT wallet balance from WebSocket cache (ACCOUNT_UPDATE). No REST calls.
+ * Get USDT wallet balance from cache only. No REST calls (avoids IP bans).
+ * Updated by ACCOUNT_UPDATE WebSocket and one-time startup hydration.
  * @returns {number} cached balance or 0 if not yet received
  */
 function getBalance(credentials) {
-  return cachedWalletBalance || 0;
+  return cachedWalletBalance ?? 0;
 }
 
 /**

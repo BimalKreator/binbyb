@@ -55,23 +55,16 @@ router.get("/metrics", async (req, res) => {
     const openingBalance = Number(settings?.dailyOpeningBalance) || 3450;
 
     const keys = await getDecryptedApiKeys();
+    // Strictly use WebSocket-cached USDT balance only. No REST (GET /fapi/v2/account or wallet-balance) to avoid IP bans.
     let binanceBalances = { totalMarginBalance: 0, totalWalletBalance: 0, availableBalance: 0 };
     let bybitBalances = { totalEquity: 0, totalWalletBalance: 0, availableBalance: 0 };
     if (keys?.binance?.apiKey && keys?.binance?.apiSecret) {
-      try {
-        binanceBalances = await binanceManager.getBalances(keys.binance);
-      } catch (e) {
-        const fallback = Number(binanceManager.getBalance(keys.binance)) || 0;
-        binanceBalances = { totalMarginBalance: fallback, totalWalletBalance: fallback, availableBalance: fallback };
-      }
+      const cached = Number(binanceManager.getBalance(keys.binance)) || 0;
+      binanceBalances = { totalMarginBalance: cached, totalWalletBalance: cached, availableBalance: cached };
     }
     if (keys?.bybit?.apiKey && keys?.bybit?.apiSecret) {
-      try {
-        bybitBalances = await bybitManager.getBalances(keys.bybit);
-      } catch (e) {
-        const fallback = Number(bybitManager.getBalance()) || 0;
-        bybitBalances = { totalEquity: fallback, totalWalletBalance: fallback, availableBalance: fallback };
-      }
+      const cached = Number(bybitManager.getBalance()) || 0;
+      bybitBalances = { totalEquity: cached, totalWalletBalance: cached, availableBalance: cached };
     }
     const binanceCapitalBase = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
     const bybitCapitalBase = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
