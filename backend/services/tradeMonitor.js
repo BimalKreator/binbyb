@@ -175,10 +175,6 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     return { binanceOk: false, bybitOk: false };
   }
 
-
-  const settings = await Setting.findOne().lean();
-  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
-
   const binancePositionSideForClose =
     binancePositionSide === "LONG" || binancePositionSide === "SHORT"
       ? binancePositionSide
@@ -186,96 +182,56 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
         ? "LONG"
         : "SHORT";
 
-  const { computeQuantityChunks } = autoTrader;
-  const binanceChunks = binanceQty > 0 ? (await computeQuantityChunks(binanceQty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks : [];
-  const bybitChunks = bybitQty > 0 ? (await computeQuantityChunks(bybitQty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks : [];
+  const lev = Math.max(1, Number(binancePos?.leverage ?? bybitPos?.leverage ?? 1));
+  const exitSweepIterations = 30;
 
-  const binancePrice = binanceManager.getOrderbookPrice(sym, binanceCloseSide, slippagePct) ?? fallbackMarkPrice;
-  const bybitPrice = bybitManager.getOrderbookPrice(sym, bybitCloseSide, slippagePct) ?? fallbackMarkPrice;
+  const binancePromise =
+    binanceQty > 0
+      ? binanceManager
+          .executeLiquiditySweep(
+            credentials.binance,
+            sym,
+            binanceCloseSide,
+            binanceQty,
+            lev,
+            exitSweepIterations,
+            { reduceOnly: true, positionSide: binancePositionSideForClose }
+          )
+          .then((res) => {
+            const filled = res?.totalFilled ?? 0;
+            if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
+            return filled;
+          })
+      : Promise.resolve(0);
+  const bybitPromise =
+    bybitQty > 0
+      ? bybitManager
+          .executeLiquiditySweep(credentials.bybit, sym, bybitCloseSide, bybitQty, lev, exitSweepIterations, { reduceOnly: true })
+          .then((res) => {
+            const filled = res?.totalFilled ?? 0;
+            if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
+            return filled;
+          })
+      : Promise.resolve(0);
 
-  const binanceBook = binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(sym);
-  const bybitBook = bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(sym);
-  const binanceCloseIsBuy = String(binanceCloseSide).toUpperCase() === "BUY";
-  const bybitCloseIsBuy = String(bybitCloseSide).toLowerCase() === "buy";
-  if (binanceQty > 0 && binanceBook) {
-    const needQty = binanceCloseIsBuy ? binanceBook.bestAskQty : binanceBook.bestBidQty;
-    if (needQty < binanceQty) {
-      console.log("[TradeMonitor] Abort close: Binance top-of-book volume", needQty, "< close qty", binanceQty, sym);
-      closingSymbols.delete(sym);
-      return { binanceOk: false, bybitOk: false };
-    }
+  const [binanceResult, bybitResult] = await Promise.allSettled([binancePromise, bybitPromise]);
+  const binanceFilled = binanceResult.status === "fulfilled" ? binanceResult.value : 0;
+  const bybitFilled = bybitResult.status === "fulfilled" ? bybitResult.value : 0;
+  if (binanceResult.status === "rejected") {
+    console.error("[TradeMonitor] closePair Binance exit sweep failed", sym, binanceResult.reason?.message ?? binanceResult.reason);
   }
-  if (bybitQty > 0 && bybitBook) {
-    const needQty = bybitCloseIsBuy ? bybitBook.bestAskQty : bybitBook.bestBidQty;
-    if (needQty < bybitQty) {
-      console.log("[TradeMonitor] Abort close: Bybit top-of-book volume", needQty, "< close qty", bybitQty, sym);
-      closingSymbols.delete(sym);
-      return { binanceOk: false, bybitOk: false };
-    }
+  if (bybitResult.status === "rejected") {
+    console.error("[TradeMonitor] closePair Bybit exit sweep failed", sym, bybitResult.reason?.message ?? bybitResult.reason);
   }
 
-  const binancePromises = binanceChunks.map((qtyStr) => {
-    const qty = parseFloat(qtyStr);
-    if (qty <= 0) return Promise.resolve();
-    return binanceManager
-      .placeIOCLimitOrder(credentials.binance, sym, binanceCloseSide, qty, binancePrice, {
-        positionSide: binancePositionSideForClose,
-        reduceOnly: true,
-      })
-      .then((r) => {
-        orderCircuitBreaker.recordOrderPlaced();
-        return r;
-      });
-  });
-  const bybitPromises = bybitChunks.map((qtyStr) => {
-    const qty = parseFloat(qtyStr);
-    if (qty <= 0) return Promise.resolve();
-    return bybitManager
-      .placeIOCLimitOrder(credentials.bybit, sym, bybitCloseSide, qty, bybitPrice, { reduceOnly: true })
-      .then((r) => {
-        orderCircuitBreaker.recordOrderPlaced();
-        return r;
-      });
-  });
+  const binanceOk = binanceQty <= 0 || binanceFilled > 0;
+  const bybitOk = bybitQty <= 0 || bybitFilled > 0;
 
-  const results = await Promise.allSettled([...binancePromises, ...bybitPromises]);
-  const binanceOk = binanceChunks.length === 0 || results.slice(0, binanceChunks.length).every((r) => r.status === "fulfilled");
-  const bybitOk = bybitChunks.length === 0 || results.slice(binanceChunks.length).every((r) => r.status === "fulfilled");
-  results.forEach((r, i) => {
-    if (r.status === "rejected") {
-      console.error("[TradeMonitor] Close order failed", sym, i < binanceChunks.length ? "binance" : "bybit", r.reason?.message || r.reason);
-    }
-  });
-
-  // Execution prices: entry from position (before close), exit from order response
+  // Execution prices: entry from position (before close); exit from sweep uses mark (sweep does not return avg fill)
   const binanceExecEntry = parseFloat(binancePos?.entryPrice) || fallbackMarkPrice;
   const bybitExecEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || fallbackMarkPrice;
-  let binanceExecExit = null;
-  let bybitExecExit = null;
-  for (let i = 0; i < binanceChunks.length && i < results.length; i++) {
-    if (results[i].status !== "fulfilled") continue;
-    const val = results[i].value;
-    const ap = val?.avgPrice;
-    if (ap != null && String(ap).length > 0) {
-      const p = parseFloat(ap);
-      if (Number.isFinite(p) && p > 0) {
-        binanceExecExit = p;
-        break;
-      }
-    }
-  }
-  for (let i = 0; i < bybitChunks.length; i++) {
-    const idx = binanceChunks.length + i;
-    if (idx >= results.length || results[idx].status !== "fulfilled") continue;
-    const val = results[idx].value;
-    const orderId = val?.result?.orderId ?? val?.orderId;
-    if (orderId) {
-      bybitExecExit = await bybitManager.getOrderFillPrice(credentials.bybit, orderId);
-      break;
-    }
-  }
-  if (binanceExecExit == null || !Number.isFinite(binanceExecExit)) binanceExecExit = fallbackMarkPrice;
-  if (bybitExecExit == null || !Number.isFinite(bybitExecExit)) bybitExecExit = fallbackMarkPrice;
+  const binanceExecExit = fallbackMarkPrice;
+  const bybitExecExit = fallbackMarkPrice;
 
   if (binanceOk || bybitOk) {
     autoTrader.clearEntryFundingDirection(sym);
@@ -300,7 +256,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
         groupId,
         requestedEntryPrice: null,
         executedEntryPrice: binanceExecEntry,
-        reqExit: binancePrice,
+        reqExit: fallbackMarkPrice,
         execExit: binanceExecExit,
         fee: 0,
       },
@@ -316,7 +272,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
         groupId,
         requestedEntryPrice: null,
         executedEntryPrice: bybitExecEntry,
-        reqExit: bybitPrice,
+        reqExit: fallbackMarkPrice,
         execExit: bybitExecExit,
         fee: 0,
       },
@@ -373,51 +329,39 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
     return;
   }
 
-  const settings = await Setting.findOne().lean();
-  const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
+  const lev = Math.max(1, Number(pos?.leverage ?? 1));
+  const exitSweepIterations = 30;
 
-  const { computeQuantityChunks } = autoTrader;
-  const chunks = (await computeQuantityChunks(qty * fallbackMarkPrice, 1, fallbackMarkPrice, sym)).chunks;
-  const closeIsBuy = exchange === "binance" ? closeSide === "BUY" : closeSide.toLowerCase() === "buy";
-  const book = exchange === "binance" ? (binanceManager.getBestBidAsk && binanceManager.getBestBidAsk(sym)) : (bybitManager.getBestBidAsk && bybitManager.getBestBidAsk(sym));
-  if (book) {
-    const needQty = closeIsBuy ? book.bestAskQty : book.bestBidQty;
-    if (needQty < qty) {
-      console.log("[TradeMonitor] Abort orphan close: top-of-book volume", needQty, "< close qty", qty, sym, exchange);
-      return;
+  try {
+    if (exchange === "binance") {
+      const res = await binanceManager.executeLiquiditySweep(
+        credentials.binance,
+        sym,
+        closeSide,
+        qty,
+        lev,
+        exitSweepIterations,
+        { reduceOnly: true, positionSide: binancePositionSide }
+      );
+      if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
+    } else {
+      const res = await bybitManager.executeLiquiditySweep(
+        credentials.bybit,
+        sym,
+        closeSide,
+        qty,
+        lev,
+        exitSweepIterations,
+        { reduceOnly: true }
+      );
+      if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
     }
+  } catch (e) {
+    console.error("[TradeMonitor] closeOrphanPosition exit sweep failed", exchange, sym, e?.message ?? e);
+    return;
   }
-  const price = exchange === "binance"
-    ? (binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice)
-    : (bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? fallbackMarkPrice);
 
-  let execExitPrice = fallbackMarkPrice;
-  for (const qtyStr of chunks) {
-    const q = parseFloat(qtyStr);
-    if (q <= 0) continue;
-    try {
-      if (exchange === "binance") {
-        const res = await binanceManager.placeIOCLimitOrder(credentials.binance, sym, closeSide, q, price, {
-          positionSide: binancePositionSide,
-          reduceOnly: true,
-        });
-        const ap = res?.avgPrice;
-        if (ap != null && String(ap).length > 0) {
-          const p = parseFloat(ap);
-          if (Number.isFinite(p) && p > 0) execExitPrice = p;
-        }
-      } else {
-        const res = await bybitManager.placeIOCLimitOrder(credentials.bybit, sym, closeSide, q, price, { reduceOnly: true });
-        const orderId = res?.result?.orderId ?? res?.orderId;
-        if (orderId) {
-          const bybitAvg = await bybitManager.getOrderFillPrice(credentials.bybit, orderId);
-          if (bybitAvg != null && Number.isFinite(bybitAvg)) execExitPrice = bybitAvg;
-        }
-      }
-    } finally {
-      orderCircuitBreaker.recordOrderPlaced();
-    }
-  }
+  const execExitPrice = fallbackMarkPrice;
 
   autoTrader.clearEntryFundingDirection(sym);
   const unrealized = Number.isFinite(pos?.unrealizedProfit) ? pos.unrealizedProfit : 0;
@@ -435,7 +379,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
     groupId: null,
     requestedEntryPrice: null,
     executedEntryPrice: execEntryPrice,
-    reqExit: price,
+    reqExit: fallbackMarkPrice,
     execExit: execExitPrice,
     fee: 0,
   }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));

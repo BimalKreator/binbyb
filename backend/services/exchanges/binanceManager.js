@@ -1622,9 +1622,10 @@ const SWEEP_SLEEP_MS = 20;
  * @param {number} totalQtyRemaining - quantity left to fill
  * @param {number} leverage - leverage for the order
  * @param {number} [maxIterations=10] - max chunks per sweep
+ * @param {object} [opts={}] - { reduceOnly: true, positionSide: 'LONG'|'SHORT' } for exits
  * @returns {Promise<{ totalFilled: number }>}
  */
-async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemaining, leverage, maxIterations = 10) {
+async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemaining, leverage, maxIterations = 10, opts = {}) {
   const sym = String(symbol).toUpperCase();
   const sideNorm = String(side).toUpperCase();
   if (sideNorm !== "BUY" && sideNorm !== "SELL") {
@@ -1699,9 +1700,10 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
 
     if (chunkQty <= 0) break;
 
+    const orderOpts = { timeInForce: "IOC", leverage, ...opts };
     let res;
     try {
-      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, { timeInForce: "IOC", leverage });
+      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, orderOpts);
     } catch (e) {
       console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
       break;

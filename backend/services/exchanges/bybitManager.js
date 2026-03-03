@@ -1136,9 +1136,10 @@ const SWEEP_SLEEP_MS = 20;
  * @param {number} totalQtyRemaining - quantity left to fill
  * @param {number} leverage - leverage for the order
  * @param {number} [maxIterations=10] - max chunks per sweep
+ * @param {object} [opts={}] - { reduceOnly: true } for exits
  * @returns {Promise<{ totalFilled: number }>}
  */
-async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemaining, leverage, maxIterations = 10) {
+async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemaining, leverage, maxIterations = 10, opts = {}) {
   const sym = String(symbol).toUpperCase();
   const sideNorm = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
   if (sideNorm !== "Buy" && sideNorm !== "Sell") {
@@ -1202,9 +1203,10 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
 
     if (chunkQty <= 0) break;
 
+    const orderOpts = { timeInForce: "IOC", leverage, ...opts };
     let res;
     try {
-      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, targetPrice, { timeInForce: "IOC", leverage });
+      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, targetPrice, orderOpts);
     } catch (e) {
       console.error("[Bybit] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
       break;

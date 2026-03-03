@@ -205,6 +205,8 @@ router.post("/close-all", async (req, res) => {
     const fallbackMark = token?.markPrice != null && Number.isFinite(token.markPrice) ? Number(token.markPrice) : null;
 
     const results = { binance: [], bybit: [] };
+    const levInt = 1; // leverage not re-applied inside sweep; use 1 for exit
+    const exitSweepIterations = 30;
 
     for (const pos of binancePositions) {
       const qty = Math.abs(Number(pos.positionAmt) || 0);
@@ -220,21 +222,21 @@ router.post("/close-all", async (req, res) => {
           : closeSide === "SELL"
             ? "LONG"
             : "SHORT";
-      const mark = parseFloat(pos?.markPrice ?? pos?.entryPrice) || fallbackMark || binanceManager.getMarkPrice(sym);
-      const price = binanceManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? mark;
-      if (price == null || !Number.isFinite(price) || price <= 0) {
-        results.binance.push({ positionSide, qty, error: "No L2 price or mark available for IOC close" });
-        continue;
-      }
       try {
-        const order = await binanceManager.placeIOCLimitOrder(keys.binance, sym, closeSide, qty, price, {
-          positionSide,
-          reduceOnly: true,
-        });
-        orderCircuitBreaker.recordOrderPlaced();
-        results.binance.push({ positionSide, qty, order });
+        const sweepRes = await binanceManager.executeLiquiditySweep(
+          keys.binance,
+          sym,
+          closeSide,
+          qty,
+          levInt,
+          exitSweepIterations,
+          { reduceOnly: true, positionSide }
+        );
+        const filled = sweepRes?.totalFilled ?? 0;
+        if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
+        results.binance.push({ positionSide, qty, totalFilled: filled });
       } catch (e) {
-        console.error("[Trade/close-all] Binance IOC close failed", sym, positionSide, e.message);
+        console.error("[Trade/close-all] Binance exit sweep failed", sym, positionSide, e.message);
         results.binance.push({ positionSide, qty, error: e.response?.data?.msg || e.message });
       }
     }
@@ -247,18 +249,21 @@ router.post("/close-all", async (req, res) => {
         continue;
       }
       const closeSide = String(pos.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
-      const mark = parseFloat(pos?.markPrice ?? pos?.entryPrice ?? pos?.avgPrice) || fallbackMark || bybitManager.getMarkPrice(sym);
-      const price = bybitManager.getOrderbookPrice(sym, closeSide, slippagePct) ?? mark;
-      if (price == null || !Number.isFinite(price) || price <= 0) {
-        results.bybit.push({ side: pos.side, qty, error: "No L2 price or mark available for IOC close" });
-        continue;
-      }
       try {
-        const order = await bybitManager.placeIOCLimitOrder(keys.bybit, sym, closeSide, qty, price, { reduceOnly: true });
-        orderCircuitBreaker.recordOrderPlaced();
-        results.bybit.push({ side: pos.side, qty, order });
+        const sweepRes = await bybitManager.executeLiquiditySweep(
+          keys.bybit,
+          sym,
+          closeSide,
+          qty,
+          levInt,
+          exitSweepIterations,
+          { reduceOnly: true }
+        );
+        const filled = sweepRes?.totalFilled ?? 0;
+        if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
+        results.bybit.push({ side: pos.side, qty, totalFilled: filled });
       } catch (e) {
-        console.error("[Trade/close-all] Bybit IOC close failed", sym, e.message);
+        console.error("[Trade/close-all] Bybit exit sweep failed", sym, e.message);
         results.bybit.push({ side: pos.side, qty, error: e.response?.data?.retMsg || e.message });
       }
     }
