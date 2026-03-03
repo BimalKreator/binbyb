@@ -281,6 +281,12 @@ async function runAutoEntry() {
         return;
     }
 
+    try {
+      await bybitManager.setLeverage(keys.bybit, top.symbol, levInt);
+      await binanceManager.setLeverage(keys.binance, top.symbol, levInt);
+    } catch (levErr) {
+      console.warn("[AutoTrader] setLeverage warning", top.symbol, levErr?.message ?? levErr);
+    }
     console.log(`[AutoTrader] Initiating Interleaved Sweep for ${totalQuantity} ${top.symbol}...`);
     let remainingQty = totalQuantity;
     let totalBybitFilled = 0;
@@ -292,8 +298,8 @@ async function runAutoEntry() {
       const chunkFilled = bybitRes?.totalFilled || 0;
 
       if (chunkFilled <= 0) {
-        console.log(`[AutoTrader] Bybit chunk filled 0. Waiting 500ms for liquidity...`);
-        await new Promise((r) => setTimeout(r, 500));
+        console.log(`[AutoTrader] Bybit chunk filled 0. Waiting 100ms for liquidity...`);
+        await new Promise((r) => setTimeout(r, 100));
         maxSweeps--;
         continue;
       }
@@ -314,8 +320,8 @@ async function runAutoEntry() {
         binanceRemaining -= bFilled;
 
         if (binanceRemaining > 0) {
-          console.log(`[AutoTrader] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 500ms...`);
-          await new Promise((r) => setTimeout(r, 500));
+          console.log(`[AutoTrader] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 100ms...`);
+          await new Promise((r) => setTimeout(r, 100));
         }
         binanceFailsafe--;
       }

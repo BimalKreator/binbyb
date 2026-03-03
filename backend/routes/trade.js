@@ -71,6 +71,13 @@ router.post("/arbitrage", async (req, res) => {
     }
 
     try {
+      const sym = String(symbol).toUpperCase();
+      try {
+        await bybitManager.setLeverage(keys.bybit, sym, levInt);
+        await binanceManager.setLeverage(keys.binance, sym, levInt);
+      } catch (levErr) {
+        console.warn("[Manual Trade] setLeverage warning", sym, levErr?.message ?? levErr);
+      }
       console.log(`[Manual Trade] Initiating Interleaved Sweep for ${qty} ${symbol}...`);
       let remainingQty = qty;
       let totalBybitFilled = 0;
@@ -82,8 +89,8 @@ router.post("/arbitrage", async (req, res) => {
         const chunkFilled = bybitRes?.totalFilled || 0;
 
         if (chunkFilled <= 0) {
-          console.log(`[Manual Trade] Bybit chunk filled 0. Waiting 500ms for liquidity...`);
-          await new Promise((r) => setTimeout(r, 500));
+          console.log(`[Manual Trade] Bybit chunk filled 0. Waiting 100ms for liquidity...`);
+          await new Promise((r) => setTimeout(r, 100));
           maxSweeps--;
           continue;
         }
@@ -104,8 +111,8 @@ router.post("/arbitrage", async (req, res) => {
           binanceRemaining -= bFilled;
 
           if (binanceRemaining > 0) {
-            console.log(`[Manual Trade] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 500ms...`);
-            await new Promise((r) => setTimeout(r, 500));
+            console.log(`[Manual Trade] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 100ms...`);
+            await new Promise((r) => setTimeout(r, 100));
           }
           binanceFailsafe--;
         }

@@ -91,6 +91,9 @@ const livePositionsByKey = {};
 let cachedWalletBalance = 0;
 /** Free balance available to open new positions (from REST or computed as marginBalance - totalMarginUsed). */
 let cachedAvailableBalance = 0;
+const AVAILABLE_BALANCE_CACHE_TTL_MS = 15000;
+let lastAvailableBalanceRestTime = 0;
+let availableBalanceFetchInFlight = false;
 /** Pending WS API requests: id -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
 let apiWsConnectPromise = null;
@@ -132,10 +135,14 @@ function upsertLivePosition(raw) {
   const entryPrice = parseFloat(raw?.ep ?? raw?.entryPrice ?? 0) || null;
   const leverage = raw?.l != null ? Number(raw.l) : raw?.leverage != null ? Number(raw.leverage) : null;
   const liquidationPrice = parseFloat(raw?.lp ?? raw?.liquidationPrice ?? 0) || null;
+  let marginUsed = parseFloat(raw?.iw ?? raw?.im ?? raw?.isolatedWallet ?? raw?.positionInitialMargin ?? 0) || 0;
+  if (marginUsed <= 0 && Number.isFinite(entryPrice) && entryPrice > 0 && leverage != null && leverage >= 1) {
+    marginUsed = (Math.abs(amt) * entryPrice) / leverage;
+  }
   livePositionsByKey[key] = {
     symbol: sym,
     unrealizedProfit: parseFloat(raw?.up ?? raw?.unRealizedProfit ?? raw?.unrealizedProfit ?? 0) || 0,
-    marginUsed: parseFloat(raw?.iw ?? raw?.isolatedWallet ?? raw?.positionInitialMargin ?? 0) || 0,
+    marginUsed,
     positionAmt: amt,
     side,
     positionSide,
@@ -747,6 +754,20 @@ async function startPrivateStream(credentials) {
             const existing = livePositionsByKey[key];
             if (existing) {
               existing.positionAmt = pa;
+              const rawIw = p?.iw ?? p?.isolatedWallet ?? p?.positionInitialMargin;
+              const rawIm = p?.im;
+              const marginFromPayload = rawIw != null && String(rawIw).length > 0 ? parseFloat(rawIw) : (rawIm != null && String(rawIm).length > 0 ? parseFloat(rawIm) : NaN);
+              if (Number.isFinite(marginFromPayload)) {
+                existing.marginUsed = marginFromPayload;
+              } else {
+                const ep = parseFloat(p?.ep ?? p?.entryPrice ?? 0);
+                const lev = p?.l != null ? Number(p.l) : p?.leverage != null ? Number(p.leverage) : null;
+                if (Number.isFinite(ep) && ep > 0 && lev != null && lev >= 1) {
+                  existing.marginUsed = (Math.abs(pa) * ep) / lev;
+                }
+              }
+              const up = parseFloat(p?.up ?? p?.unRealizedProfit ?? p?.unrealizedProfit ?? 0);
+              if (Number.isFinite(up)) existing.unrealizedProfit = up;
               existing.updatedTime = Date.now();
             } else {
               upsertLivePosition(p);
@@ -1399,11 +1420,48 @@ function intervalHoursFromHoursUntilNext(hoursUntilNext) {
 }
 
 /**
- * Get Binance balance and available (free) balance from cache. No REST calls (avoids IP bans).
+ * Throttled REST fetch for availableBalance (max once per AVAILABLE_BALANCE_CACHE_TTL_MS). Fire-and-forget.
+ */
+function refreshAvailableBalanceInBackground(credentials) {
+  if (!credentials?.apiKey || !credentials?.apiSecret || availableBalanceFetchInFlight) return;
+  availableBalanceFetchInFlight = true;
+  (async () => {
+    try {
+      const timestamp = Date.now();
+      const queryString = `timestamp=${timestamp}`;
+      const signature = signQueryString(queryString, credentials.apiSecret);
+      const fullQuery = `${queryString}&signature=${signature}`;
+      const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
+        headers: { "X-MBX-APIKEY": credentials.apiKey },
+      });
+      const avail = parseFloat(data?.availableBalance ?? 0);
+      if (Number.isFinite(avail)) {
+        cachedAvailableBalance = avail;
+      } else {
+        const assets = Array.isArray(data?.assets) ? data.assets : [];
+        const usdt = assets.find((b) => (b.asset || "").toUpperCase() === "USDT");
+        const ab = usdt?.availableBalance ?? 0;
+        cachedAvailableBalance = parseFloat(ab) || 0;
+      }
+    } catch (e) {
+      console.warn("[Binance] Throttled availableBalance fetch failed:", e?.message ?? e);
+    } finally {
+      availableBalanceFetchInFlight = false;
+    }
+  })();
+}
+
+/**
+ * Get Binance balance and available (free) balance from cache. Triggers throttled REST (every 15s) for accurate availableBalance.
  * Prefer cachedAvailableBalance from REST/ACCOUNT_UPDATE when set; else compute as marginBalance - totalMarginUsed.
  * @returns {{ balance: number, availableBalance: number }} balance = margin balance (wallet + unrealized PnL); availableBalance = free to open new positions
  */
 function getBalance(credentials) {
+  const now = Date.now();
+  if (credentials?.apiKey && credentials?.apiSecret && now - lastAvailableBalanceRestTime >= AVAILABLE_BALANCE_CACHE_TTL_MS) {
+    lastAvailableBalanceRestTime = now;
+    refreshAvailableBalanceInBackground(credentials);
+  }
   const wallet = cachedWalletBalance ?? 0;
   const positions = getLivePositions();
   const totalUnrealized = (positions || []).reduce(
@@ -1577,11 +1635,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
   }
 
   await connectApiWs();
-  try {
-    await setLeverage(credentials, sym, leverage);
-  } catch (e) {
-    console.log("[Binance] executeLiquiditySweep setLeverage warning", sym, e?.message ?? e);
-  }
+  // Leverage must be set once per symbol by the caller before starting the sweep; not set here to avoid repeated REST per chunk.
 
   const filters = await getSymbolFilters(sym);
   const stepSize = filters?.stepSize ?? null;

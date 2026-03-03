@@ -1149,11 +1149,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
   }
 
   await connectTradeWs(credentials);
-  try {
-    await setLeverage(credentials, sym, leverage);
-  } catch (e) {
-    console.log("[Bybit] executeLiquiditySweep setLeverage warning", sym, e?.message ?? e);
-  }
+  // Leverage must be set once per symbol by the caller before starting the sweep; not set here to avoid repeated REST per chunk.
 
   const filters = await getSymbolFilters(sym);
   const stepSize = filters?.stepSize ?? null;

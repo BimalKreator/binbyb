@@ -499,7 +499,7 @@ export default function ScreenerPage() {
                               Last
                             </span>
                           )}
-                          {row.botState === "Next" && (
+                          {nextTradeToken && row.symbol === nextTradeToken.symbol && row.botState !== "Active" && (
                             <span className="bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-green-500/30">
                               Next
                             </span>
@@ -623,7 +623,7 @@ export default function ScreenerPage() {
                                   Last
                                 </span>
                               )}
-                              {row.botState === "Next" && (
+                              {nextTradeToken && row.symbol === nextTradeToken.symbol && row.botState !== "Active" && (
                                 <span className="bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-green-500/30">
                                   Next
                                 </span>
