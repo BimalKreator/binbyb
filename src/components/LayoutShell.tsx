@@ -19,8 +19,8 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       <PwaRegister />
       <div className="flex flex-col min-h-[100dvh]">
         <Header />
-        {/* Spacer matching header height (h-16) so content sits below fixed navbar. */}
-        <div className="h-16 shrink-0" aria-hidden="true" />
+        {/* Spacer matching header height (h-16 mobile; h-16 + nav bar h-12 on desktop). */}
+        <div className="h-16 md:h-28 shrink-0" aria-hidden="true" />
         <main className="flex flex-col flex-1 min-h-0 safe-area-inset min-w-0 overflow-x-hidden">
           {children}
           <div className="h-28 md:h-8 w-full shrink-0" aria-hidden="true" />

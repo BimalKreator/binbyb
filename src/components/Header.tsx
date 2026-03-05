@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Menu, Settings } from "lucide-react";
 
 const NAV_LINKS = [
@@ -14,6 +15,7 @@ const NAV_LINKS = [
 ];
 
 export function Header() {
+  const pathname = usePathname();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -32,11 +34,11 @@ export function Header() {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 safe-area-inset bg-[var(--background)] border-b border-slate-700/50">
       <div className="flex items-center justify-between h-16 px-4 max-w-[100vw] md:max-w-4xl md:mx-auto relative" ref={menuRef}>
-        {/* Hamburger menu left */}
+        {/* Hamburger menu left — mobile only */}
         <button
           type="button"
           onClick={() => setIsMenuOpen((o) => !o)}
-          className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-full text-slate-300 hover:text-foreground hover:bg-slate-700/50 active:scale-95 transition-colors md:w-11 md:h-11"
+          className="md:hidden w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-full text-slate-300 hover:text-foreground hover:bg-slate-700/50 active:scale-95 transition-colors"
           aria-label="Open menu"
           aria-expanded={isMenuOpen}
         >
@@ -54,14 +56,36 @@ export function Header() {
           />
         </div>
 
-        {/* Settings right */}
+        {/* Settings right — mobile only */}
         <Link
           href="/settings"
-          className="w-11 h-11 flex items-center justify-center rounded-full text-slate-400 hover:text-foreground hover:bg-slate-700/50 active:scale-95 transition-colors md:w-12 md:h-12"
+          className="md:hidden w-11 h-11 flex items-center justify-center rounded-full text-slate-400 hover:text-foreground hover:bg-slate-700/50 active:scale-95 transition-colors"
           aria-label="Settings"
         >
-          <Settings className="w-5 h-5 md:w-6 md:h-6" />
+          <Settings className="w-5 h-5" />
         </Link>
+      </div>
+
+      {/* Desktop Navigation Bar */}
+      <div className="hidden md:flex bg-slate-800/30 border-t border-slate-800 backdrop-blur-md">
+        <div className="max-w-4xl mx-auto w-full flex items-center justify-center gap-8 h-12">
+          {NAV_LINKS.map(({ href, label }) => {
+            const isActive = pathname === href;
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={`text-sm font-medium transition-colors px-4 py-1.5 rounded-md ${
+                  isActive
+                    ? "text-blue-400 bg-blue-500/10"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                }`}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </div>
       </div>
 
       {/* Dropdown navigation */}
