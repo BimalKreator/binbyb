@@ -1259,7 +1259,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, orderOpts);
     } catch (e) {
       console.error("[Bybit] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
-      break;
+      return { totalFilled, error: e?.message || "Order failed" };
     }
     console.log("[Bybit] executeLiquiditySweep order placed", {
       sym,

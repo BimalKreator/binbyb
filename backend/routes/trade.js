@@ -82,11 +82,15 @@ router.post("/arbitrage", async (req, res) => {
       let remainingQty = qty;
       let totalBybitFilled = 0;
       let totalBinanceFilled = 0;
-      let maxSweeps = 500;
+      let maxSweeps = 5;
 
       while (remainingQty > 0 && maxSweeps > 0) {
         const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, remainingQty, levInt, 1);
         const chunkFilled = bybitRes?.totalFilled || 0;
+        if (bybitRes?.error && chunkFilled <= 0) {
+          console.log("Bybit rejected: " + bybitRes.error);
+          break;
+        }
 
         if (chunkFilled <= 0) {
           console.log(`[Manual Trade] Bybit chunk filled 0. Waiting 100ms for liquidity...`);
@@ -100,10 +104,14 @@ router.post("/arbitrage", async (req, res) => {
         remainingQty -= chunkFilled;
 
         let binanceRemaining = chunkFilled;
-        let binanceFailsafe = 100;
+        let binanceFailsafe = 5;
         while (binanceRemaining > 0 && binanceFailsafe > 0) {
           const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, binanceRemaining, levInt, 5);
           const bFilled = binanceRes?.totalFilled || 0;
+          if (binanceRes?.error && bFilled <= 0) {
+            console.error("Binance rejected: " + binanceRes.error);
+            break;
+          }
 
           if (bFilled > 0) orderCircuitBreaker.recordOrderPlaced();
 
@@ -118,7 +126,7 @@ router.post("/arbitrage", async (req, res) => {
         }
 
         if (binanceRemaining > 0) {
-          console.error("Failsafe reached: Binance failed to match. Aborting outer sweep to prevent imbalance.");
+          console.error("Failsafe reached: Binance failed to match after 5 attempts. Aborting outer sweep. Mismatch monitor will handle the rest.");
           break;
         }
 

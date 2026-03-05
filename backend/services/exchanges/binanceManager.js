@@ -1706,7 +1706,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, orderOpts);
     } catch (e) {
       console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
-      break;
+      return { totalFilled, error: e?.message || "Order failed" };
     }
     console.log("[Binance] executeLiquiditySweep order placed", {
       sym,
