@@ -1657,12 +1657,12 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       availableQty = null;
     }
 
-    // Add 0.05% Execution Buffer to prevent IOC expiration
+    // 0.1% buffer to prevent IOC minimum notional ping-pong expiration
     let bufferedPrice = targetPrice;
     if (sideNorm.toUpperCase() === "BUY") {
-      bufferedPrice = targetPrice * 1.0005; // Pay slightly more to guarantee hitting the ask
+      bufferedPrice = targetPrice * 1.001;
     } else {
-      bufferedPrice = targetPrice * 0.9995; // Sell for slightly less to guarantee hitting the bid
+      bufferedPrice = targetPrice * 0.999;
     }
     if (filters?.tickSize) {
       bufferedPrice = parseFloat(formatPriceToTickSize(bufferedPrice, filters.tickSize)) || bufferedPrice;

@@ -326,6 +326,11 @@ async function runAutoEntry() {
         binanceFailsafe--;
       }
 
+      if (binanceRemaining > 0) {
+        console.error("Failsafe reached: Binance failed to match. Aborting outer sweep to prevent imbalance.");
+        break;
+      }
+
       maxSweeps--;
     }
 

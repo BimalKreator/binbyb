@@ -117,6 +117,11 @@ router.post("/arbitrage", async (req, res) => {
           binanceFailsafe--;
         }
 
+        if (binanceRemaining > 0) {
+          console.error("Failsafe reached: Binance failed to match. Aborting outer sweep to prevent imbalance.");
+          break;
+        }
+
         maxSweeps--;
       }
 

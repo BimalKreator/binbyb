@@ -56,6 +56,10 @@ let cachedEquity = 0;
 let cachedAvailableBalance = 0;
 /** Pending WS trade requests: reqId -> { resolve, reject, timeoutId } */
 const pendingRequests = new Map();
+/** Pending order fill waiters: orderId -> { resolve, timeoutId }. Resolved by private WS "order" topic. */
+const pendingOrderFills = new Map();
+/** Completed order fills (orderId -> cumExecQty) for orders that finished before waitForBybitOrderFill was called. */
+const completedOrderFills = new Map();
 let tradeWsConnectPromise = null;
 const TRADE_WS_PING_INTERVAL_MS = 20000;
 let tradeWsPingTimer = null;
@@ -209,6 +213,11 @@ function connectTradeWs(credentials) {
         pending.reject(new Error("Trade WS connection closed"));
       }
       pendingRequests.clear();
+      for (const [orderId, pending] of pendingOrderFills) {
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+        pending.resolve(null);
+      }
+      pendingOrderFills.clear();
       if (tradeWsCredentials) scheduleTradeWsReconnect();
     });
     ws.on("error", (err) => {
@@ -624,6 +633,18 @@ function openPrivateStream(credentials) {
                 cachedAvailableBalance = parseFloat(String(totalAvailStr)) || 0;
             }
           } else if (msg.topic === "order") {
+            const terminalStatuses = ["Filled", "Cancelled", "Rejected", "Deactivated"];
+            const orderId = d.orderId != null ? String(d.orderId) : null;
+            if (orderId && terminalStatuses.includes(String(d.orderStatus || ""))) {
+              const cumExecQty = parseFloat(d.cumExecQty || 0) || 0;
+              completedOrderFills.set(orderId, cumExecQty);
+              const pending = pendingOrderFills.get(orderId);
+              if (pending) {
+                pendingOrderFills.delete(orderId);
+                if (pending.timeoutId) clearTimeout(pending.timeoutId);
+                pending.resolve(cumExecQty);
+              }
+            }
             console.log("[Bybit] Order update", {
               symbol: d.symbol,
               side: d.side,
@@ -1127,6 +1148,32 @@ function getTopOfBook(symbol) {
 const SWEEP_SLEEP_MS = 20;
 
 /**
+ * Wait for a Bybit order to reach a terminal state (Filled, Cancelled, Rejected, Deactivated) via private WS "order" topic.
+ * Returns filled quantity (cumExecQty) or null on timeout. Use this before falling back to REST getOrderFilledQty.
+ * @param {string} orderId - order ID from placeWSOrder response
+ * @param {number} [timeoutMs=2500] - max wait in ms
+ * @returns {Promise<number|null>} cumExecQty or null
+ */
+function waitForBybitOrderFill(orderId, timeoutMs = 2500) {
+  if (!orderId) return Promise.resolve(null);
+  const id = String(orderId);
+  if (completedOrderFills.has(id)) {
+    const q = completedOrderFills.get(id);
+    completedOrderFills.delete(id);
+    return Promise.resolve(Number.isFinite(q) ? q : 0);
+  }
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      if (pendingOrderFills.has(id)) {
+        pendingOrderFills.delete(id);
+        resolve(null);
+      }
+    }, timeoutMs);
+    pendingOrderFills.set(id, { resolve, timeoutId });
+  });
+}
+
+/**
  * Dynamic L2 liquidity sweep (iceberg): while loop, place IOC chunks at live top-of-book via placeWSOrder.
  * Uses getTopOfBook only; if missing, fallback to standard pricing and place one order then break.
  * Filled qty from getOrderFilledQty(credentials, orderId) after each order.
@@ -1171,6 +1218,9 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
       availableQty = null;
     }
 
+    const isBuy = sideNorm === "Buy";
+    const bufferedPrice = isBuy ? targetPrice * 1.001 : targetPrice * 0.999;
+
     let chunkQty = availableQty != null && Number.isFinite(availableQty) && availableQty > 0
       ? Math.min(totalQtyRemaining, availableQty * 0.5)
       : totalQtyRemaining;
@@ -1206,7 +1256,7 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
     const orderOpts = { timeInForce: "IOC", leverage, ...opts };
     let res;
     try {
-      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, targetPrice, orderOpts);
+      res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, orderOpts);
     } catch (e) {
       console.error("[Bybit] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
       break;
@@ -1218,9 +1268,14 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
     });
 
     const orderId = res?.orderId ?? res?.result?.orderId;
-    const filledQty = orderId
-      ? await getOrderFilledQty(credentials, orderId)
-      : (Number.isFinite(parseFloat(res?.cumExecQty)) ? parseFloat(res.cumExecQty) : 0);
+    let filledQty;
+    if (orderId) {
+      filledQty = await waitForBybitOrderFill(orderId, 2500);
+      if (filledQty === null) filledQty = await getOrderFilledQty(credentials, orderId);
+    } else {
+      filledQty = Number.isFinite(parseFloat(res?.cumExecQty)) ? parseFloat(res.cumExecQty) : 0;
+    }
+    filledQty = Number.isFinite(filledQty) ? filledQty : 0;
     totalQtyRemaining -= filledQty;
     totalFilled += filledQty;
     maxIterations -= 1;
@@ -1381,6 +1436,8 @@ function stop() {
     pending.reject(new Error("Bybit manager stopped"));
   }
   pendingRequests.clear();
+  pendingOrderFills.clear();
+  completedOrderFills.clear();
   tradeWsConnectPromise = null;
   if (tradeWsPingTimer) {
     clearInterval(tradeWsPingTimer);
