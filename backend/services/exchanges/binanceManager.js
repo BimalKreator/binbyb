@@ -1674,23 +1674,31 @@ const DEFAULT_SLIPPAGE_PCT = 0.1;
 function getBestBidAsk(symbol) {
   const sym = String(symbol).toUpperCase();
   const ob = orderbooks[sym];
-  if (ob && ob.bids && ob.bids.length > 0 && ob.asks && ob.asks.length > 0) {
-    const bids = ob.bids.filter((x) => Number.isFinite(x[0]) && x[0] > 0);
-    const asks = ob.asks.filter((x) => Number.isFinite(x[0]) && x[0] > 0);
+
+  // Attempt to read from the live Depth WS (array format)
+  if (ob && Array.isArray(ob.bids) && Array.isArray(ob.asks)) {
+    const bids = ob.bids.filter((x) => Array.isArray(x) && Number.isFinite(x[0]) && x[0] > 0);
+    const asks = ob.asks.filter((x) => Array.isArray(x) && Number.isFinite(x[0]) && x[0] > 0);
     if (bids.length > 0 && asks.length > 0) {
-      const bestBidLevel = bids.reduce((a, b) => (b[0] > a[0] ? b : a));
-      const bestAskLevel = asks.reduce((a, b) => (b[0] < a[0] ? b : a));
-      return {
-        bestBid: bestBidLevel[0],
-        bestBidQty: bestBidLevel[1] ?? 0,
-        bestAsk: bestAskLevel[0],
-        bestAskQty: bestAskLevel[1] ?? 0,
-      };
+      const bestBid = Math.max(...bids.map((x) => x[0]));
+      const bestAsk = Math.min(...asks.map((x) => x[0]));
+      if (bestBid > 0 && bestAsk > 0) {
+        return { bestBid, bestAsk, bestBidQty: 0, bestAskQty: 0 };
+      }
     }
   }
-  const book = bookTickerBySymbol[sym];
-  if (!book || !Number.isFinite(book.bestBid) || !Number.isFinite(book.bestAsk)) return null;
-  return book;
+
+  // SAFE FALLBACK: If Depth WS is empty/corrupted, strictly use L1 BookTicker
+  const l1 = bookTickerBySymbol[sym];
+  if (l1 && Number.isFinite(l1.bestBid) && l1.bestBid > 0 && Number.isFinite(l1.bestAsk) && l1.bestAsk > 0) {
+    return {
+      bestBid: l1.bestBid,
+      bestAsk: l1.bestAsk,
+      bestBidQty: l1.bestBidQty ?? 0,
+      bestAskQty: l1.bestAskQty ?? 0,
+    };
+  }
+  return null;
 }
 
 /**
@@ -1707,6 +1715,7 @@ function getTopOfBook(symbol) {
 /**
  * VWAP for a target notional (USD) from WebSocket depth cache only (no REST). BUY = consume asks (asc), SELL = consume bids (desc).
  * Returns VWAP of whatever depth is available even if below targetNotional (never null if any level exists).
+ * Falls back to L1 BookTicker if depth is empty/thin.
  * @param {string} symbol
  * @param {string} side - 'BUY' | 'SELL'
  * @param {number} targetNotional - USD notional to fill
@@ -1714,32 +1723,59 @@ function getTopOfBook(symbol) {
  */
 function getVwapPrice(symbol, side, targetNotional) {
   const sym = String(symbol).toUpperCase();
-  const book = orderbooks[sym];
-  if (!book || !book.bids || !book.asks || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  const bidsArr = (book.bids || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
-  const asksArr = (book.asks || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
-  const levels = isBuy ? asksArr : bidsArr;
-  if (levels.length === 0) return null;
-  let accumulatedQty = 0;
-  let accumulatedNotional = 0;
-  for (let i = 0; i < levels.length; i++) {
-    const price = levels[i][0];
-    const qty = levels[i][1];
-    const levelNotional = price * qty;
-    if (accumulatedNotional + levelNotional >= targetNotional) {
-      const neededNotional = targetNotional - accumulatedNotional;
-      const neededQty = neededNotional / price;
-      accumulatedQty += neededQty;
-      accumulatedNotional = targetNotional;
-      break;
-    } else {
-      accumulatedQty += qty;
-      accumulatedNotional += levelNotional;
+  const book = orderbooks[sym];
+
+  let vwapPrice = null;
+
+  if (book && Array.isArray(book.bids) && Array.isArray(book.asks) && targetNotional > 0) {
+    const bidsArr = book.bids
+      .map((x) => [parseFloat(x[0]), parseFloat(x[1])])
+      .filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0)
+      .sort((a, b) => b[0] - a[0]);
+    const asksArr = book.asks
+      .map((x) => [parseFloat(x[0]), parseFloat(x[1])])
+      .filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0)
+      .sort((a, b) => a[0] - b[0]);
+    const levels = isBuy ? asksArr : bidsArr;
+
+    if (levels.length > 0) {
+      let remaining = targetNotional;
+      let totalCost = 0;
+      let totalQty = 0;
+
+      for (const [p, q] of levels) {
+        const levelNotional = p * q;
+        if (remaining <= levelNotional) {
+          const neededQty = remaining / p;
+          totalCost += remaining;
+          totalQty += neededQty;
+          remaining = 0;
+          break;
+        } else {
+          totalCost += levelNotional;
+          totalQty += q;
+          remaining -= levelNotional;
+        }
+      }
+      if (remaining === 0 && totalQty > 0) {
+        vwapPrice = totalCost / totalQty;
+      }
     }
   }
-  if (accumulatedQty === 0) return null;
-  return accumulatedNotional / accumulatedQty;
+
+  // CRITICAL FIX: If VWAP fails (thin book or empty), fallback to L1 BookTicker
+  if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
+    const l1 = bookTickerBySymbol[sym];
+    if (l1) {
+      const fallbackPrice = isBuy ? l1.bestAsk : l1.bestBid;
+      if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+        vwapPrice = fallbackPrice;
+      }
+    }
+  }
+
+  return vwapPrice && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
 }
 
 const SWEEP_SLEEP_MS = 20;
