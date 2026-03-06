@@ -1129,20 +1129,35 @@ async function placeMarketCloseOrder(credentials, symbol, side, qty) {
 const DEFAULT_SLIPPAGE_PCT = 0.1;
 
 /**
- * Get best bid/ask from WebSocket ticker cache (bid1Price/ask1Price, bid1Size/ask1Size). Returns null if not available.
+ * Get best bid/ask from live L2 orderbook first (always updated), then ticker state as fallback.
  * @param {string} symbol
- * @returns {{ bestBid: number, bestBidQty: number, bestAsk: number, bestAskQty: number } | null}
+ * @returns {{ bestBid: number, bestAsk: number, bestBidQty?: number, bestAskQty?: number } | null}
  */
 function getBestBidAsk(symbol) {
   const sym = String(symbol).toUpperCase();
+  
+  // Priority 1: Live L2 Orderbook (Always updated)
+  const ob = orderbooksBySymbol[sym];
+  if (ob && ob.bids instanceof Map && ob.asks instanceof Map) {
+    if (ob.bids.size > 0 && ob.asks.size > 0) {
+      const bestBid = Math.max(...Array.from(ob.bids.keys()).map(Number).filter(n => n > 0));
+      const bestAsk = Math.min(...Array.from(ob.asks.keys()).map(Number).filter(n => n > 0));
+      if (bestBid > 0 && bestAsk > 0) {
+        return { bestBid, bestAsk };
+      }
+    }
+  }
+
+  // Priority 2: Fallback to Ticker State (snapshot only, often missing bid1Price)
   const state = tickerStateBySymbol[sym];
-  if (!state) return null;
-  const bestBid = parseFloat(state.bid1Price);
-  const bestBidQty = parseFloat(state.bid1Size);
-  const bestAsk = parseFloat(state.ask1Price);
-  const bestAskQty = parseFloat(state.ask1Size);
-  if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk) || bestBid <= 0 || bestAsk <= 0) return null;
-  return { bestBid, bestBidQty: Number.isFinite(bestBidQty) ? bestBidQty : 0, bestAsk, bestAskQty: Number.isFinite(bestAskQty) ? bestAskQty : 0 };
+  if (state && parseFloat(state.bid1Price) > 0 && parseFloat(state.ask1Price) > 0) {
+    return {
+      bestBid: parseFloat(state.bid1Price),
+      bestAsk: parseFloat(state.ask1Price)
+    };
+  }
+  
+  return null;
 }
 
 /**
@@ -1677,12 +1692,20 @@ async function start(credentials, options = {}) {
 }
 
 /**
- * Get mark price from WebSocket cache (tickers stream). No REST.
+ * Get mark price from WebSocket cache (tickers stream). 
+ * Falls back to orderbook midprice if mark price unavailable.
  */
 function getMarkPrice(symbol) {
   const s = String(symbol || "").toUpperCase();
   const v = lastMarkPriceBySymbol[s];
-  return v != null && Number.isFinite(v) ? v : null;
+  if (v != null && Number.isFinite(v) && v > 0) return v;
+  
+  // Fallback: derive midprice from orderbook
+  const book = getBestBidAsk(s);
+  if (book && book.bestBid > 0 && book.bestAsk > 0) {
+    return (book.bestBid + book.bestAsk) / 2;
+  }
+  return null;
 }
 
 /**

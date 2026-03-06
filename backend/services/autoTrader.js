@@ -30,6 +30,10 @@ const tradedCycles = {};
 /** Entry funding direction per symbol for funding-flip exit: { binanceHigher: boolean } */
 const entryFundingDirectionBySymbol = {};
 
+/** L2 VWAP failure cooldown: symbol -> timestamp. Prevents spam logging. */
+const l2FailCooldown = {};
+const L2_FAIL_COOLDOWN_MS = 30000; // 30 seconds
+
 function decimalsFromStep(stepSize) {
   const s = String(stepSize);
   if (!s || s.includes("e")) return 8;
@@ -264,6 +268,12 @@ async function runAutoEntry() {
     const binSell = binanceManager.getVwapPrice(top.symbol, "SELL", targetNotional);
     const bybBuy = bybitManager.getVwapPrice(top.symbol, "Buy", targetNotional);
     const bybSell = bybitManager.getVwapPrice(top.symbol, "Sell", targetNotional);
+    
+    // If orderbook data is too thin or missing, skip silently to prevent event loop log spam
+    if (!binBuy || !binSell || !bybBuy || !bybSell) {
+      return;
+    }
+    
     const spreadIfBinShort = binSell && bybBuy ? ((binSell - bybBuy) / bybBuy) * 100 : -Infinity;
     const spreadIfBybShort = bybSell && binBuy ? ((bybSell - binBuy) / binBuy) * 100 : -Infinity;
     const isBinanceShort = spreadIfBinShort >= spreadIfBybShort;
@@ -304,7 +314,8 @@ async function runAutoEntry() {
   if (Number.isFinite(maxOrderQty)) totalQuantity = Math.min(totalQuantity, maxOrderQty);
   if (totalQuantity <= 0) return;
 
-  const cycleKey = isL2Mode ? `${symbol}*L2*${Date.now()}` : `${symbol}_${nextFundingTime}`;
+  // Remove Date.now() so the bot doesn't spam the same token repeatedly in a single cycle
+  const cycleKey = isL2Mode ? `${symbol}_L2_ACTIVE` : `${symbol}_${nextFundingTime}`;
   if (lastFiredCycleKey === cycleKey) return;
 
   if (!orderCircuitBreaker.canPlaceOrder()) {
@@ -320,12 +331,32 @@ async function runAutoEntry() {
       const binSell = binanceManager.getVwapPrice(top.symbol, "SELL", targetNotional);
       const bybBuy = bybitManager.getVwapPrice(top.symbol, "Buy", targetNotional);
       const bybSell = bybitManager.getVwapPrice(top.symbol, "Sell", targetNotional);
+      
+      // Null data detection: if all VWAP prices are null, orderbook data not ready - skip silently
+      if (binBuy == null && binSell == null && bybBuy == null && bybSell == null) {
+        isExecutingTrade = false;
+        return; // Silent skip - no log spam
+      }
+      
       const spreadIfBinShort = binSell && bybBuy ? ((binSell - bybBuy) / bybBuy) * 100 : -Infinity;
       const spreadIfBybShort = bybSell && binBuy ? ((bybSell - binBuy) / binBuy) * 100 : -Infinity;
       const liveL2Spread = binanceSide === "SELL" ? spreadIfBinShort : spreadIfBybShort;
       const minL2Vwap = Number(settings?.minL2VwapSpread) ?? 0.15;
+      
       if (liveL2Spread == null || !Number.isFinite(liveL2Spread) || liveL2Spread < minL2Vwap) {
-        console.log(`[AutoTrader-Failsafe] Aborting ${top.symbol}: Live L2 VWAP spread (${liveL2Spread}%) < minimum (${minL2Vwap}%).`);
+        // 30-second per-symbol cooldown to prevent log spam
+        const now = Date.now();
+        if (!l2FailCooldown[top.symbol] || now > l2FailCooldown[top.symbol]) {
+          // Determine specific failure reason
+          const noBinance = binBuy == null && binSell == null;
+          const noBybit = bybBuy == null && bybSell == null;
+          const reason = noBinance && noBybit ? "no L2 orderbook data"
+            : noBinance ? "no Binance L2 orderbook data"
+            : noBybit ? "no Bybit L2 orderbook data"
+            : `spread ${liveL2Spread?.toFixed(2)}% < min ${minL2Vwap}%`;
+          console.log(`[AutoTrader-Failsafe] Aborting ${top.symbol}: Live L2 VWAP check failed (${reason}). Will retry silently for 30s.`);
+          l2FailCooldown[top.symbol] = now + L2_FAIL_COOLDOWN_MS;
+        }
         isExecutingTrade = false;
         return;
       }
