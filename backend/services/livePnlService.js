@@ -5,6 +5,7 @@
 let io = null;
 let binanceManager = null;
 let bybitManager = null;
+let onExitCheck = null;
 
 const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
@@ -130,6 +131,10 @@ function onMarkPriceTick(symbol, markPrice, source) {
 
   const combinedPnL = binancePnL + bybitPnL;
 
+  if (onExitCheck && Number.isFinite(combinedPnL)) {
+    onExitCheck(sym, combinedPnL);
+  }
+
   io.emit("live_pnl_update", {
     symbol: sym,
     binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
@@ -162,6 +167,7 @@ function stop() {
   }
   if (binanceManager) binanceManager.setOnMarkPriceUpdate(null);
   if (bybitManager) bybitManager.setOnMarkPriceUpdate(null);
+  onExitCheck = null;
   io = null;
   binanceManager = null;
   bybitManager = null;
@@ -169,8 +175,8 @@ function stop() {
   Object.keys(markPriceCache).forEach((k) => delete markPriceCache[k]);
 }
 
-function setExitCheckCallback() {
-  // No-op: tick-based TP/SL removed; tradeMonitor uses position-update + runMonitor only
+function setExitCheckCallback(cb) {
+  onExitCheck = cb;
 }
 
 module.exports = { init, stop, setExitCheckCallback };

@@ -843,6 +843,46 @@ function start() {
   binanceManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
   bybitManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
 
+  livePnlService.setExitCheckCallback(async (symbol, combinedPnl) => {
+    const settings = await Setting.findOne().lean();
+    if (!settings || !settings.autoExitEnabled) return;
+
+    const keys = await getDecryptedApiKeys();
+    if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) return;
+
+    const binList = binanceManager.getLivePositions() || [];
+    const bybList = bybitManager.getLivePositions() || [];
+    const sym = String(symbol).toUpperCase();
+    const bp = binList.find((p) => String(p.symbol).toUpperCase() === sym);
+    const yp = bybList.find((p) => String(p.symbol).toUpperCase() === sym);
+
+    if (!bp || !yp) return;
+
+    const bMargin = parseFloat(bp.marginUsed) || 0;
+    const yMargin = parseFloat(yp.marginUsed) || 0;
+    const totalMargin = bMargin + yMargin;
+
+    if (totalMargin <= 0) return;
+
+    const pnlPct = (combinedPnl / totalMargin) * 100;
+
+    if (settings.useTarget && settings.takeProfit > 0 && pnlPct >= settings.takeProfit) {
+      console.log(`[Tick-Exit] ${symbol} Hit Take Profit: ${pnlPct.toFixed(2)}% >= ${settings.takeProfit}%`);
+      try {
+        await closePair(keys, symbol, bp, yp, "Target", "Take Profit Hit");
+      } catch (e) {
+        console.error("[TradeMonitor] Tick-Exit TP closePair failed", symbol, e?.message ?? e);
+      }
+    } else if (settings.useStoploss && settings.stopLoss > 0 && pnlPct <= -Math.abs(settings.stopLoss)) {
+      console.log(`[Tick-Exit] ${symbol} Hit Stop Loss: ${pnlPct.toFixed(2)}% <= -${settings.stopLoss}%`);
+      try {
+        await closePair(keys, symbol, bp, yp, "SL", "Stop Loss Hit");
+      } catch (e) {
+        console.error("[TradeMonitor] Tick-Exit SL closePair failed", symbol, e?.message ?? e);
+      }
+    }
+  });
+
   heartbeatTimer = setInterval(() => queueRun(), 1000);
   queueRun();
   console.log("[TradeMonitor] Started (event-driven + 1s active heartbeat for fast TP/SL).");
