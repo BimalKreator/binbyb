@@ -205,12 +205,20 @@ async function runScreener() {
       const binanceSellVwap = binanceManager.getVwapPrice(symbol, "SELL", screenerTradeNotional);
       const bybitBuyVwap = bybitManager.getVwapPrice(symbol, "Buy", screenerTradeNotional);
       const bybitSellVwap = bybitManager.getVwapPrice(symbol, "Sell", screenerTradeNotional);
+      const safeNum = (v) => (v != null && Number.isFinite(v) ? v : null);
+      const finalBinanceBuy = safeNum(binanceBuyVwap) ?? binTop?.topAskPrice ?? null;
+      const finalBinanceSell = safeNum(binanceSellVwap) ?? binTop?.topBidPrice ?? null;
+      const finalBybitBuy = safeNum(bybitBuyVwap) ?? bybTop?.topAskPrice ?? null;
+      const finalBybitSell = safeNum(bybitSellVwap) ?? bybTop?.topBidPrice ?? null;
       let l2SpreadVwap = null;
       const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
-      if (binanceHigher && binanceSellVwap != null && bybitBuyVwap != null && bybitBuyVwap > 0) {
-        l2SpreadVwap = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
-      } else if (!binanceHigher && bybitSellVwap != null && binanceBuyVwap != null && binanceBuyVwap > 0) {
-        l2SpreadVwap = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+      if (binanceHigher && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
+        l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
+      } else if (!binanceHigher && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
+        l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+      }
+      if (l2SpreadVwap == null || !Number.isFinite(l2SpreadVwap)) {
+        l2SpreadVwap = livePriceSpread;
       }
 
       tokens.push({
@@ -441,12 +449,20 @@ function buildRankedTokensFromCurrentData() {
     const binanceSellVwap = binanceManager.getVwapPrice(symbol, "SELL", notionalFallback);
     const bybitBuyVwap = bybitManager.getVwapPrice(symbol, "Buy", notionalFallback);
     const bybitSellVwap = bybitManager.getVwapPrice(symbol, "Sell", notionalFallback);
+    const safeNum = (v) => (v != null && Number.isFinite(v) ? v : null);
+    const finalBinanceBuy = safeNum(binanceBuyVwap) ?? binTop?.topAskPrice ?? null;
+    const finalBinanceSell = safeNum(binanceSellVwap) ?? binTop?.topBidPrice ?? null;
+    const finalBybitBuy = safeNum(bybitBuyVwap) ?? bybTop?.topAskPrice ?? null;
+    const finalBybitSell = safeNum(bybitSellVwap) ?? bybTop?.topBidPrice ?? null;
     let l2SpreadVwap = null;
     const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
-    if (binanceHigher && binanceSellVwap != null && bybitBuyVwap != null && bybitBuyVwap > 0) {
-      l2SpreadVwap = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
-    } else if (!binanceHigher && bybitSellVwap != null && binanceBuyVwap != null && binanceBuyVwap > 0) {
-      l2SpreadVwap = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+    if (binanceHigher && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
+      l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
+    } else if (!binanceHigher && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
+      l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+    }
+    if (l2SpreadVwap == null || !Number.isFinite(l2SpreadVwap)) {
+      l2SpreadVwap = livePriceSpread;
     }
 
     let botState = null;

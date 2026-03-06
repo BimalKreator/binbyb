@@ -507,6 +507,9 @@ const bookTickerBySymbol = {};
 const topOfBookBySymbol = {};
 /** Full depth (20 levels) per symbol from @depth20@100ms: { bids: [[price,qty],...], asks: [[price,qty],...] } */
 const orderbooksBySymbol = {};
+/** Separate WebSocket(s) for depth (Binance 200-stream limit); 150 symbols per connection. */
+let depthWsArray = [];
+const BINANCE_DEPTH_CHUNK_SIZE = 150;
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
 
@@ -543,6 +546,50 @@ function schedulePrivateReconnect() {
   }, delay);
 }
 
+/**
+ * Open a dedicated WebSocket for depth20@100ms for a chunk of symbols (Binance 200-stream limit).
+ * Processes depthUpdate into orderbooksBySymbol.
+ */
+function connectBinanceDepthChunk(symbolsChunk) {
+  if (!symbolsChunk || symbolsChunk.length === 0) return;
+  const url = `${PUBLIC_WS_BASE}/ws`;
+  const ws = new WebSocket(url, { family: 4 });
+  depthWsArray.push(ws);
+
+  ws.on("open", () => {
+    const streams = symbolsChunk.map((s) => String(s).toLowerCase() + "@depth20@100ms");
+    ws.send(JSON.stringify({ method: "SUBSCRIBE", params: streams, id: 1 }));
+  });
+
+  ws.on("message", (raw) => {
+    try {
+      const data = JSON.parse(raw.toString());
+      const list = Array.isArray(data) ? data : [data.data || data];
+      for (const payload of list) {
+        if (payload && payload.e === "depthUpdate" && payload.b && payload.a) {
+          const sym = payload.s ? String(payload.s).toUpperCase() : "";
+          if (sym) {
+            orderbooksBySymbol[sym] = {
+              bids: (payload.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+              asks: (payload.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[Binance-Depth-WS] Parse error:", e.message);
+    }
+  });
+
+  ws.on("close", (code, reason) => {
+    depthWsArray = depthWsArray.filter((w) => w !== ws);
+  });
+
+  ws.on("error", (err) => {
+    console.error("[Binance] Depth WebSocket error", err.message);
+  });
+}
+
 function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   if (publicStopped) return;
   if (publicWs && publicWs.readyState === WebSocket.OPEN) return;
@@ -551,22 +598,29 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   const trackedSymbols = new Set((symbols || []).map((s) => String(s).toUpperCase()));
   const url = `${PUBLIC_WS_BASE}/ws`;
 
+  depthWsArray.forEach((w) => {
+    try {
+      w.removeAllListeners?.();
+      w.close();
+    } catch (_) {}
+  });
+  depthWsArray = [];
+
   const ws = new WebSocket(url, { family: 4 });
   publicWs = ws;
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice, bookTicker, and depth...");
+    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and bookTicker...");
     ws.send(JSON.stringify({
       method: "SUBSCRIBE",
       params: ["!markPrice@arr@1s", "!bookTicker"],
       id: 1,
     }));
-    const depthStreams = (symbols || []).map((s) => String(s).toLowerCase() + "@depth20@100ms");
-    const DEPTH_CHUNK = 50;
-    for (let i = 0; i < depthStreams.length; i += DEPTH_CHUNK) {
-      const chunk = depthStreams.slice(i, i + DEPTH_CHUNK);
-      ws.send(JSON.stringify({ method: "SUBSCRIBE", params: chunk, id: 2 + i }));
+    const symList = symbols || [];
+    for (let i = 0; i < symList.length; i += BINANCE_DEPTH_CHUNK_SIZE) {
+      const chunk = symList.slice(i, i + BINANCE_DEPTH_CHUNK_SIZE);
+      connectBinanceDepthChunk(chunk);
     }
   });
 
@@ -581,16 +635,6 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
       if (Array.isArray(data)) {
         data.forEach((item) => {
-          if (item && item.e === "depthUpdate" && item.b && item.a) {
-            const sym = item.s ? String(item.s).toUpperCase() : "";
-            if (sym) {
-              orderbooksBySymbol[sym] = {
-                bids: (item.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-                asks: (item.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-              };
-            }
-            return;
-          }
           if (item && item.e === "bookTicker") {
             const sym = item.s ? String(item.s).toUpperCase() : "";
             if (sym && item.b != null && item.a != null) {
@@ -653,16 +697,6 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
       }
 
-      if (payload && payload.e === "depthUpdate" && payload.b && payload.a) {
-        const sym = payload.s ? String(payload.s).toUpperCase() : "";
-        if (sym) {
-          orderbooksBySymbol[sym] = {
-            bids: (payload.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-            asks: (payload.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-          };
-        }
-        return;
-      }
       if (payload && payload.e === "bookTicker") {
         const { s, b, B, a, A } = payload;
         const sym = s ? String(s).toUpperCase() : "";
@@ -1222,6 +1256,13 @@ function stop() {
     publicWs.close();
     publicWs = null;
   }
+  depthWsArray.forEach((w) => {
+    try {
+      w.removeAllListeners?.();
+      w.close();
+    } catch (_) {}
+  });
+  depthWsArray = [];
   listenKey = null;
   privateCredentials = null;
   exchangeInfoFetchPromise = null;
@@ -1642,40 +1683,41 @@ function getTopOfBook(symbol) {
 
 /**
  * VWAP for a target notional (USD) from depth orderbook. BUY = consume asks (asc), SELL = consume bids (desc).
+ * Returns VWAP of whatever depth is available even if below targetNotional (never null if any level exists).
  * @param {string} symbol
  * @param {string} side - 'BUY' | 'SELL'
  * @param {number} targetNotional - USD notional to fill
- * @returns {number|null} VWAP price or null if insufficient depth
+ * @returns {number|null} VWAP price or null if no depth
  */
 function getVwapPrice(symbol, side, targetNotional) {
   const sym = String(symbol).toUpperCase();
   const book = orderbooksBySymbol[sym];
   if (!book || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  const levels = isBuy ? (book.asks || []) : (book.bids || []);
+  let levels = isBuy ? (book.asks || []) : (book.bids || []);
+  levels = levels.map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0);
+  if (isBuy) levels.sort((a, b) => a[0] - b[0]);
+  else levels.sort((a, b) => b[0] - a[0]);
   if (levels.length === 0) return null;
-  let remainingNotional = targetNotional;
-  let totalCost = 0;
-  let totalQty = 0;
-  for (const [p, q] of levels) {
-    const price = Number(p);
-    const qty = Number(q);
-    if (!Number.isFinite(price) || !Number.isFinite(qty) || price <= 0 || qty <= 0) continue;
-    const value = price * qty;
-    if (remainingNotional >= value) {
-      totalCost += value;
-      totalQty += qty;
-      remainingNotional -= value;
-    } else {
-      const partialQty = remainingNotional / price;
-      totalCost += remainingNotional;
-      totalQty += partialQty;
-      remainingNotional = 0;
+  let accumulatedQty = 0;
+  let accumulatedNotional = 0;
+  for (let i = 0; i < levels.length; i++) {
+    const price = levels[i][0];
+    const qty = levels[i][1];
+    const levelNotional = price * qty;
+    if (accumulatedNotional + levelNotional >= targetNotional) {
+      const neededNotional = targetNotional - accumulatedNotional;
+      const neededQty = neededNotional / price;
+      accumulatedQty += neededQty;
+      accumulatedNotional = targetNotional;
       break;
+    } else {
+      accumulatedQty += qty;
+      accumulatedNotional += levelNotional;
     }
   }
-  if (totalQty <= 0) return null;
-  return totalCost / totalQty;
+  if (accumulatedQty === 0) return null;
+  return accumulatedNotional / accumulatedQty;
 }
 
 const SWEEP_SLEEP_MS = 20;

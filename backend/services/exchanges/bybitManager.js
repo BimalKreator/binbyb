@@ -1167,40 +1167,40 @@ function getTopOfBook(symbol) {
 
 /**
  * VWAP for a target notional (USD) from orderbook.50. BUY = consume asks (asc), SELL = consume bids (desc).
+ * Returns VWAP of whatever depth is available even if below targetNotional (never null if any level exists).
  * @param {string} symbol
  * @param {string} side - 'Buy' | 'Sell'
  * @param {number} targetNotional - USD notional to fill
- * @returns {number|null} VWAP price or null if insufficient depth
+ * @returns {number|null} VWAP price or null if no depth
  */
 function getVwapPrice(symbol, side, targetNotional) {
   const sym = String(symbol).toUpperCase();
   const ob = orderbooksBySymbol[sym];
   if (!ob || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toLowerCase() === "buy";
-  const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), q]).sort((a, b) => b[0] - a[0]);
-  const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), q]).sort((a, b) => a[0] - b[0]);
+  const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
+  const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
   const levels = isBuy ? asksArr : bidsArr;
   if (levels.length === 0) return null;
-  let remainingNotional = targetNotional;
-  let totalCost = 0;
-  let totalQty = 0;
-  for (const [price, qty] of levels) {
-    if (!Number.isFinite(price) || !Number.isFinite(qty) || price <= 0 || qty <= 0) continue;
-    const value = price * qty;
-    if (remainingNotional >= value) {
-      totalCost += value;
-      totalQty += qty;
-      remainingNotional -= value;
-    } else {
-      const partialQty = remainingNotional / price;
-      totalCost += remainingNotional;
-      totalQty += partialQty;
-      remainingNotional = 0;
+  let accumulatedQty = 0;
+  let accumulatedNotional = 0;
+  for (let i = 0; i < levels.length; i++) {
+    const price = levels[i][0];
+    const qty = levels[i][1];
+    const levelNotional = price * qty;
+    if (accumulatedNotional + levelNotional >= targetNotional) {
+      const neededNotional = targetNotional - accumulatedNotional;
+      const neededQty = neededNotional / price;
+      accumulatedQty += neededQty;
+      accumulatedNotional = targetNotional;
       break;
+    } else {
+      accumulatedQty += qty;
+      accumulatedNotional += levelNotional;
     }
   }
-  if (totalQty <= 0) return null;
-  return totalCost / totalQty;
+  if (accumulatedQty === 0) return null;
+  return accumulatedNotional / accumulatedQty;
 }
 
 const SWEEP_SLEEP_MS = 20;
