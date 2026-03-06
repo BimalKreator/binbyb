@@ -809,8 +809,11 @@ async function runMonitor() {
         } else if (availableBalance > requiredMargin) {
           const sym = String(symbol).toUpperCase();
           const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
-          const isLong = Number(lowPos?.positionAmt ?? lowPos?.size ?? 0) >= 0;
+          
+          // FIX: Reliably check direction using the cached 'side' property since Bybit sizes are absolute
+          const isLong = String(lowPos?.side || "").toUpperCase() === "BUY";
           const addSide = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
+          
           const addPrice =
             lowExchange === "binance"
               ? (binanceManager.getOrderbookPrice(sym, addSide, slippagePct) ?? markPrice)
@@ -819,11 +822,15 @@ async function runMonitor() {
           try {
             if (lowExchange === "binance") {
               await binanceManager.placeIOCLimitOrder(keys.binance, sym, addSide, qtyDiff, addPrice, {
-                positionSide: isLong ? "LONG" : "SHORT",
+                positionSide: lowPos?.positionSide || (isLong ? "LONG" : "SHORT"),
                 leverage: lowLeverage,
               });
             } else {
-              await bybitManager.placeIOCLimitOrder(keys.bybit, sym, addSide, qtyDiff, addPrice, { leverage: lowLeverage });
+              // FIX: Must pass positionIdx to Bybit for proper Hedge Mode routing
+              await bybitManager.placeIOCLimitOrder(keys.bybit, sym, addSide, qtyDiff, addPrice, { 
+                positionIdx: lowPos?.positionIdx,
+                leverage: lowLeverage 
+              });
             }
             orderCircuitBreaker.recordOrderPlaced();
             console.log(
