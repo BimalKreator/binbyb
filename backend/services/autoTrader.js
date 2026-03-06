@@ -239,8 +239,20 @@ async function runAutoEntry() {
 
   const top = selectedToken;
   const symbol = top.symbol;
-  const binanceSide = selectedBinanceSide;
-  const bybitSide = selectedBybitSide;
+  let binanceSide = selectedBinanceSide;
+  let bybitSide = selectedBybitSide;
+  if (settings.tradingMode === "l2") {
+    const targetNotional = Math.max(1, Number(settings.screenerTradeNotional) || 500);
+    const binBuy = binanceManager.getVwapPrice(top.symbol, "BUY", targetNotional);
+    const binSell = binanceManager.getVwapPrice(top.symbol, "SELL", targetNotional);
+    const bybBuy = bybitManager.getVwapPrice(top.symbol, "Buy", targetNotional);
+    const bybSell = bybitManager.getVwapPrice(top.symbol, "Sell", targetNotional);
+    const spreadIfBinShort = binSell && bybBuy ? ((binSell - bybBuy) / bybBuy) * 100 : -Infinity;
+    const spreadIfBybShort = bybSell && binBuy ? ((bybSell - binBuy) / binBuy) * 100 : -Infinity;
+    const isBinanceShort = spreadIfBinShort >= spreadIfBybShort;
+    binanceSide = isBinanceShort ? "SELL" : "BUY";
+    bybitSide = isBinanceShort ? "Buy" : "Sell";
+  }
   const nextFundingTime = top.nextFundingTime;
 
   const allocatedMargin = await getAllocatedMargin(keys);

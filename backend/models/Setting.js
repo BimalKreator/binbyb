@@ -41,6 +41,8 @@ const settingSchema = new mongoose.Schema(
     bybitMarginAllowedPct: { type: Number, default: 50, min: 0, max: 100 },
     screenerSortBy: { type: String, enum: ["funding", "l2spread"], default: "funding" },
     screenerTradeNotional: { type: Number, default: 500, min: 1 },
+    tradingMode: { type: String, enum: ["funding", "l2"], default: "funding" },
+    screenerDirectionBy: { type: String, enum: ["funding", "l2"], default: "funding" },
   },
   { timestamps: true }
 );

@@ -20,6 +20,8 @@ type RankedToken = {
   livePriceSpread?: number | null;
   l2SpreadVwap?: number | null;
   screenerTradeNotional?: number;
+  recommendedBinanceSide?: "Long" | "Short";
+  recommendedBybitSide?: "Long" | "Short";
   botState?: "Active" | "Last" | "Next" | null;
 };
 
@@ -484,8 +486,8 @@ export default function ScreenerPage() {
                 {currentItems.map((row) => {
                   const binNum = Number(row.fundingBinance);
                   const bybNum = Number(row.fundingBybit);
-                  const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
-                  const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
+                  const binanceIsLong = row.recommendedBinanceSide != null ? row.recommendedBinanceSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum);
+                  const bybitIsLong = row.recommendedBybitSide != null ? row.recommendedBybitSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum);
                   const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
                   return (
                     <tr key={row.symbol} className="border-b border-slate-700/50">
@@ -614,8 +616,8 @@ export default function ScreenerPage() {
                     {bannedList.map((row) => {
                       const binNum = Number(row.fundingBinance);
                       const bybNum = Number(row.fundingBybit);
-                      const binanceIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum;
-                      const bybitIsLong = !Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum;
+                      const binanceIsLong = row.recommendedBinanceSide != null ? row.recommendedBinanceSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum);
+                      const bybitIsLong = row.recommendedBybitSide != null ? row.recommendedBybitSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum);
                       const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
                       const isCooling = coolingSet.has(row.symbol.toUpperCase());
                       const isBanned = bannedSet.has(row.symbol.toUpperCase());
@@ -747,21 +749,15 @@ export default function ScreenerPage() {
                   ? Number(popupToken.markPrice).toFixed(2)
                   : "—"}
               </p>
-              {(() => {
-                const bin = Number(popupToken.fundingBinance);
-                const byb = Number(popupToken.fundingBybit);
-                const actionText =
-                  !Number.isNaN(bin) && !Number.isNaN(byb) && bin > byb
-                    ? "Short Binance & Long Bybit"
-                    : !Number.isNaN(bin) && !Number.isNaN(byb) && byb > bin
-                      ? "Long Binance & Short Bybit"
-                      : "Long Binance & Short Bybit";
-                return (
-                  <p className="text-sm font-medium text-foreground rounded-lg bg-slate-800/70 px-3 py-2">
-                    {actionText}
-                  </p>
-                );
-              })()}
+              <p className="text-sm font-medium text-foreground rounded-lg bg-slate-800/70 px-3 py-2">
+                {popupToken.recommendedBinanceSide === "Short"
+                  ? "Short Binance & Long Bybit"
+                  : popupToken.recommendedBinanceSide === "Long"
+                    ? "Long Binance & Short Bybit"
+                    : (Number(popupToken.fundingBinance) > Number(popupToken.fundingBybit)
+                      ? "Short Binance & Long Bybit"
+                      : "Long Binance & Short Bybit")}
+              </p>
               <label className="block">
                 <span className="text-sm text-slate-400 mb-1 block">Quantity</span>
                 <input

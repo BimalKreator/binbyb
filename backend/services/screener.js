@@ -21,6 +21,7 @@ const maxLeverageCache = {};
 let rankedTokens = [];
 let volatilityMeter = { level: "Low", count: 0 };
 let cachedUserMinSpread = 0;
+let cachedScreenerDirectionBy = "funding";
 /** When set, only tokens in this set (symbols on BOTH Binance and Bybit) are included. */
 let trackedCommonSymbols = new Set();
 
@@ -141,6 +142,7 @@ async function runScreener() {
   runScreenerDebounce = setTimeout(async () => {
     runScreenerDebounce = null;
     const settings = await Setting.findOne().lean();
+    cachedScreenerDirectionBy = settings?.screenerDirectionBy === "l2" ? "l2" : "funding";
     const userMinSpread = await getUserMinSpread();
     cachedUserMinSpread = userMinSpread;
     const screenerTradeNotional = Math.max(1, Number(settings?.screenerTradeNotional) || 500);
@@ -210,12 +212,37 @@ async function runScreener() {
       const finalBinanceSell = safeNum(binanceSellVwap) ?? binTop?.topBidPrice ?? null;
       const finalBybitBuy = safeNum(bybitBuyVwap) ?? bybTop?.topAskPrice ?? null;
       const finalBybitSell = safeNum(bybitSellVwap) ?? bybTop?.topBidPrice ?? null;
+
+      let isBinanceShort = (fundingBinance || 0) > (fundingBybit || 0);
       let l2SpreadVwap = null;
-      const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
-      if (binanceHigher && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
-        l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
-      } else if (!binanceHigher && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
-        l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+      if (binanceBuyVwap && binanceSellVwap && bybitBuyVwap && bybitSellVwap) {
+        if (settings?.screenerDirectionBy === "l2") {
+          const spreadIfBinanceShort = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
+          const spreadIfBybitShort = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+          if (spreadIfBinanceShort >= spreadIfBybitShort) {
+            isBinanceShort = true;
+            l2SpreadVwap = spreadIfBinanceShort;
+          } else {
+            isBinanceShort = false;
+            l2SpreadVwap = spreadIfBybitShort;
+          }
+        } else {
+          if (isBinanceShort) {
+            l2SpreadVwap = finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0
+              ? ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100
+              : null;
+          } else {
+            l2SpreadVwap = finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0
+              ? ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100
+              : null;
+          }
+        }
+      } else {
+        if (isBinanceShort && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
+          l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
+        } else if (!isBinanceShort && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
+          l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+        }
       }
       if (l2SpreadVwap == null || !Number.isFinite(l2SpreadVwap)) {
         l2SpreadVwap = livePriceSpread;
@@ -238,6 +265,8 @@ async function runScreener() {
         livePriceSpread,
         l2SpreadVwap,
         screenerTradeNotional,
+        recommendedBinanceSide: isBinanceShort ? "Short" : "Long",
+        recommendedBybitSide: isBinanceShort ? "Long" : "Short",
       });
     }
 
@@ -454,12 +483,33 @@ function buildRankedTokensFromCurrentData() {
     const finalBinanceSell = safeNum(binanceSellVwap) ?? binTop?.topBidPrice ?? null;
     const finalBybitBuy = safeNum(bybitBuyVwap) ?? bybTop?.topAskPrice ?? null;
     const finalBybitSell = safeNum(bybitSellVwap) ?? bybTop?.topBidPrice ?? null;
+
+    let isBinanceShort = (fundingBinance || 0) > (fundingBybit || 0);
     let l2SpreadVwap = null;
-    const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
-    if (binanceHigher && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
-      l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
-    } else if (!binanceHigher && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
-      l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+    if (binanceBuyVwap && binanceSellVwap && bybitBuyVwap && bybitSellVwap) {
+      if (cachedScreenerDirectionBy === "l2") {
+        const spreadIfBinanceShort = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
+        const spreadIfBybitShort = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+        if (spreadIfBinanceShort >= spreadIfBybitShort) {
+          isBinanceShort = true;
+          l2SpreadVwap = spreadIfBinanceShort;
+        } else {
+          isBinanceShort = false;
+          l2SpreadVwap = spreadIfBybitShort;
+        }
+      } else {
+        if (isBinanceShort && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
+          l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
+        } else if (!isBinanceShort && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
+          l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+        }
+      }
+    } else {
+      if (isBinanceShort && finalBinanceSell != null && finalBybitBuy != null && finalBybitBuy > 0) {
+        l2SpreadVwap = ((finalBinanceSell - finalBybitBuy) / finalBybitBuy) * 100;
+      } else if (!isBinanceShort && finalBybitSell != null && finalBinanceBuy != null && finalBinanceBuy > 0) {
+        l2SpreadVwap = ((finalBybitSell - finalBinanceBuy) / finalBinanceBuy) * 100;
+      }
     }
     if (l2SpreadVwap == null || !Number.isFinite(l2SpreadVwap)) {
       l2SpreadVwap = livePriceSpread;
@@ -489,6 +539,8 @@ function buildRankedTokensFromCurrentData() {
       livePriceSpread,
       l2SpreadVwap,
       screenerTradeNotional: notionalFallback,
+      recommendedBinanceSide: isBinanceShort ? "Short" : "Long",
+      recommendedBybitSide: isBinanceShort ? "Long" : "Short",
       botState,
     };
   });

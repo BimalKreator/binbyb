@@ -33,6 +33,8 @@ type SettingRecord = {
   bybitMarginAllowedPct?: number;
   screenerSortBy?: "funding" | "l2spread";
   screenerTradeNotional?: number;
+  tradingMode?: "funding" | "l2";
+  screenerDirectionBy?: "funding" | "l2";
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -68,6 +70,8 @@ export default function SettingsPage() {
   const [bybitMarginAllowedPct, setBybitMarginAllowedPct] = useState(50);
   const [screenerSortBy, setScreenerSortBy] = useState<"funding" | "l2spread">("funding");
   const [screenerTradeNotional, setScreenerTradeNotional] = useState(500);
+  const [tradingMode, setTradingMode] = useState<"funding" | "l2">("funding");
+  const [screenerDirectionBy, setScreenerDirectionBy] = useState<"funding" | "l2">("funding");
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -124,6 +128,8 @@ export default function SettingsPage() {
           setBybitMarginAllowedPct(s.bybitMarginAllowedPct ?? 50);
           setScreenerSortBy(s.screenerSortBy === "l2spread" ? "l2spread" : "funding");
           setScreenerTradeNotional(s.screenerTradeNotional ?? 500);
+          setTradingMode(s.tradingMode === "l2" ? "l2" : "funding");
+          setScreenerDirectionBy(s.screenerDirectionBy === "l2" ? "l2" : "funding");
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -223,6 +229,8 @@ export default function SettingsPage() {
         bybitMarginAllowedPct,
         screenerSortBy,
         screenerTradeNotional,
+        tradingMode,
+        screenerDirectionBy,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -626,6 +634,28 @@ export default function SettingsPage() {
                 className={inputClass}
                 placeholder="50"
               />
+            </label>
+            <label className="block">
+              <span className={labelClass}>Bot Trading Mode</span>
+              <select
+                value={tradingMode}
+                onChange={(e) => setTradingMode(e.target.value as "funding" | "l2")}
+                className={inputClass}
+              >
+                <option value="funding">Funding Arbitrage</option>
+                <option value="l2">L2 Spread Arbitrage</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Screener Direction Base</span>
+              <select
+                value={screenerDirectionBy}
+                onChange={(e) => setScreenerDirectionBy(e.target.value as "funding" | "l2")}
+                className={inputClass}
+              >
+                <option value="funding">Based on Funding</option>
+                <option value="l2">Based on L2 Spread</option>
+              </select>
             </label>
             <label className="block">
               <span className={labelClass}>Screener Sort By</span>
