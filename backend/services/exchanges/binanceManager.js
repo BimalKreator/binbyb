@@ -1670,12 +1670,27 @@ async function placeMarketCloseOrder(credentials, symbol, side, quantity, opts =
 const DEFAULT_SLIPPAGE_PCT = 0.1;
 
 /**
- * Get best bid/ask from WebSocket bookTicker cache (L2 top of book). Returns null if not available.
+ * Get best bid/ask from WebSocket orderbooks cache (depth) or bookTicker fallback. Returns null if not available.
  * @param {string} symbol
  * @returns {{ bestBid: number, bestBidQty: number, bestAsk: number, bestAskQty: number } | null}
  */
 function getBestBidAsk(symbol) {
   const sym = String(symbol).toUpperCase();
+  const ob = orderbooks[sym];
+  if (ob && ob.bids && ob.bids.length > 0 && ob.asks && ob.asks.length > 0) {
+    const bids = ob.bids.filter((x) => Number.isFinite(x[0]) && x[0] > 0);
+    const asks = ob.asks.filter((x) => Number.isFinite(x[0]) && x[0] > 0);
+    if (bids.length > 0 && asks.length > 0) {
+      const bestBidLevel = bids.reduce((a, b) => (b[0] > a[0] ? b : a));
+      const bestAskLevel = asks.reduce((a, b) => (b[0] < a[0] ? b : a));
+      return {
+        bestBid: bestBidLevel[0],
+        bestBidQty: bestBidLevel[1] ?? 0,
+        bestAsk: bestAskLevel[0],
+        bestAskQty: bestAskLevel[1] ?? 0,
+      };
+    }
+  }
   const book = bookTickerBySymbol[sym];
   if (!book || !Number.isFinite(book.bestBid) || !Number.isFinite(book.bestAsk)) return null;
   return book;

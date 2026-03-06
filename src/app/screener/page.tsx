@@ -312,7 +312,10 @@ export default function ScreenerPage() {
   const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
   const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
   const mainList = useMemo(
-    () => filtered.filter((t) => !bannedSet.has(t.symbol.toUpperCase()) && !coolingSet.has(t.symbol.toUpperCase())),
+    () =>
+      filtered
+        .filter((t) => !bannedSet.has(t.symbol.toUpperCase()) && !coolingSet.has(t.symbol.toUpperCase()))
+        .slice(0, 50),
     [filtered, bannedSet, coolingSet]
   );
   const bannedList = useMemo(
