@@ -505,8 +505,8 @@ const lastMarkPriceBySymbol = {};
 const bookTickerBySymbol = {};
 /** L2 top of book for sweeper: { topBidPrice, topBidQty, topAskPrice, topAskQty } from b, B, a, A */
 const topOfBookBySymbol = {};
-/** Full depth (20 levels) per symbol from @depth20@100ms: { bids: [[price,qty],...], asks: [[price,qty],...] } */
-const orderbooksBySymbol = {};
+/** Full depth (20 levels) per symbol from @depth20@100ms. Merge deltas: { bids: Map(priceStr->qty), asks: Map(priceStr->qty) }. */
+const orderbooks = {};
 /** Separate WebSocket(s) for depth (Binance 200-stream limit); 150 symbols per connection. */
 let depthWsArray = [];
 const BINANCE_DEPTH_CHUNK_SIZE = 150;
@@ -548,7 +548,7 @@ function schedulePrivateReconnect() {
 
 /**
  * Open a dedicated WebSocket for depth20@100ms for a chunk of symbols (Binance 200-stream limit).
- * Processes depthUpdate into orderbooksBySymbol.
+ * Processes depthUpdate into orderbooks (merge deltas).
  */
 function connectBinanceDepthChunk(symbolsChunk) {
   if (!symbolsChunk || symbolsChunk.length === 0) return;
@@ -566,14 +566,22 @@ function connectBinanceDepthChunk(symbolsChunk) {
       const data = JSON.parse(raw.toString());
       const list = Array.isArray(data) ? data : [data.data || data];
       for (const payload of list) {
-        if (payload && payload.e === "depthUpdate" && payload.b && payload.a) {
-          const sym = payload.s ? String(payload.s).toUpperCase() : "";
-          if (sym) {
-            orderbooksBySymbol[sym] = {
-              bids: (payload.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-              asks: (payload.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-            };
-          }
+        if (payload && payload.e === "depthUpdate" && payload.s) {
+          const sym = String(payload.s).toUpperCase();
+          if (!orderbooks[sym]) orderbooks[sym] = { bids: new Map(), asks: new Map() };
+          const ob = orderbooks[sym];
+          (payload.b || []).forEach((x) => {
+            const p = String(x[0]);
+            const q = parseFloat(x[1]) || 0;
+            if (q === 0) ob.bids.delete(p);
+            else ob.bids.set(p, q);
+          });
+          (payload.a || []).forEach((x) => {
+            const p = String(x[0]);
+            const q = parseFloat(x[1]) || 0;
+            if (q === 0) ob.asks.delete(p);
+            else ob.asks.set(p, q);
+          });
         }
       }
     } catch (e) {
@@ -1278,7 +1286,7 @@ function stop() {
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   Object.keys(bookTickerBySymbol).forEach((k) => delete bookTickerBySymbol[k]);
   Object.keys(topOfBookBySymbol).forEach((k) => delete topOfBookBySymbol[k]);
-  Object.keys(orderbooksBySymbol).forEach((k) => delete orderbooksBySymbol[k]);
+  Object.keys(orderbooks).forEach((k) => delete orderbooks[k]);
   console.log("[Binance] Manager stopped");
 }
 
@@ -1682,7 +1690,7 @@ function getTopOfBook(symbol) {
 }
 
 /**
- * VWAP for a target notional (USD) from depth orderbook. BUY = consume asks (asc), SELL = consume bids (desc).
+ * VWAP for a target notional (USD) from WebSocket depth cache only (no REST). BUY = consume asks (asc), SELL = consume bids (desc).
  * Returns VWAP of whatever depth is available even if below targetNotional (never null if any level exists).
  * @param {string} symbol
  * @param {string} side - 'BUY' | 'SELL'
@@ -1691,13 +1699,12 @@ function getTopOfBook(symbol) {
  */
 function getVwapPrice(symbol, side, targetNotional) {
   const sym = String(symbol).toUpperCase();
-  const book = orderbooksBySymbol[sym];
-  if (!book || !targetNotional || targetNotional <= 0) return null;
+  const book = orderbooks[sym];
+  if (!book || !book.bids || !book.asks || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  let levels = isBuy ? (book.asks || []) : (book.bids || []);
-  levels = levels.map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0);
-  if (isBuy) levels.sort((a, b) => a[0] - b[0]);
-  else levels.sort((a, b) => b[0] - a[0]);
+  const bidsArr = Array.from(book.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
+  const asksArr = Array.from(book.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
+  const levels = isBuy ? asksArr : bidsArr;
   if (levels.length === 0) return null;
   let accumulatedQty = 0;
   let accumulatedNotional = 0;
