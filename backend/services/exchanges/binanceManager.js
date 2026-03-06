@@ -783,7 +783,7 @@ async function startPrivateStream(credentials) {
 
   try {
     const timestamp = Date.now();
-    const queryString = `timestamp=${timestamp}`;
+    const queryString = `recvWindow=60000&timestamp=${timestamp}`;
     const signature = signQueryString(queryString, credentials.apiSecret);
     const fullQuery = `${queryString}&signature=${signature}`;
     const res = await binanceAxios.post(`${REST_BASE}/fapi/v1/listenKey?${fullQuery}`, null, {
@@ -900,7 +900,7 @@ async function startPrivateStream(credentials) {
     if (!privateCredentials || !listenKey) return;
     try {
       const timestamp = Date.now();
-      const queryString = `timestamp=${timestamp}`;
+      const queryString = `recvWindow=60000&timestamp=${timestamp}`;
       const signature = signQueryString(queryString, privateCredentials.apiSecret);
       const fullQuery = `${queryString}&signature=${signature}`;
       await binanceAxios.put(`${REST_BASE}/fapi/v1/listenKey?${fullQuery}`, null, {
@@ -1046,7 +1046,7 @@ async function getSymbolFilters(symbol) {
  */
 async function getPositionMode(credentials) {
   const timestamp = Date.now();
-  const queryString = `timestamp=${timestamp}`;
+  const queryString = `recvWindow=60000&timestamp=${timestamp}`;
   const signature = signQueryString(queryString, credentials.apiSecret);
   const fullQuery = `${queryString}&signature=${signature}`;
   const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/positionSide/dual?${fullQuery}`, {
@@ -1062,6 +1062,7 @@ async function setLeverage(credentials, symbol, leverage) {
   const timestamp = Date.now();
   const lev = Math.floor(Number(leverage)) || 1;
   const params = {
+    recvWindow: 60000,
     symbol: String(symbol).toUpperCase(),
     leverage: Math.max(1, Math.min(125, lev)),
     timestamp,
@@ -1352,7 +1353,7 @@ async function start(credentials, options = {}) {
   if (credentials?.apiKey && credentials?.apiSecret) {
     try {
       const timestamp = Date.now();
-      const queryString = `timestamp=${timestamp}`;
+      const queryString = `recvWindow=60000&timestamp=${timestamp}`;
       const signature = signQueryString(queryString, credentials.apiSecret);
       const fullQuery = `${queryString}&signature=${signature}`;
       const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
@@ -1622,7 +1623,7 @@ async function getPositionSymbols(credentials) {
 async function getPositionDetails(credentials) {
   try {
     const timestamp = Date.now();
-    const queryString = `timestamp=${timestamp}`;
+    const queryString = `recvWindow=60000&timestamp=${timestamp}`;
     const signature = signQueryString(queryString, credentials.apiSecret);
     const fullQuery = `${queryString}&signature=${signature}`;
     const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/positionRisk?${fullQuery}`, {

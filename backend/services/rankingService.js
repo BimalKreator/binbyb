@@ -136,36 +136,23 @@ async function fetchBybitKlines(symbol) {
 
 /**
  * Run one full cache refresh for all symbols.
+ * L2 arbitrage bot: no REST klines/OI/funding history per symbol (avoids event loop blocking).
+ * Set empty defaults; real-time data comes from exchange manager WebSockets.
  */
 async function refreshRankingCache() {
   const symbols = symbolList.length > 0 ? symbolList : ["BTCUSDT", "ETHUSDT"];
-  console.log(`[RankingService] Refreshing cache for ${symbols.length} symbols. Throttling with 1.5s delay per symbol to prevent rate limits...`);
-  const start = Date.now();
+  const now = Date.now();
   for (const symbol of symbols) {
-    try {
-      const [binanceFunding, bybitFunding, binanceOI, bybitOI, binanceKlines, bybitKlines] = await Promise.all([
-        fetchBinanceFundingHistory(symbol),
-        fetchBybitFundingHistory(symbol),
-        fetchBinanceOpenInterestHistory(symbol),
-        fetchBybitOpenInterestHistory(symbol),
-        fetchBinanceKlines(symbol),
-        fetchBybitKlines(symbol),
-      ]);
-      global.rankingCache[symbol] = {
-        binanceFunding,
-        bybitFunding,
-        binanceOI,
-        bybitOI,
-        binanceKlines,
-        bybitKlines,
-        lastUpdated: Date.now(),
-      };
-    } catch (e) {
-      console.warn("[RankingService] Failed for", symbol, e?.message ?? e);
-    }
-    await sleep(1500); // 1.5 seconds delay between each symbol
+    global.rankingCache[symbol] = {
+      binanceFunding: [],
+      bybitFunding: [],
+      binanceOI: [],
+      bybitOI: [],
+      binanceKlines: [],
+      bybitKlines: [],
+      lastUpdated: now,
+    };
   }
-  console.log("[RankingService] Cache refresh done in", ((Date.now() - start) / 1000).toFixed(1), "s");
 }
 
 /**
