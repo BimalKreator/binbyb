@@ -258,10 +258,20 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
   const binanceFilled = binanceResult.status === "fulfilled" ? binanceResult.value : 0;
   const bybitFilled = bybitResult.status === "fulfilled" ? bybitResult.value : 0;
   if (binanceResult.status === "rejected") {
-    console.error("[TradeMonitor] closePair Binance exit sweep failed", sym, binanceResult.reason?.message ?? binanceResult.reason);
+    const msg = binanceResult.reason?.message || String(binanceResult.reason);
+    console.error("[TradeMonitor] closePair Binance exit sweep failed", sym, msg);
+    if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("notional")) {
+      console.log(`[Phantom Position Detected] ${sym} on Binance. Forcing REST Sync...`);
+      binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
+    }
   }
   if (bybitResult.status === "rejected") {
-    console.error("[TradeMonitor] closePair Bybit exit sweep failed", sym, bybitResult.reason?.message ?? bybitResult.reason);
+    const msg = bybitResult.reason?.message || String(bybitResult.reason);
+    console.error("[TradeMonitor] closePair Bybit exit sweep failed", sym, msg);
+    if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("minimum order value")) {
+      console.log(`[Phantom Position Detected] ${sym} on Bybit. Forcing REST Sync...`);
+      bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
+    }
   }
 
   const isPhantomError = (err) => {

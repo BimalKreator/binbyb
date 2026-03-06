@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
 import { Search, X } from "lucide-react";
+import { io } from "socket.io-client";
 
 type RankedToken = {
   symbol: string;
@@ -25,8 +26,6 @@ type RankedToken = {
   recommendedBybitSide?: "Long" | "Short";
   botState?: "Active" | "Last" | "Next" | null;
 };
-
-const POLL_MS = 1000;
 
 function formatCountdownHms(ms: number): string {
   if (ms <= 0) return "—";
@@ -148,30 +147,43 @@ export default function ScreenerPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const fetchData = async () => {
-      try {
-        const res = await api.get<{ success?: boolean; rankedTokens?: RankedToken[] }>("/screener");
-        const payload = res?.data;
+    // Initial fetch for instant page load
+    api.get<{ success?: boolean; rankedTokens?: RankedToken[] }>("/screener")
+      .then(res => {
         if (cancelled) return;
-        const list = Array.isArray(payload?.rankedTokens) ? payload.rankedTokens : [];
-        if (payload?.success !== false) {
-          latestScreenerListRef.current = list;
+        if (res.data?.success !== false) {
+          latestScreenerListRef.current = Array.isArray(res.data?.rankedTokens) ? res.data.rankedTokens : [];
           throttledDataUpdate();
         }
-      } catch (e) {
-        if (!cancelled) toast.error("Failed to load screener data.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+        setLoading(false);
+      })
+      .catch(() => { if (!cancelled) setLoading(false); });
+
+    // Connect to WebSocket to prevent REST polling
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" && window.location.origin.includes("3000") ? "http://139.180.190.25:5000" : "https://tradeictearner.online");
+    const socket = io(apiUrl, { path: "/socket.io", transports: ["websocket", "polling"] });
+
+    socket.on("screener_data", (list: RankedToken[]) => {
+      if (cancelled) return;
+      latestScreenerListRef.current = Array.isArray(list) ? list : [];
+      throttledDataUpdate();
+    });
+
+    fetchScreenerRef.current = () => {
+      api.get<{ success?: boolean; rankedTokens?: RankedToken[] }>("/screener").then(res => {
+        if (cancelled) return;
+        if (res.data?.success !== false) {
+          latestScreenerListRef.current = Array.isArray(res.data?.rankedTokens) ? res.data.rankedTokens : [];
+          throttledDataUpdate();
+        }
+      }).catch(() => {});
     };
-    fetchScreenerRef.current = () => { fetchData(); };
-    fetchData();
-    const t = setInterval(fetchData, POLL_MS);
+
     return () => {
       cancelled = true;
-      clearInterval(t);
+      socket.disconnect();
     };
-  }, []);
+  }, [throttledDataUpdate]);
 
   useEffect(() => {
     api
