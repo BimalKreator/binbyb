@@ -505,6 +505,8 @@ const lastMarkPriceBySymbol = {};
 const bookTickerBySymbol = {};
 /** L2 top of book for sweeper: { topBidPrice, topBidQty, topAskPrice, topAskQty } from b, B, a, A */
 const topOfBookBySymbol = {};
+/** Full depth (20 levels) per symbol from @depth20@100ms: { bids: [[price,qty],...], asks: [[price,qty],...] } */
+const orderbooksBySymbol = {};
 /** Funding rate (and nextFundingTime) from public markPriceUpdate stream. No REST /fundingRate. */
 const cachedFundingRates = {};
 
@@ -554,12 +556,18 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and bookTicker...");
+    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice, bookTicker, and depth...");
     ws.send(JSON.stringify({
       method: "SUBSCRIBE",
       params: ["!markPrice@arr@1s", "!bookTicker"],
       id: 1,
     }));
+    const depthStreams = (symbols || []).map((s) => String(s).toLowerCase() + "@depth20@100ms");
+    const DEPTH_CHUNK = 50;
+    for (let i = 0; i < depthStreams.length; i += DEPTH_CHUNK) {
+      const chunk = depthStreams.slice(i, i + DEPTH_CHUNK);
+      ws.send(JSON.stringify({ method: "SUBSCRIBE", params: chunk, id: 2 + i }));
+    }
   });
 
   ws.on("message", (raw) => {
@@ -573,6 +581,16 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
       if (Array.isArray(data)) {
         data.forEach((item) => {
+          if (item && item.e === "depthUpdate" && item.b && item.a) {
+            const sym = item.s ? String(item.s).toUpperCase() : "";
+            if (sym) {
+              orderbooksBySymbol[sym] = {
+                bids: (item.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+                asks: (item.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+              };
+            }
+            return;
+          }
           if (item && item.e === "bookTicker") {
             const sym = item.s ? String(item.s).toUpperCase() : "";
             if (sym && item.b != null && item.a != null) {
@@ -635,6 +653,16 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
       }
 
+      if (payload && payload.e === "depthUpdate" && payload.b && payload.a) {
+        const sym = payload.s ? String(payload.s).toUpperCase() : "";
+        if (sym) {
+          orderbooksBySymbol[sym] = {
+            bids: (payload.b || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+            asks: (payload.a || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+          };
+        }
+        return;
+      }
       if (payload && payload.e === "bookTicker") {
         const { s, b, B, a, A } = payload;
         const sym = s ? String(s).toUpperCase() : "";
@@ -1209,6 +1237,7 @@ function stop() {
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   Object.keys(bookTickerBySymbol).forEach((k) => delete bookTickerBySymbol[k]);
   Object.keys(topOfBookBySymbol).forEach((k) => delete topOfBookBySymbol[k]);
+  Object.keys(orderbooksBySymbol).forEach((k) => delete orderbooksBySymbol[k]);
   console.log("[Binance] Manager stopped");
 }
 
@@ -1611,6 +1640,44 @@ function getTopOfBook(symbol) {
   return top;
 }
 
+/**
+ * VWAP for a target notional (USD) from depth orderbook. BUY = consume asks (asc), SELL = consume bids (desc).
+ * @param {string} symbol
+ * @param {string} side - 'BUY' | 'SELL'
+ * @param {number} targetNotional - USD notional to fill
+ * @returns {number|null} VWAP price or null if insufficient depth
+ */
+function getVwapPrice(symbol, side, targetNotional) {
+  const sym = String(symbol).toUpperCase();
+  const book = orderbooksBySymbol[sym];
+  if (!book || !targetNotional || targetNotional <= 0) return null;
+  const isBuy = String(side).toUpperCase() === "BUY";
+  const levels = isBuy ? (book.asks || []) : (book.bids || []);
+  if (levels.length === 0) return null;
+  let remainingNotional = targetNotional;
+  let totalCost = 0;
+  let totalQty = 0;
+  for (const [p, q] of levels) {
+    const price = Number(p);
+    const qty = Number(q);
+    if (!Number.isFinite(price) || !Number.isFinite(qty) || price <= 0 || qty <= 0) continue;
+    const value = price * qty;
+    if (remainingNotional >= value) {
+      totalCost += value;
+      totalQty += qty;
+      remainingNotional -= value;
+    } else {
+      const partialQty = remainingNotional / price;
+      totalCost += remainingNotional;
+      totalQty += partialQty;
+      remainingNotional = 0;
+      break;
+    }
+  }
+  if (totalQty <= 0) return null;
+  return totalCost / totalQty;
+}
+
 const SWEEP_SLEEP_MS = 20;
 
 /**
@@ -1774,6 +1841,7 @@ module.exports = {
   getOrderbookPrice,
   getBestBidAsk,
   getTopOfBook,
+  getVwapPrice,
   executeLiquiditySweep,
   getBalance,
   getBalances,

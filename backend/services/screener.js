@@ -140,8 +140,10 @@ async function runScreener() {
   }
   runScreenerDebounce = setTimeout(async () => {
     runScreenerDebounce = null;
+    const settings = await Setting.findOne().lean();
     const userMinSpread = await getUserMinSpread();
     cachedUserMinSpread = userMinSpread;
+    const screenerTradeNotional = Math.max(1, Number(settings?.screenerTradeNotional) || 500);
     const binanceKeys = Object.keys(binanceData);
     const bybitUpper = new Set(Object.keys(bybitData).map((s) => s.toUpperCase()));
     // Strict match: only symbols that exist on BOTH exchanges (and in tracked common list if set)
@@ -199,6 +201,18 @@ async function runScreener() {
         }
       }
 
+      const binanceBuyVwap = binanceManager.getVwapPrice(symbol, "BUY", screenerTradeNotional);
+      const binanceSellVwap = binanceManager.getVwapPrice(symbol, "SELL", screenerTradeNotional);
+      const bybitBuyVwap = bybitManager.getVwapPrice(symbol, "Buy", screenerTradeNotional);
+      const bybitSellVwap = bybitManager.getVwapPrice(symbol, "Sell", screenerTradeNotional);
+      let l2SpreadVwap = null;
+      const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
+      if (binanceHigher && binanceSellVwap != null && bybitBuyVwap != null && bybitBuyVwap > 0) {
+        l2SpreadVwap = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
+      } else if (!binanceHigher && bybitSellVwap != null && binanceBuyVwap != null && binanceBuyVwap > 0) {
+        l2SpreadVwap = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+      }
+
       tokens.push({
         symbol,
         fundingBinance: bin?.fundingRate ?? 0,
@@ -214,11 +228,12 @@ async function runScreener() {
         maxLeverage,
         markPrice,
         livePriceSpread,
+        l2SpreadVwap,
+        screenerTradeNotional,
       });
     }
 
     updateVolatilityMeter(tokens);
-    const settings = await Setting.findOne().lean();
     if (settings?.useAdvancedRanking) {
       const withScore = [];
       for (const token of tokens) {
@@ -236,6 +251,15 @@ async function runScreener() {
     } else {
       // Ranking OFF: sort by interval priority then raw spread descending
       rankedTokens = sortByPriorityAndSpread(tokens);
+    }
+
+    const screenerSortBy = settings?.screenerSortBy === "l2spread" ? "l2spread" : "funding";
+    if (screenerSortBy === "l2spread") {
+      rankedTokens = [...rankedTokens].sort((a, b) => {
+        const va = a.l2SpreadVwap != null && Number.isFinite(a.l2SpreadVwap) ? a.l2SpreadVwap : -Infinity;
+        const vb = b.l2SpreadVwap != null && Number.isFinite(b.l2SpreadVwap) ? b.l2SpreadVwap : -Infinity;
+        return vb - va;
+      });
     }
 
     // Apply Active, Last, Next labels
@@ -412,6 +436,19 @@ function buildRankedTokensFromCurrentData() {
       }
     }
 
+    const notionalFallback = 500;
+    const binanceBuyVwap = binanceManager.getVwapPrice(symbol, "BUY", notionalFallback);
+    const binanceSellVwap = binanceManager.getVwapPrice(symbol, "SELL", notionalFallback);
+    const bybitBuyVwap = bybitManager.getVwapPrice(symbol, "Buy", notionalFallback);
+    const bybitSellVwap = bybitManager.getVwapPrice(symbol, "Sell", notionalFallback);
+    let l2SpreadVwap = null;
+    const binanceHigher = (fundingBinance || 0) > (fundingBybit || 0);
+    if (binanceHigher && binanceSellVwap != null && bybitBuyVwap != null && bybitBuyVwap > 0) {
+      l2SpreadVwap = ((binanceSellVwap - bybitBuyVwap) / bybitBuyVwap) * 100;
+    } else if (!binanceHigher && bybitSellVwap != null && binanceBuyVwap != null && binanceBuyVwap > 0) {
+      l2SpreadVwap = ((bybitSellVwap - binanceBuyVwap) / binanceBuyVwap) * 100;
+    }
+
     let botState = null;
     if (activeTokens.has(symbol)) {
       botState = "Active";
@@ -434,6 +471,8 @@ function buildRankedTokensFromCurrentData() {
       maxLeverage: maxLeverageCache[symbol] ?? null,
       markPrice: bin?.markPrice ?? byb?.markPrice ?? null,
       livePriceSpread,
+      l2SpreadVwap,
+      screenerTradeNotional: notionalFallback,
       botState,
     };
   });

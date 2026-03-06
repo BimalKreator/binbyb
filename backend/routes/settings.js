@@ -56,6 +56,8 @@ router.put("/", async (req, res) => {
       allowedIntervals,
       binanceMarginAllowedPct,
       bybitMarginAllowedPct,
+      screenerSortBy,
+      screenerTradeNotional,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -94,6 +96,8 @@ router.put("/", async (req, res) => {
     }
     if (binanceMarginAllowedPct !== undefined) update.binanceMarginAllowedPct = Math.max(0, Math.min(100, Number(binanceMarginAllowedPct) ?? 50));
     if (bybitMarginAllowedPct !== undefined) update.bybitMarginAllowedPct = Math.max(0, Math.min(100, Number(bybitMarginAllowedPct) ?? 50));
+    if (screenerSortBy !== undefined) update.screenerSortBy = (screenerSortBy === "l2spread" ? "l2spread" : "funding");
+    if (screenerTradeNotional !== undefined) update.screenerTradeNotional = Math.max(1, Number(screenerTradeNotional) || 500);
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

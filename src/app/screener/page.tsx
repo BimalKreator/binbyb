@@ -18,6 +18,8 @@ type RankedToken = {
   fundingBinance?: number;
   fundingBybit?: number;
   livePriceSpread?: number | null;
+  l2SpreadVwap?: number | null;
+  screenerTradeNotional?: number;
   botState?: "Active" | "Last" | "Next" | null;
 };
 
@@ -473,6 +475,7 @@ export default function ScreenerPage() {
                   <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
                   <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
                   <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">L2 Spread</th>
+                  <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">L2 VWAP</th>
                   <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
                   <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
                 </tr>
@@ -522,6 +525,13 @@ export default function ScreenerPage() {
                       <td className="py-1 px-2 text-right">
                         <span className={row.livePriceSpread != null ? (row.livePriceSpread >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]") : "text-slate-500"}>
                           {row.livePriceSpread != null ? (row.livePriceSpread >= 0 ? "+" : "") + row.livePriceSpread.toFixed(4) + "%" : "—"}
+                        </span>
+                      </td>
+                      <td className="py-1 px-2 text-right">
+                        <span className={row.l2SpreadVwap != null && Number.isFinite(row.l2SpreadVwap) ? (row.l2SpreadVwap >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]") : "text-slate-500"}>
+                          {row.l2SpreadVwap != null && Number.isFinite(row.l2SpreadVwap)
+                            ? `L2 VWAP ($${row.screenerTradeNotional ?? 500}): ${(row.l2SpreadVwap >= 0 ? "+" : "") + row.l2SpreadVwap.toFixed(2)}%`
+                            : "—"}
                         </span>
                       </td>
                       <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">
@@ -595,6 +605,7 @@ export default function ScreenerPage() {
                       <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Funding</th>
                       <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Spread</th>
                       <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">L2 Spread</th>
+                      <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">L2 VWAP</th>
                       <th className="text-left py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs">Countdown</th>
                       <th className="text-right py-1 px-2 text-slate-400 font-medium text-[10px] sm:text-xs w-14 sm:w-auto">Action</th>
                     </tr>
@@ -646,6 +657,13 @@ export default function ScreenerPage() {
                           <td className="py-1 px-2 text-right">
                             <span className={row.livePriceSpread != null ? (row.livePriceSpread >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]") : "text-slate-500"}>
                               {row.livePriceSpread != null ? (row.livePriceSpread >= 0 ? "+" : "") + row.livePriceSpread.toFixed(4) + "%" : "—"}
+                            </span>
+                          </td>
+                          <td className="py-1 px-2 text-right">
+                            <span className={row.l2SpreadVwap != null && Number.isFinite(row.l2SpreadVwap) ? (row.l2SpreadVwap >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]") : "text-slate-500"}>
+                              {row.l2SpreadVwap != null && Number.isFinite(row.l2SpreadVwap)
+                                ? `L2 VWAP ($${row.screenerTradeNotional ?? 500}): ${(row.l2SpreadVwap >= 0 ? "+" : "") + row.l2SpreadVwap.toFixed(2)}%`
+                                : "—"}
                             </span>
                           </td>
                           <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs whitespace-nowrap">

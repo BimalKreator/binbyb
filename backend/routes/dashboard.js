@@ -262,6 +262,8 @@ router.get("/positions", async (req, res) => {
       positions.push({
         symbol,
         isFundingFlipped,
+        l2SpreadVwap: token?.l2SpreadVwap ?? null,
+        screenerTradeNotional: token?.screenerTradeNotional ?? null,
         binance: {
           side: binancePos.side,
           positionSide: binancePos.positionSide,

@@ -31,6 +31,8 @@ type SettingRecord = {
   minFundingConsistency?: number;
   binanceMarginAllowedPct?: number;
   bybitMarginAllowedPct?: number;
+  screenerSortBy?: "funding" | "l2spread";
+  screenerTradeNotional?: number;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -64,6 +66,8 @@ export default function SettingsPage() {
   const [minFundingConsistency, setMinFundingConsistency] = useState(75);
   const [binanceMarginAllowedPct, setBinanceMarginAllowedPct] = useState(50);
   const [bybitMarginAllowedPct, setBybitMarginAllowedPct] = useState(50);
+  const [screenerSortBy, setScreenerSortBy] = useState<"funding" | "l2spread">("funding");
+  const [screenerTradeNotional, setScreenerTradeNotional] = useState(500);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -118,6 +122,8 @@ export default function SettingsPage() {
           setMinFundingConsistency(s.minFundingConsistency ?? 75);
           setBinanceMarginAllowedPct(s.binanceMarginAllowedPct ?? 50);
           setBybitMarginAllowedPct(s.bybitMarginAllowedPct ?? 50);
+          setScreenerSortBy(s.screenerSortBy === "l2spread" ? "l2spread" : "funding");
+          setScreenerTradeNotional(s.screenerTradeNotional ?? 500);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -215,6 +221,8 @@ export default function SettingsPage() {
         minFundingConsistency,
         binanceMarginAllowedPct,
         bybitMarginAllowedPct,
+        screenerSortBy,
+        screenerTradeNotional,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -617,6 +625,28 @@ export default function SettingsPage() {
                 onChange={(e) => setBybitMarginAllowedPct(Math.max(0, Math.min(100, Number(e.target.value) ?? 50)))}
                 className={inputClass}
                 placeholder="50"
+              />
+            </label>
+            <label className="block">
+              <span className={labelClass}>Screener Sort By</span>
+              <select
+                value={screenerSortBy}
+                onChange={(e) => setScreenerSortBy(e.target.value as "funding" | "l2spread")}
+                className={inputClass}
+              >
+                <option value="funding">Funding Spread</option>
+                <option value="l2spread">L2 VWAP Spread</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Target Trade Value (Notional $)</span>
+              <input
+                type="number"
+                min={1}
+                value={screenerTradeNotional}
+                onChange={(e) => setScreenerTradeNotional(Math.max(1, Number(e.target.value) || 500))}
+                className={inputClass}
+                placeholder="500"
               />
             </label>
             <button

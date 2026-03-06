@@ -423,6 +423,8 @@ const lastMarkPriceBySymbol = {};
 const tickerStateBySymbol = {};
 /** Funding rate and nextFundingTime from public tickers stream. No REST /funding/history. */
 const cachedFundingRates = {};
+/** Orderbook 50 levels per symbol: { bids: Map(priceStr->qty), asks: Map(priceStr->qty) } for VWAP. */
+const orderbooksBySymbol = {};
 
 function schedulePublicReconnect() {
   if (publicStopped || publicReconnectTimer) return;
@@ -483,14 +485,19 @@ function connectBybitPublicChunk(symbolsChunk, chunkIndex) {
 
   ws.on("open", async () => {
     publicReconnectAttempts = 0;
-    console.log(`[Bybit] Public WS [Chunk ${chunkIndex}] connected. Subscribing to ${symbolsChunk.length} symbols...`);
+    console.log(`[Bybit] Public WS [Chunk ${chunkIndex}] connected. Subscribing to tickers and orderbook...`);
 
-    const subscribe_args = symbolsChunk.map((s) => `tickers.${s}`);
+    const tickerArgs = symbolsChunk.map((s) => `tickers.${s}`);
+    const orderbookArgs = symbolsChunk.map((s) => `orderbook.50.${s}`);
     const chunkSize = 10;
-    for (let i = 0; i < subscribe_args.length; i += chunkSize) {
+    for (let i = 0; i < tickerArgs.length; i += chunkSize) {
       if (ws.readyState !== WebSocket.OPEN) break;
-      const chunk = subscribe_args.slice(i, i + chunkSize);
-      ws.send(JSON.stringify({ op: "subscribe", args: chunk }));
+      ws.send(JSON.stringify({ op: "subscribe", args: tickerArgs.slice(i, i + chunkSize) }));
+      await new Promise((res) => setTimeout(res, 200));
+    }
+    for (let i = 0; i < orderbookArgs.length; i += chunkSize) {
+      if (ws.readyState !== WebSocket.OPEN) break;
+      ws.send(JSON.stringify({ op: "subscribe", args: orderbookArgs.slice(i, i + chunkSize) }));
       await new Promise((res) => setTimeout(res, 200));
     }
   });
@@ -505,7 +512,20 @@ function connectBybitPublicChunk(symbolsChunk, chunkIndex) {
           const eventTime = d.timestamp ? Number(d.timestamp) : msg.ts;
           if (eventTime) logLatency("bybit", msg.topic, eventTime, { symbol: d.symbol });
 
-          if (msg.topic.startsWith("tickers.") && d.symbol) {
+          if (msg.topic.startsWith("orderbook.") && d.symbol) {
+            const sym = String(d.symbol).toUpperCase();
+            if (!orderbooksBySymbol[sym]) orderbooksBySymbol[sym] = { bids: new Map(), asks: new Map() };
+            const ob = orderbooksBySymbol[sym];
+            if (msg.type === "snapshot") {
+              ob.bids = new Map();
+              ob.asks = new Map();
+              (d.b || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.bids.set(String(p), parseFloat(q)); });
+              (d.a || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.asks.set(String(p), parseFloat(q)); });
+            } else if (msg.type === "delta") {
+              (d.b || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.bids.delete(String(p)); else ob.bids.set(String(p), n); });
+              (d.a || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.asks.delete(String(p)); else ob.asks.set(String(p), n); });
+            }
+          } else if (msg.topic.startsWith("tickers.") && d.symbol) {
             const sym = String(d.symbol).toUpperCase();
             if (msg.type === "snapshot") {
               tickerStateBySymbol[sym] = { ...d };
@@ -1145,6 +1165,44 @@ function getTopOfBook(symbol) {
   };
 }
 
+/**
+ * VWAP for a target notional (USD) from orderbook.50. BUY = consume asks (asc), SELL = consume bids (desc).
+ * @param {string} symbol
+ * @param {string} side - 'Buy' | 'Sell'
+ * @param {number} targetNotional - USD notional to fill
+ * @returns {number|null} VWAP price or null if insufficient depth
+ */
+function getVwapPrice(symbol, side, targetNotional) {
+  const sym = String(symbol).toUpperCase();
+  const ob = orderbooksBySymbol[sym];
+  if (!ob || !targetNotional || targetNotional <= 0) return null;
+  const isBuy = String(side).toLowerCase() === "buy";
+  const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), q]).sort((a, b) => b[0] - a[0]);
+  const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), q]).sort((a, b) => a[0] - b[0]);
+  const levels = isBuy ? asksArr : bidsArr;
+  if (levels.length === 0) return null;
+  let remainingNotional = targetNotional;
+  let totalCost = 0;
+  let totalQty = 0;
+  for (const [price, qty] of levels) {
+    if (!Number.isFinite(price) || !Number.isFinite(qty) || price <= 0 || qty <= 0) continue;
+    const value = price * qty;
+    if (remainingNotional >= value) {
+      totalCost += value;
+      totalQty += qty;
+      remainingNotional -= value;
+    } else {
+      const partialQty = remainingNotional / price;
+      totalCost += remainingNotional;
+      totalQty += partialQty;
+      remainingNotional = 0;
+      break;
+    }
+  }
+  if (totalQty <= 0) return null;
+  return totalCost / totalQty;
+}
+
 const SWEEP_SLEEP_MS = 20;
 
 /**
@@ -1470,6 +1528,7 @@ function stop() {
   Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
   Object.keys(lastMarkPriceBySymbol).forEach((k) => delete lastMarkPriceBySymbol[k]);
   Object.keys(tickerStateBySymbol).forEach((k) => delete tickerStateBySymbol[k]);
+  Object.keys(orderbooksBySymbol).forEach((k) => delete orderbooksBySymbol[k]);
   console.log("[Bybit] Manager stopped");
 }
 
@@ -1751,6 +1810,7 @@ module.exports = {
   getOrderbookPrice,
   getBestBidAsk,
   getTopOfBook,
+  getVwapPrice,
   executeLiquiditySweep,
   getBalance,
   getBalances,

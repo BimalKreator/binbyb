@@ -45,6 +45,8 @@ type PositionLeg = {
 type PositionRow = {
   symbol: string;
   isFundingFlipped?: boolean;
+  l2SpreadVwap?: number | null;
+  screenerTradeNotional?: number | null;
   binance: PositionLeg;
   bybit: PositionLeg;
   combinedUnrealizedProfit: number;
@@ -403,6 +405,11 @@ export default function Home() {
                           )}
                         </span>
                         <span className="font-medium text-foreground min-w-[80px]">{row.symbol}</span>
+                        {row.l2SpreadVwap != null && Number.isFinite(row.l2SpreadVwap) && (
+                          <span className={`text-xs font-medium ${row.l2SpreadVwap >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}>
+                            L2 VWAP (${row.screenerTradeNotional ?? 500}): {(row.l2SpreadVwap >= 0 ? "+" : "") + row.l2SpreadVwap.toFixed(2)}%
+                          </span>
+                        )}
                         <span
                           className={`text-sm font-medium ${(totalFunding ?? 0) >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"}`}
                         >

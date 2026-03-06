@@ -39,6 +39,8 @@ const settingSchema = new mongoose.Schema(
     allowedIntervals: { type: [Number], default: [1, 2, 4, 8] },
     binanceMarginAllowedPct: { type: Number, default: 50, min: 0, max: 100 },
     bybitMarginAllowedPct: { type: Number, default: 50, min: 0, max: 100 },
+    screenerSortBy: { type: String, enum: ["funding", "l2spread"], default: "funding" },
+    screenerTradeNotional: { type: Number, default: 500, min: 1 },
   },
   { timestamps: true }
 );
