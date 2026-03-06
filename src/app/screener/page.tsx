@@ -66,10 +66,8 @@ export default function ScreenerPage() {
   const [search, setSearch] = useState("");
   const [allowedIntervals, setAllowedIntervals] = useState<number[]>([1, 2, 4, 8]);
   const [minSpreadPct, setMinSpreadPct] = useState<string>("-100");
-  const [minL2SpreadFilter, setMinL2SpreadFilter] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("screener_minL2Spread") ?? "";
-  });
+  const [minL2Spread, setMinL2Spread] = useState(0.15);
+  const [screenerDirectionBy, setScreenerDirectionBy] = useState<"funding" | "l2">("funding");
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -94,10 +92,6 @@ export default function ScreenerPage() {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem("screener_minL2Spread", minL2SpreadFilter);
-  }, [minL2SpreadFilter]);
 
   useEffect(() => {
     if (!popupToken) {
@@ -159,6 +153,8 @@ export default function ScreenerPage() {
           rankStepC?: boolean;
           allowedIntervals?: number[];
           minFundingSpread?: number;
+          minL2VwapSpread?: number;
+          screenerDirectionBy?: "funding" | "l2";
         };
       }>("/settings")
       .then(({ data }) => {
@@ -172,6 +168,8 @@ export default function ScreenerPage() {
           setAllowedIntervals(d.allowedIntervals.filter((n) => [1, 2, 4, 8].includes(Number(n))));
         }
         if (d.minFundingSpread !== undefined) setMinSpreadPct(String(d.minFundingSpread));
+        setMinL2Spread(d.minL2VwapSpread ?? 0.15);
+        setScreenerDirectionBy(d.screenerDirectionBy === "l2" ? "l2" : "funding");
       })
       .catch(() => {});
   }, []);
@@ -202,6 +200,16 @@ export default function ScreenerPage() {
       toast.success("Min Funding Spread updated for Bot!");
     } catch (e) {
       toast.error("Failed to update min funding spread.");
+    }
+  };
+
+  const handleL2SpreadChange = async (val: number) => {
+    setMinL2Spread(val);
+    try {
+      await api.put("/settings", { minL2VwapSpread: val });
+      toast.success("Min L2 VWAP Spread updated.");
+    } catch (e) {
+      toast.error("Failed to update min L2 VWAP spread.");
     }
   };
 
@@ -251,14 +259,16 @@ export default function ScreenerPage() {
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((t) => t.symbol.toLowerCase().includes(q));
     list = list.filter((t) => allowedIntervals.includes(t.intervalHours ?? 8));
-    const minSpread = parseFloat(minSpreadPct);
-    if (!Number.isNaN(minSpread)) list = list.filter((t) => (t.spreadPctAbs ?? 0) >= minSpread);
-    const l2SpreadNum = parseFloat(minL2SpreadFilter);
-    if (!Number.isNaN(l2SpreadNum)) {
-      list = list.filter((t) => t.livePriceSpread != null && t.livePriceSpread >= l2SpreadNum);
+    if (screenerDirectionBy === "l2") {
+      list = list.filter((t) => t.l2SpreadVwap != null && t.l2SpreadVwap >= minL2Spread);
+    } else {
+      const minFundingSpread = parseFloat(minSpreadPct);
+      if (!Number.isNaN(minFundingSpread)) {
+        list = list.filter((t) => (t.spreadPctAbs ?? 0) >= minFundingSpread);
+      }
     }
     return list;
-  }, [data?.rankedTokens, search, allowedIntervals, minSpreadPct, minL2SpreadFilter]);
+  }, [data?.rankedTokens, search, allowedIntervals, minSpreadPct, minL2Spread, screenerDirectionBy]);
 
   const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
   const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
@@ -338,29 +348,33 @@ export default function ScreenerPage() {
           />
         </div>
         <div className="flex w-full gap-2 flex-wrap">
-          <label className="flex flex-1 items-center gap-1.5 min-w-0">
-            <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min Spread %</span>
-            <input
-              type="number"
-              step="any"
-              value={minSpreadPct}
-              onChange={(e) => setMinSpreadPct(e.target.value)}
-              onBlur={(e) => handleSaveMinFundingSpread(e.target.value)}
-              placeholder="-100"
-              className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-            />
-          </label>
-          <label className="flex flex-1 items-center gap-1.5 min-w-0">
-            <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min L2 Spread %</span>
-            <input
-              type="number"
-              step="any"
-              value={minL2SpreadFilter}
-              onChange={(e) => setMinL2SpreadFilter(e.target.value)}
-              placeholder="0.15"
-              className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-            />
-          </label>
+          {screenerDirectionBy === "l2" ? (
+            <label className="flex flex-1 items-center gap-1.5 min-w-0">
+              <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min L2 VWAP Spread %</span>
+              <input
+                type="number"
+                step="any"
+                value={minL2Spread}
+                onChange={(e) => setMinL2Spread(Number(e.target.value) || 0.15)}
+                onBlur={(e) => handleL2SpreadChange(Number(e.target.value) || 0.15)}
+                placeholder="0.15"
+                className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+              />
+            </label>
+          ) : (
+            <label className="flex flex-1 items-center gap-1.5 min-w-0">
+              <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min Funding Spread %</span>
+              <input
+                type="number"
+                step="any"
+                value={minSpreadPct}
+                onChange={(e) => setMinSpreadPct(e.target.value)}
+                onBlur={(e) => handleSaveMinFundingSpread(e.target.value)}
+                placeholder="-100"
+                className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+              />
+            </label>
+          )}
           <div className="flex flex-1 items-center gap-1.5 flex-wrap">
             <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Intervals</span>
             {([1, 2, 4, 8] as const).map((h) => {
