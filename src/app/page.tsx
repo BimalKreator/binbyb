@@ -206,7 +206,7 @@ export default function Home() {
   }, [fetchMetrics, fetchPositions]);
 
   const latestPnlRef = useRef<Record<string, any>>({});
-  const wsLastTickRef = useRef<number>(Date.now());
+  const wsLastTickRef = useRef<number>(0);
 
   useEffect(() => {
     const { io } = require("socket.io-client");

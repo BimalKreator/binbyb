@@ -822,19 +822,20 @@ async function startPrivateStream(credentials) {
               const hasOther = Object.keys(livePositionsByKey).some((k) => k.startsWith(sym + "_"));
               if (!hasOther && onPositionClosed) onPositionClosed(sym, "binance");
             } else {
-              const parsedAmt = parseFloat(p.pa) || 0;
-              const parsedEntry = parseFloat(p.ep) || 0;
-              const parsedPnl = parseFloat(p.up) || 0;
-              const parsedMargin = parseFloat(p.iw) || 0;
+              const existing = livePositionsByKey[cacheKey] || {};
+              const parsedAmt = p.pa !== undefined ? parseFloat(p.pa) : (existing.positionAmt || 0);
               livePositionsByKey[cacheKey] = {
                 symbol: sym,
                 positionAmt: parsedAmt,
-                entryPrice: parsedEntry,
-                unrealizedProfit: parsedPnl,
-                marginUsed: parsedMargin,
-                positionSide: p.ps,
-                markPrice: p.markPrice || null,
+                // CRITICAL: Preserve entry price if delta doesn't provide a valid one
+                entryPrice: (p.ep !== undefined && parseFloat(p.ep) > 0) ? parseFloat(p.ep) : existing.entryPrice,
+                unrealizedProfit: p.up !== undefined ? parseFloat(p.up) : (existing.unrealizedProfit || 0),
+                marginUsed: p.iw !== undefined ? parseFloat(p.iw) : (existing.marginUsed || 0),
+                positionSide: p.ps !== undefined ? p.ps : existing.positionSide,
+                markPrice: p.markPrice || existing.markPrice,
                 side: parsedAmt > 0 ? "BUY" : "SELL",
+                leverage: existing.leverage,
+                liquidationPrice: existing.liquidationPrice,
               };
             }
           }

@@ -689,18 +689,21 @@ function openPrivateStream(credentials) {
               const hasOther = Object.keys(livePositionsByKey).some((k) => k.startsWith(sym + "_"));
               if (!hasOther && onPositionClosed) onPositionClosed(sym, "bybit");
             } else {
-              const sizeNum = Number(amt);
+              const existing = livePositionsByKey[cacheKey] || {};
+              const sizeNum = d.size !== undefined ? Number(d.size) : (existing.positionAmt || 0);
               livePositionsByKey[cacheKey] = {
                 symbol: sym,
-                unrealizedProfit: parseFloat(d.unrealisedPnl ?? 0) || 0,
-                marginUsed: parseFloat(d.positionIM ?? 0) || 0,
-                size: sizeNum,
                 positionAmt: sizeNum,
-                side: String(d.side || "").toLowerCase() === "buy" ? "Buy" : "Sell",
-                entryPrice: parseFloat(d.avgPrice ?? d.entryPrice ?? 0) || null,
-                leverage: d.leverage != null ? Number(d.leverage) : null,
-                liquidationPrice: parseFloat(d.liqPrice ?? d.liquidationPrice ?? 0) || null,
-                positionIdx: d.positionIdx,
+                size: sizeNum,
+                // CRITICAL: Preserve entry price if delta doesn't provide it
+                entryPrice: d.avgPrice || d.entryPrice || existing.entryPrice,
+                unrealizedProfit: d.unrealisedPnl !== undefined ? parseFloat(d.unrealisedPnl) : (existing.unrealizedProfit || 0),
+                marginUsed: d.positionIM || d.positionBalance || d.positionValue || existing.marginUsed || 0,
+                positionIdx: d.positionIdx !== undefined ? d.positionIdx : existing.positionIdx,
+                markPrice: d.markPrice || existing.markPrice,
+                side: d.side ? (String(d.side).toUpperCase() === "BUY" ? "Buy" : "Sell") : (existing.side || "Sell"),
+                leverage: d.leverage != null ? Number(d.leverage) : existing.leverage,
+                liquidationPrice: d.liqPrice || d.liquidationPrice || existing.liquidationPrice,
               };
             }
           }
