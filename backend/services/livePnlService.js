@@ -7,6 +7,7 @@ let binanceManager = null;
 let bybitManager = null;
 let onExitCheck = null;
 let lastLogTime = 0; // Diagnostic logging throttle
+let tickCounter = 0; // For verbose tick logging
 
 const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
@@ -36,21 +37,22 @@ function buildPrimaryBySymbol(positions) {
 
 function refreshPositionCache() {
   if (!binanceManager || !bybitManager) return;
-  const binanceList = binanceManager.getLivePositions() || [];
-  const bybitList = bybitManager.getLivePositions() || [];
-  const binanceBySymbol = buildPrimaryBySymbol(binanceList);
-  const bybitBySymbol = buildPrimaryBySymbol(bybitList);
-  const binanceSymbols = new Set(Object.keys(binanceBySymbol));
-  const bybitSymbols = new Set(Object.keys(bybitBySymbol));
+  const binList = binanceManager.getLivePositions() || [];
+  const bybList = bybitManager.getLivePositions() || [];
+  
+  // Get unique symbols from both exchanges
+  const binanceSymbols = new Set(binList.map(p => toUpperSymbol(p.symbol)).filter(Boolean));
+  const bybitSymbols = new Set(bybList.map(p => toUpperSymbol(p.symbol)).filter(Boolean));
   const paired = [...binanceSymbols].filter((s) => bybitSymbols.has(s));
 
   for (const symbol of paired) {
-    const binancePos = binanceBySymbol[symbol];
-    const bybitPos = bybitBySymbol[symbol];
+    // FIX: Must strictly filter for active quantities > 0 to bypass empty hedge legs
+    const binancePos = binList.find(p => toUpperSymbol(p.symbol) === symbol && Math.abs(parseFloat(p.positionAmt || 0)) > 0);
+    const bybitPos = bybList.find(p => toUpperSymbol(p.symbol) === symbol && Math.abs(parseFloat(p.size || p.positionAmt || 0)) > 0);
     if (!binancePos || !bybitPos) continue;
 
     const binanceQty = Math.abs(parseFloat(binancePos.positionAmt) || 0);
-    const bybitQty = Math.abs(parseFloat(bybitPos.positionAmt) || 0);
+    const bybitQty = Math.abs(parseFloat(bybitPos.size || bybitPos.positionAmt) || 0);
     if (binanceQty <= 0 && bybitQty <= 0) continue;
 
     const binanceEntry = parseFloat(String(binancePos.entryPrice ?? 0)) || 0;
@@ -153,6 +155,11 @@ function broadcastLivePnl() {
       bybitMarkPrice: bybitMark,
     };
 
+    // Verbose tick logging for proof of life (every ~4.5 seconds)
+    tickCounter++;
+    if (tickCounter % 15 === 0) {
+      console.log(`[LivePnL-TICK] ${sym} | bEntry=${bEntry} byEntry=${byEntry} | bCalc=${bCalcPrice} byCalc=${byCalcPrice} | bPnL=${binancePnL?.toFixed(4)} byPnL=${bybitPnL?.toFixed(4)} | combined=${combinedPnL?.toFixed(4)}`);
+    }
 
     io.emit("live_pnl_update", pnlPayload);
 

@@ -206,6 +206,7 @@ export default function Home() {
   }, [fetchMetrics, fetchPositions]);
 
   const latestPnlRef = useRef<Record<string, any>>({});
+  const wsLastTickRef = useRef<number>(Date.now());
 
   useEffect(() => {
     const { io } = require("socket.io-client");
@@ -231,6 +232,7 @@ export default function Home() {
       if (!payload || !payload.symbol) return;
       console.log(`[WS-RECEIVE] ⚡ ${payload.symbol} | PnL: ${payload.combinedPnL}`);
       latestPnlRef.current[payload.symbol] = payload;
+      wsLastTickRef.current = Date.now();
     });
 
     socket.on("position_closed", (payload: { symbol: string }) => {
@@ -276,14 +278,13 @@ export default function Home() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const latestUpdate = Math.max(...positions.map((p) => p.lastUpdated || 0), 0);
-      const diff = Date.now() - latestUpdate;
-      if (latestUpdate > 0 && diff < 3000) setWsStatus("live");
-      else if (latestUpdate > 0 && diff < 10000) setWsStatus("delayed");
+      const diff = Date.now() - wsLastTickRef.current;
+      if (diff < 3000) setWsStatus("live");
+      else if (diff < 10000) setWsStatus("delayed");
       else setWsStatus("dead");
     }, 1000);
     return () => clearInterval(interval);
-  }, [positions]);
+  }, []); // Empty dependency array prevents the livelock
 
   const handleCloseTrade = async (symbol: string) => {
     setClosingSymbol(symbol);
