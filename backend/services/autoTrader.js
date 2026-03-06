@@ -119,19 +119,18 @@ async function computeQuantityChunks(allocatedMargin, leverage, currentTokenPric
 function getOpenArbitrageCount() {
   const binanceList = binanceManager.getLivePositions() || [];
   const bybitList = bybitManager.getLivePositions() || [];
-  const binanceSymbols = new Set(
-    binanceList
-      .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0) || 0) > 0)
-      .map((p) => String(p?.symbol ?? "").toUpperCase())
-      .filter(Boolean)
-  );
-  const bybitSymbols = new Set(
-    bybitList
-      .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0) || 0) > 0)
-      .map((p) => String(p?.symbol ?? "").toUpperCase())
-      .filter(Boolean)
-  );
-  return [...binanceSymbols].filter((s) => bybitSymbols.has(s)).length;
+  
+  const binanceSymbols = binanceList
+    .filter((p) => Math.abs(parseFloat(p?.positionAmt ?? 0) || 0) > 0)
+    .map((p) => String(p?.symbol ?? "").toUpperCase());
+    
+  const bybitSymbols = bybitList
+    .filter((p) => Math.abs(parseFloat(p?.size ?? p?.positionAmt ?? 0) || 0) > 0)
+    .map((p) => String(p?.symbol ?? "").toUpperCase());
+    
+  // Use a Set to count unique symbols present on EITHER exchange (includes orphans)
+  const activeSymbols = new Set([...binanceSymbols, ...bybitSymbols].filter(Boolean));
+  return activeSymbols.size;
 }
 
 /**
