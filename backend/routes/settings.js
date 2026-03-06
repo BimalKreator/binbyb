@@ -70,8 +70,11 @@ router.put("/", async (req, res) => {
     if (takeProfit !== undefined) update.takeProfit = Number(takeProfit);
     if (useStoploss !== undefined) update.useStoploss = Boolean(useStoploss);
     if (useTarget !== undefined) update.useTarget = Boolean(useTarget);
-    if (autoTrade !== undefined) update.autoTrade = Boolean(autoTrade);
-    if (autoTradeEnabled !== undefined) update.autoTradeEnabled = Boolean(autoTradeEnabled);
+    const tradeStatus = autoTradeEnabled !== undefined ? autoTradeEnabled : autoTrade;
+    if (tradeStatus !== undefined) {
+      update.autoTradeEnabled = Boolean(tradeStatus);
+      update.autoTrade = Boolean(tradeStatus);
+    }
     if (autoExitEnabled !== undefined) update.autoExitEnabled = Boolean(autoExitEnabled);
     if (mismatchMinNotionalFilter !== undefined) update.mismatchMinNotionalFilter = Boolean(mismatchMinNotionalFilter);
     if (liquidationAutoClose !== undefined) update.liquidationAutoClose = Boolean(liquidationAutoClose);

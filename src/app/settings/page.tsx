@@ -100,7 +100,7 @@ export default function SettingsPage() {
           setTakeProfit(s.takeProfit ?? 0);
           setUseStoploss(s.useStoploss ?? false);
           setUseTarget(s.useTarget ?? false);
-          setAutoTradeEnabled(s.autoTradeEnabled ?? false);
+          setAutoTradeEnabled(s.autoTradeEnabled ?? s.autoTrade ?? false);
           setAutoExitEnabled(s.autoExitEnabled ?? false);
           setMismatchMinNotionalFilter(s.mismatchMinNotionalFilter ?? true);
           setLiquidationAutoClose(s.liquidationAutoClose ?? false);
