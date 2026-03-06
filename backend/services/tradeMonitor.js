@@ -15,6 +15,18 @@ const orderCircuitBreaker = require("./orderCircuitBreaker");
 const livePnlService = require("./livePnlService");
 const { dbLog } = require("../utils/logger");
 
+let cachedSettingsForTick = null;
+let lastSettingsFetchTime = 0;
+
+async function getTickSettings() {
+  const now = Date.now();
+  if (!cachedSettingsForTick || now - lastSettingsFetchTime > 2000) {
+    cachedSettingsForTick = await Setting.findOne().lean();
+    lastSettingsFetchTime = now;
+  }
+  return cachedSettingsForTick;
+}
+
 const ORPHAN_GRACE_MS = 10000; // 10 seconds: only close orphan if position age > this (avoids false orphan from leg latency)
 const ORPHAN_GRACE_PERIOD_MS = 10000; // 10 seconds: wait after first detecting an orphan before closing (avoids WS delay false orphans)
 
@@ -844,11 +856,11 @@ function start() {
   bybitManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
 
   livePnlService.setExitCheckCallback(async (symbol, combinedPnl) => {
-    const settings = await Setting.findOne().lean();
+    const settings = await getTickSettings();
     if (!settings || !settings.autoExitEnabled) return;
 
     const keys = await getDecryptedApiKeys();
-    if (!keys?.binance?.apiKey || !keys?.binance?.apiSecret || !keys?.bybit?.apiKey || !keys?.bybit?.apiSecret) return;
+    if (!keys?.binance || !keys?.bybit) return;
 
     const binList = binanceManager.getLivePositions() || [];
     const bybList = bybitManager.getLivePositions() || [];

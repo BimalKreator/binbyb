@@ -110,17 +110,16 @@ function broadcastLivePnl() {
     const binanceDirection = pos.binanceDirection === 1 ? 1 : -1;
     const bybitDirection = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
 
-    const bTargetNotional = bQty * binanceMark;
-    const byTargetNotional = byQty * bybitMark;
-
     const bExitSide = binanceDirection === 1 ? "SELL" : "BUY";
     const byExitSide = bybitDirection === 1 ? "Sell" : "Buy";
 
-    const bVwap = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bExitSide, bTargetNotional) : null;
-    const byVwap = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, byExitSide, byTargetNotional) : null;
+    // Use Top of Book for blazing fast, never-null tick PnL
+    const bBook = binanceManager.getBestBidAsk ? binanceManager.getBestBidAsk(sym) : null;
+    const byBook = bybitManager.getBestBidAsk ? bybitManager.getBestBidAsk(sym) : null;
 
-    const bCalcPrice = bVwap || binanceMark;
-    const byCalcPrice = byVwap || bybitMark;
+    // If exiting a LONG, we SELL at the Bid. If exiting a SHORT, we BUY at the Ask.
+    const bCalcPrice = bBook ? (bExitSide === "SELL" ? bBook.bestBid : bBook.bestAsk) : binanceMark;
+    const byCalcPrice = byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : bybitMark;
 
     const binancePnL = (bCalcPrice > 0 && bEntry > 0)
       ? binanceDirection * (bCalcPrice - bEntry) * bQty
