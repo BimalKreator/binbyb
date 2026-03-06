@@ -510,66 +510,72 @@ function connectBybitPublicChunk(symbolsChunk, chunkIndex) {
         const list = Array.isArray(msg.data) ? msg.data : [msg.data];
         for (const d of list) {
           const eventTime = d.timestamp ? Number(d.timestamp) : msg.ts;
-          if (eventTime) logLatency("bybit", msg.topic, eventTime, { symbol: d.symbol });
+          if (eventTime) logLatency("bybit", msg.topic, eventTime, { symbol: d.symbol || d.s });
 
-          if (msg.topic.startsWith("orderbook.") && d.symbol) {
-            const sym = String(d.symbol).toUpperCase();
-            if (!orderbooksBySymbol[sym]) orderbooksBySymbol[sym] = { bids: new Map(), asks: new Map() };
-            const ob = orderbooksBySymbol[sym];
-            if (msg.type === "snapshot") {
-              ob.bids = new Map();
-              ob.asks = new Map();
-              (d.b || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.bids.set(String(p), parseFloat(q)); });
-              (d.a || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.asks.set(String(p), parseFloat(q)); });
-            } else if (msg.type === "delta") {
-              (d.b || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.bids.delete(String(p)); else ob.bids.set(String(p), n); });
-              (d.a || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.asks.delete(String(p)); else ob.asks.set(String(p), n); });
-            }
-          } else if (msg.topic.startsWith("tickers.") && d.symbol) {
-            const sym = String(d.symbol).toUpperCase();
-            if (msg.type === "snapshot") {
-              tickerStateBySymbol[sym] = { ...d };
-            } else if (msg.type === "delta") {
-              if (!tickerStateBySymbol[sym]) tickerStateBySymbol[sym] = {};
-              const merged = { ...tickerStateBySymbol[sym] };
-              Object.keys(d).forEach((k) => {
-                if (d[k] != null && d[k] !== "") merged[k] = d[k];
-              });
-              tickerStateBySymbol[sym] = merged;
-            } else {
-              tickerStateBySymbol[sym] = { ...d };
-            }
-            const state = tickerStateBySymbol[sym];
-            const mp =
-              state && state.markPrice != null && state.markPrice !== ""
-                ? parseFloat(state.markPrice)
-                : state && state.lastPrice != null && state.lastPrice !== ""
-                  ? parseFloat(state.lastPrice)
-                  : NaN;
-            if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
-            if (onMarkPriceUpdate && Number.isFinite(mp) && mp > 0) {
-              try {
-                onMarkPriceUpdate(sym, mp, "bybit");
-              } catch (e) {
-                console.error("[Bybit-WS-Error] onMarkPriceUpdate", e.message);
+          if (msg.topic.startsWith("orderbook.")) {
+            const symRaw = d.s || d.symbol || msg.topic.split(".")[2];
+            if (symRaw) {
+              const sym = String(symRaw).toUpperCase();
+              if (!orderbooksBySymbol[sym]) orderbooksBySymbol[sym] = { bids: new Map(), asks: new Map() };
+              const ob = orderbooksBySymbol[sym];
+              if (msg.type === "snapshot") {
+                ob.bids = new Map();
+                ob.asks = new Map();
+                (d.b || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.bids.set(String(p), parseFloat(q)); });
+                (d.a || []).forEach(([p, q]) => { if (parseFloat(q) > 0) ob.asks.set(String(p), parseFloat(q)); });
+              } else if (msg.type === "delta") {
+                (d.b || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.bids.delete(String(p)); else ob.bids.set(String(p), n); });
+                (d.a || []).forEach(([p, q]) => { const n = parseFloat(q); if (n === 0) ob.asks.delete(String(p)); else ob.asks.set(String(p), n); });
               }
             }
-            cachedFundingRates[sym] = {
-              fundingRate: Number.isFinite(parseFloat((state?.fundingRate ?? d.fundingRate) || 0)) ? parseFloat((state?.fundingRate ?? d.fundingRate) || 0) : 0,
-              nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
-            };
-            if (!onFundingUpdate) continue;
-            const now = Date.now();
-            const last = lastFundingEmitBySymbol[sym];
-            if (last != null && now - last < FUNDING_THROTTLE_MS) continue;
-            lastFundingEmitBySymbol[sym] = now;
-            onFundingUpdate({
-              symbol: d.symbol,
-              fundingRate: parseFloat((state?.fundingRate ?? d.fundingRate) || 0),
-              nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
-              markPrice: mp,
-              eventTime: (state?.timestamp ?? d.timestamp) ? Number(state?.timestamp ?? d.timestamp) : msg.ts,
-            });
+          } else if (msg.topic.startsWith("tickers.")) {
+            const symRaw = d.symbol || d.s || msg.topic.split(".")[1];
+            if (symRaw) {
+              const sym = String(symRaw).toUpperCase();
+              if (msg.type === "snapshot") {
+                tickerStateBySymbol[sym] = { ...d };
+              } else if (msg.type === "delta") {
+                if (!tickerStateBySymbol[sym]) tickerStateBySymbol[sym] = {};
+                const merged = { ...tickerStateBySymbol[sym] };
+                Object.keys(d).forEach((k) => {
+                  if (d[k] != null && d[k] !== "") merged[k] = d[k];
+                });
+                tickerStateBySymbol[sym] = merged;
+              } else {
+                tickerStateBySymbol[sym] = { ...d };
+              }
+              const state = tickerStateBySymbol[sym];
+              const mp =
+                state && state.markPrice != null && state.markPrice !== ""
+                  ? parseFloat(state.markPrice)
+                  : state && state.lastPrice != null && state.lastPrice !== ""
+                    ? parseFloat(state.lastPrice)
+                    : NaN;
+              if (Number.isFinite(mp) && mp > 0) lastMarkPriceBySymbol[sym] = mp;
+              if (onMarkPriceUpdate && Number.isFinite(mp) && mp > 0) {
+                try {
+                  onMarkPriceUpdate(sym, mp, "bybit");
+                } catch (e) {
+                  console.error("[Bybit-WS-Error] onMarkPriceUpdate", e.message);
+                }
+              }
+              cachedFundingRates[sym] = {
+                fundingRate: Number.isFinite(parseFloat((state?.fundingRate ?? d.fundingRate) || 0)) ? parseFloat((state?.fundingRate ?? d.fundingRate) || 0) : 0,
+                nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
+              };
+              if (!onFundingUpdate) continue;
+              const now = Date.now();
+              const last = lastFundingEmitBySymbol[sym];
+              if (last != null && now - last < FUNDING_THROTTLE_MS) continue;
+              lastFundingEmitBySymbol[sym] = now;
+              onFundingUpdate({
+                symbol: sym,
+                fundingRate: parseFloat((state?.fundingRate ?? d.fundingRate) || 0),
+                nextFundingTime: ((state?.nextFundingTime ?? d.nextFundingTime) != null) ? Number(state?.nextFundingTime ?? d.nextFundingTime) : null,
+                markPrice: mp,
+                eventTime: (state?.timestamp ?? d.timestamp) ? Number(state?.timestamp ?? d.timestamp) : msg.ts,
+              });
+            }
           }
         }
       } else if (msg.op === "pong" || msg.success) {
