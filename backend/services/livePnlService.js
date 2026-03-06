@@ -145,6 +145,13 @@ function broadcastLivePnl() {
     let byCalcPrice = byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : 0;
     if (!byCalcPrice || byCalcPrice <= 0) byCalcPrice = bybitMark;
 
+    // CROSS-EXCHANGE FALLBACK: Prevent PnL Freeze
+    if (bCalcPrice > 0 && (!byCalcPrice || byCalcPrice === 0)) {
+      byCalcPrice = bCalcPrice; // Use Binance price as a proxy for Bybit
+    } else if (byCalcPrice > 0 && (!bCalcPrice || bCalcPrice === 0)) {
+      bCalcPrice = byCalcPrice; // Use Bybit price as a proxy for Binance
+    }
+
     // Calculate live PnL using available price, fallback to native only if no price at all
     const binancePnL = (bCalcPrice > 0 && bEntry > 0)
       ? binanceDirection * (bCalcPrice - bEntry) * bQty

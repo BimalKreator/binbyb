@@ -471,7 +471,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   publicWsArray = [];
   publicStreamSymbols = symbols;
 
-  const MAX_TOPICS_PER_CONN = 300;
+  const MAX_TOPICS_PER_CONN = 100; // 100 symbols * 2 topics (ticker + book) = 200 subs per connection (Safe for Bybit)
   for (let i = 0; i < symbols.length; i += MAX_TOPICS_PER_CONN) {
     const symbolChunk = symbols.slice(i, i + MAX_TOPICS_PER_CONN);
     const chunkIndex = Math.floor(i / MAX_TOPICS_PER_CONN);
@@ -578,6 +578,11 @@ function connectBybitPublicChunk(symbolsChunk, chunkIndex) {
             }
           }
         }
+      } else if (msg.op === "subscribe") {
+        if (!msg.success) {
+          console.error(`[Bybit] Subscription FAILED: ${msg.ret_msg}`, msg.req_id || "");
+        }
+        return;
       } else if (msg.op === "pong" || msg.success) {
         // ping/pong or subscribe ack
       }
