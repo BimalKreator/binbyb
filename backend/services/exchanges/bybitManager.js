@@ -1551,14 +1551,18 @@ async function hydratePositionsFromRest(credentials) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      Object.keys(livePositionsByKey).forEach((k) => delete livePositionsByKey[k]);
       const list = await getPositionDetails(credentials);
+      const symbolsInResponse = new Set();
       for (const p of list || []) {
         const sym = String(p?.symbol || "").toUpperCase();
         const positionAmt = parseFloat(String(p?.positionAmt ?? 0));
-        if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) continue;
         const side = String(p?.side || "").toLowerCase() === "buy" ? "Buy" : "Sell";
         const key = `${sym}:${side}:0`;
+        symbolsInResponse.add(sym);
+        if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) {
+          delete livePositionsByKey[key];
+          continue;
+        }
         const entryPrice = parseFloat(String(p?.entryPrice ?? 0)) || null;
         const leverage = p?.leverage != null ? Number(p.leverage) : null;
         const liquidationPrice = parseFloat(String(p?.liquidationPrice ?? 0)) || null;
@@ -1573,6 +1577,10 @@ async function hydratePositionsFromRest(credentials) {
           liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
         };
       }
+      Object.keys(livePositionsByKey).forEach((k) => {
+        const keySym = k.split(":")[0];
+        if (!symbolsInResponse.has(keySym)) delete livePositionsByKey[k];
+      });
       emitPositionUpdate();
       if (list?.length > 0) console.log("[Bybit] Hydrated", list.length, "positions from REST");
       return;

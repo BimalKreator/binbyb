@@ -23,115 +23,34 @@ if (typeof global.rankingCache !== "object") {
 let symbolList = [];
 let intervalId = null;
 
-/**
- * Fetch last 30 days funding rate history (Binance). Paginates if needed (limit 1000).
- */
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBinanceFundingHistory(symbol) {
-  const endTime = Date.now();
-  const startTime = endTime - THIRTY_DAYS_MS;
-  const out = [];
-  let cursor = startTime;
-  while (cursor < endTime) {
-    const { data } = await axios.get(`${BINANCE_FAPI}/fapi/v1/fundingRate`, {
-      params: { symbol, startTime: cursor, endTime, limit: 1000 },
-      timeout: 10000,
-    });
-    if (!Array.isArray(data) || data.length === 0) break;
-    out.push(...data);
-    cursor = (data[data.length - 1]?.fundingTime ?? cursor) + 1;
-    if (data.length < 1000) break;
-  }
-  return out;
+  return [];
 }
 
-/**
- * Fetch last 30 days funding rate history (Bybit v5).
- */
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBybitFundingHistory(symbol) {
-  const endTime = Date.now();
-  const startTime = endTime - THIRTY_DAYS_MS;
-  const out = [];
-  let cursor = startTime;
-  while (cursor < endTime) {
-    const { data } = await axios.get(`${BYBIT_REST}/v5/market/funding/history`, {
-      params: { category: "linear", symbol, startTime: cursor, endTime, limit: 200 },
-      timeout: 10000,
-    });
-    const list = data?.result?.list;
-    if (!Array.isArray(list) || list.length === 0) break;
-    out.push(...list);
-    const lastTs = list[list.length - 1]?.fundingRateTimestamp;
-    if (lastTs == null) break;
-    cursor = Number(lastTs) + 1;
-    if (list.length < 200) break;
-  }
-  return out;
+  return [];
 }
 
-/**
- * Fetch open interest history. Binance: /futures/data/openInterestHist. Bybit: /v5/market/open-interest/...
- */
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBinanceOpenInterestHistory(symbol) {
-  try {
-    const endTime = Date.now();
-    const startTime = endTime - THIRTY_DAYS_MS;
-    const { data } = await axios.get(`${BINANCE_FUTURES_DATA}/openInterestHist`, {
-      params: { symbol, period: "1d", limit: 30, startTime, endTime },
-      timeout: 10000,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBybitOpenInterestHistory(symbol) {
-  try {
-    const endTime = Date.now();
-    const startTime = endTime - THIRTY_DAYS_MS;
-    const out = [];
-    let cursor = startTime;
-    while (cursor < endTime) {
-      const { data } = await axios.get(`${BYBIT_REST}/v5/market/open-interest`, {
-        params: { category: "linear", symbol, intervalTime: "1d", startTime: cursor, endTime, limit: 200 },
-        timeout: 10000,
-      });
-      const list = data?.result?.list;
-      if (!Array.isArray(list) || list.length === 0) break;
-      out.push(...list);
-      const lastTs = list[list.length - 1]?.timestamp;
-      if (lastTs == null) break;
-      cursor = Number(lastTs) + 1;
-      if (list.length < 200) break;
-    }
-    return out;
-  } catch (e) {
-    return [];
-  }
+  return [];
 }
 
-/**
- * Fetch 30 days daily klines. Binance: /fapi/v1/klines. Bybit: /v5/market/kline.
- */
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBinanceKlines(symbol) {
-  const endTime = Date.now();
-  const startTime = endTime - THIRTY_DAYS_MS;
-  const { data } = await axios.get(`${BINANCE_FAPI}/fapi/v1/klines`, {
-    params: { symbol, interval: "1d", startTime, endTime, limit: 31 },
-    timeout: 10000,
-  });
-  return Array.isArray(data) ? data : [];
+  return [];
 }
 
+/** Disabled: no REST from ranking service (L2 bot uses WS only). */
 async function fetchBybitKlines(symbol) {
-  const endTime = Date.now();
-  const startTime = endTime - THIRTY_DAYS_MS;
-  const { data } = await axios.get(`${BYBIT_REST}/v5/market/kline`, {
-    params: { category: "linear", symbol, interval: "D", start: startTime, end: endTime, limit: 31 },
-    timeout: 10000,
-  });
-  const list = data?.result?.list || [];
-  return Array.isArray(list) ? list : [];
+  return [];
 }
 
 /**

@@ -264,6 +264,23 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     console.error("[TradeMonitor] closePair Bybit exit sweep failed", sym, bybitResult.reason?.message ?? bybitResult.reason);
   }
 
+  const isPhantomError = (err) => {
+    const msg = err?.message ?? String(err ?? "");
+    return msg.includes("ReduceOnly") || msg.includes("position is zero");
+  };
+  if (
+    (binanceResult.status === "rejected" && isPhantomError(binanceResult.reason)) ||
+    (bybitResult.status === "rejected" && isPhantomError(bybitResult.reason))
+  ) {
+    console.log(`[Phantom Position Detected] ${sym}. Forcing REST sync to clear frozen cache...`);
+    if (credentials?.binance && binanceManager.hydratePositionsFromRest) {
+      binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
+    }
+    if (credentials?.bybit && bybitManager.hydratePositionsFromRest) {
+      bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
+    }
+  }
+
   const binanceOk = binanceQty <= 0 || binanceFilled > 0;
   const bybitOk = bybitQty <= 0 || bybitFilled > 0;
 
@@ -328,6 +345,19 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
     TradeLog.insertMany(legs).catch((e) => console.error("[TradeMonitor] TradeLog insertMany failed", e.message));
   }
   return { binanceOk, bybitOk };
+  } catch (err) {
+    console.error(`[Exit Error] ${symbol}:`, err?.message ?? err);
+    const msg = err?.message ?? String(err ?? "");
+    if (msg.includes("ReduceOnly") || msg.includes("position is zero")) {
+      console.log(`[Phantom Position Detected] ${symbol}. Forcing REST sync to clear frozen cache...`);
+      if (credentials?.binance && binanceManager.hydratePositionsFromRest) {
+        binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
+      }
+      if (credentials?.bybit && bybitManager.hydratePositionsFromRest) {
+        bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
+      }
+    }
+    return { binanceOk: false, bybitOk: false };
   } finally {
     closingSymbols.delete(sym);
   }
