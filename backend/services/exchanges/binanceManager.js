@@ -505,7 +505,7 @@ const lastMarkPriceBySymbol = {};
 const bookTickerBySymbol = {};
 /** L2 top of book for sweeper: { topBidPrice, topBidQty, topAskPrice, topAskQty } from b, B, a, A */
 const topOfBookBySymbol = {};
-/** Full depth (20 levels) per symbol from @depth20@100ms. Merge deltas: { bids: Map(priceStr->qty), asks: Map(priceStr->qty) }. */
+/** Full depth (20 levels) per symbol from @depth20@100ms combined stream: { bids: [[price,qty],...], asks: [[price,qty],...] }. */
 const orderbooks = {};
 /** Separate WebSocket(s) for depth (Binance 200-stream limit); 150 symbols per connection. */
 let depthWsArray = [];
@@ -548,7 +548,7 @@ function schedulePrivateReconnect() {
 
 /**
  * Open a dedicated WebSocket for depth20@100ms for a chunk of symbols (Binance 200-stream limit).
- * Processes depthUpdate into orderbooks (merge deltas).
+ * Processes combined stream payload into orderbooks (full snapshot per message).
  */
 function connectBinanceDepthChunk(symbolsChunk) {
   if (!symbolsChunk || symbolsChunk.length === 0) return;
@@ -563,25 +563,20 @@ function connectBinanceDepthChunk(symbolsChunk) {
 
   ws.on("message", (raw) => {
     try {
-      const data = JSON.parse(raw.toString());
-      const list = Array.isArray(data) ? data : [data.data || data];
-      for (const payload of list) {
-        if (payload && payload.e === "depthUpdate" && payload.s) {
-          const sym = String(payload.s).toUpperCase();
-          if (!orderbooks[sym]) orderbooks[sym] = { bids: new Map(), asks: new Map() };
-          const ob = orderbooks[sym];
-          (payload.b || []).forEach((x) => {
-            const p = String(x[0]);
-            const q = parseFloat(x[1]) || 0;
-            if (q === 0) ob.bids.delete(p);
-            else ob.bids.set(p, q);
-          });
-          (payload.a || []).forEach((x) => {
-            const p = String(x[0]);
-            const q = parseFloat(x[1]) || 0;
-            if (q === 0) ob.asks.delete(p);
-            else ob.asks.set(p, q);
-          });
+      const parsed = JSON.parse(raw.toString());
+
+      // Handle Binance combined stream format: { stream: "btcusdt@depth20@100ms", data: { bids, asks } }
+      if (parsed && parsed.stream && parsed.data) {
+        const streamName = parsed.stream;
+        const data = parsed.data;
+
+        const symMatch = streamName.split("@")[0];
+        if (symMatch && data.bids && data.asks) {
+          const sym = symMatch.toUpperCase();
+          orderbooks[sym] = {
+            bids: data.bids.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+            asks: data.asks.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+          };
         }
       }
     } catch (e) {
@@ -1702,8 +1697,8 @@ function getVwapPrice(symbol, side, targetNotional) {
   const book = orderbooks[sym];
   if (!book || !book.bids || !book.asks || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toUpperCase() === "BUY";
-  const bidsArr = Array.from(book.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
-  const asksArr = Array.from(book.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
+  const bidsArr = (book.bids || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
+  const asksArr = (book.asks || []).map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
   const levels = isBuy ? asksArr : bidsArr;
   if (levels.length === 0) return null;
   let accumulatedQty = 0;
