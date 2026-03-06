@@ -97,7 +97,7 @@ function broadcastLivePnl() {
 
   for (const sym of pairedSymbols) {
     const pos = positionCache[sym];
-    if (!pos) continue;
+    if (!pos || (parseFloat(pos.binanceQty || 0) === 0 && parseFloat(pos.bybitQty || 0) === 0)) continue;
 
     const binanceMark = binanceManager.getMarkPrice(sym) || markPriceCache[sym]?.binance || 0;
     const bybitMark = bybitManager.getMarkPrice(sym) || markPriceCache[sym]?.bybit || 0;
@@ -131,14 +131,15 @@ function broadcastLivePnl() {
 
     const combinedPnL = binancePnL + bybitPnL;
 
-    io.emit("live_pnl_update", {
+    const pnlPayload = {
       symbol: sym,
       binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
       bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
       combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
       binanceMarkPrice: binanceMark,
       bybitMarkPrice: bybitMark,
-    });
+    };
+    io.emit("live_pnl_update", pnlPayload);
 
     if (onExitCheck && Number.isFinite(combinedPnL)) {
       onExitCheck(sym, combinedPnL);

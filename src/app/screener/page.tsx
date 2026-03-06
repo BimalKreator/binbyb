@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
+import throttle from "lodash/throttle";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Loader } from "@/components/Loader";
@@ -101,6 +102,21 @@ export default function ScreenerPage() {
   const [rankStepC, setRankStepC] = useState(true);
   const [savingRanking, setSavingRanking] = useState(false);
   const fetchScreenerRef = useRef<() => void>(() => {});
+  const latestScreenerListRef = useRef<RankedToken[] | null>(null);
+
+  const throttledDataUpdate = useMemo(
+    () =>
+      throttle(() => {
+        const list = latestScreenerListRef.current;
+        if (!list) return;
+        setData((prev) => {
+          const map = new Map((prev?.rankedTokens ?? []).map((s) => [s.symbol, s]));
+          list.forEach((d) => map.set(d.symbol, { ...map.get(d.symbol), ...d }));
+          return { rankedTokens: list.map((d) => map.get(d.symbol) ?? d) };
+        });
+      }, 1000),
+    []
+  );
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -139,7 +155,8 @@ export default function ScreenerPage() {
         if (cancelled) return;
         const list = Array.isArray(payload?.rankedTokens) ? payload.rankedTokens : [];
         if (payload?.success !== false) {
-          setData({ rankedTokens: list });
+          latestScreenerListRef.current = list;
+          throttledDataUpdate();
         }
       } catch (e) {
         if (!cancelled) toast.error("Failed to load screener data.");
