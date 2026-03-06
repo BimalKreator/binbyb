@@ -681,15 +681,27 @@ function openPrivateStream(credentials) {
               execTime: formatMs(d.updatedTime ?? msg.ts),
             });
           } else if (msg.topic === "position") {
-            if (parseFloat(d.size) === 0) {
-              const sym = String(d?.symbol || "").toUpperCase();
-              if (sym) {
-                Object.keys(livePositionsByKey).forEach((key) => {
-                  if (key.startsWith(sym + ":")) delete livePositionsByKey[key];
-                });
-              }
+            const sym = String(d?.symbol || "").toUpperCase();
+            const amt = parseFloat(d.size ?? 0);
+            const cacheKey = `${sym}_${d.positionIdx}`; // FIX
+            if (Math.abs(amt) === 0) {
+              delete livePositionsByKey[cacheKey];
+              const hasOther = Object.keys(livePositionsByKey).some((k) => k.startsWith(sym + "_"));
+              if (!hasOther && onPositionClosed) onPositionClosed(sym, "bybit");
             } else {
-              upsertLivePosition(d);
+              const sizeNum = Number(amt);
+              livePositionsByKey[cacheKey] = {
+                symbol: sym,
+                unrealizedProfit: parseFloat(d.unrealisedPnl ?? 0) || 0,
+                marginUsed: parseFloat(d.positionIM ?? 0) || 0,
+                size: sizeNum,
+                positionAmt: sizeNum,
+                side: String(d.side || "").toLowerCase() === "buy" ? "Buy" : "Sell",
+                entryPrice: parseFloat(d.avgPrice ?? d.entryPrice ?? 0) || null,
+                leverage: d.leverage != null ? Number(d.leverage) : null,
+                liquidationPrice: parseFloat(d.liqPrice ?? d.liquidationPrice ?? 0) || null,
+                positionIdx: d.positionIdx,
+              };
             }
           }
         }
@@ -1025,15 +1037,18 @@ async function getPositionDetails(credentials, symbol) {
         const entryPrice = parseFloat(String(p.avgPrice ?? p.entryPrice ?? 0)) || null;
         const leverage = p.leverage != null ? Number(p.leverage) : null;
         const liquidationPrice = parseFloat(String(p.liqPrice ?? p.liquidationPrice ?? 0)) || null;
+        const positionIdx = p.positionIdx != null ? String(p.positionIdx) : "0";
         return {
           symbol: String(p.symbol || "").toUpperCase(),
           unrealizedProfit: parseFloat(String(p.unrealisedPnl ?? 0)) || 0,
           marginUsed: parseFloat(String(p.positionIM ?? 0)) || 0,
           positionAmt: size,
+          size,
           side,
           entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
           leverage: Number.isFinite(leverage) ? leverage : null,
           liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
+          positionIdx,
         };
       })
       .filter((p) => p.symbol);
@@ -1555,31 +1570,28 @@ async function hydratePositionsFromRest(credentials) {
       const symbolsInResponse = new Set();
       for (const p of list || []) {
         const sym = String(p?.symbol || "").toUpperCase();
-        const positionAmt = parseFloat(String(p?.positionAmt ?? 0));
-        const side = String(p?.side || "").toLowerCase() === "buy" ? "Buy" : "Sell";
-        const key = `${sym}:${side}:0`;
-        symbolsInResponse.add(sym);
-        if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) {
-          delete livePositionsByKey[key];
-          continue;
+        const amt = parseFloat(p?.size ?? p?.positionAmt ?? 0);
+        const cacheKey = `${sym}_${p.positionIdx ?? "0"}`; // FIX
+        if (Math.abs(amt) === 0 || Number.isNaN(amt)) {
+          delete livePositionsByKey[cacheKey];
+        } else {
+          livePositionsByKey[cacheKey] = {
+            symbol: sym,
+            unrealizedProfit: parseFloat(String(p?.unrealizedProfit ?? 0)) || 0,
+            marginUsed: parseFloat(String(p?.marginUsed ?? 0)) || 0,
+            positionAmt: amt,
+            size: amt,
+            side: p?.side ?? (amt > 0 ? "Buy" : "Sell"),
+            entryPrice: parseFloat(String(p?.entryPrice ?? 0)) || null,
+            leverage: p?.leverage != null ? Number(p.leverage) : null,
+            liquidationPrice: parseFloat(String(p?.liquidationPrice ?? 0)) || null,
+            positionIdx: p?.positionIdx ?? "0",
+          };
+          symbolsInResponse.add(cacheKey);
         }
-        const entryPrice = parseFloat(String(p?.entryPrice ?? 0)) || null;
-        const leverage = p?.leverage != null ? Number(p.leverage) : null;
-        const liquidationPrice = parseFloat(String(p?.liquidationPrice ?? 0)) || null;
-        livePositionsByKey[key] = {
-          symbol: sym,
-          unrealizedProfit: parseFloat(String(p?.unrealizedProfit ?? 0)) || 0,
-          marginUsed: parseFloat(String(p?.marginUsed ?? 0)) || 0,
-          positionAmt,
-          side,
-          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
-          leverage: Number.isFinite(leverage) ? leverage : null,
-          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
-        };
       }
       Object.keys(livePositionsByKey).forEach((k) => {
-        const keySym = k.split(":")[0];
-        if (!symbolsInResponse.has(keySym)) delete livePositionsByKey[k];
+        if (!symbolsInResponse.has(k)) delete livePositionsByKey[k];
       });
       emitPositionUpdate();
       if (list?.length > 0) console.log("[Bybit] Hydrated", list.length, "positions from REST");

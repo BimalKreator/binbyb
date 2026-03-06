@@ -814,37 +814,24 @@ async function startPrivateStream(credentials) {
         if (Array.isArray(positions)) {
           for (const p of positions) {
             const sym = String(p?.s ?? p?.symbol ?? "").toUpperCase();
-            const positionSideRaw = String(p?.ps ?? p?.positionSide ?? "BOTH").toUpperCase();
-            const positionSide =
-              positionSideRaw === "LONG" || positionSideRaw === "SHORT" ? positionSideRaw : "BOTH";
             if (!sym) continue;
-            const key = `${sym}:${positionSide}`;
-            const pa = parseFloat(p?.pa ?? p?.positionAmt ?? 0);
-            if (!Number.isFinite(pa) || pa === 0) {
-              delete livePositionsByKey[key];
-              if (typeof onPositionClosed === "function") onPositionClosed(sym, "binance");
-              continue;
-            }
-            const existing = livePositionsByKey[key];
-            if (existing) {
-              existing.positionAmt = pa;
-              const rawIw = p?.iw ?? p?.isolatedWallet ?? p?.positionInitialMargin;
-              const rawIm = p?.im;
-              const marginFromPayload = rawIw != null && String(rawIw).length > 0 ? parseFloat(rawIw) : (rawIm != null && String(rawIm).length > 0 ? parseFloat(rawIm) : NaN);
-              if (Number.isFinite(marginFromPayload)) {
-                existing.marginUsed = marginFromPayload;
-              } else {
-                const ep = parseFloat(p?.ep ?? p?.entryPrice ?? 0);
-                const lev = p?.l != null ? Number(p.l) : p?.leverage != null ? Number(p.leverage) : null;
-                if (Number.isFinite(ep) && ep > 0 && lev != null && lev >= 1) {
-                  existing.marginUsed = (Math.abs(pa) * ep) / lev;
-                }
-              }
-              const up = parseFloat(p?.up ?? p?.unRealizedProfit ?? p?.unrealizedProfit ?? 0);
-              if (Number.isFinite(up)) existing.unrealizedProfit = up;
-              existing.updatedTime = Date.now();
+            const amt = parseFloat(p?.pa ?? p?.positionAmt ?? 0);
+            const cacheKey = `${sym}_${p.ps}`; // FIX: Unique key per hedge leg
+            if (Math.abs(amt) === 0) {
+              delete livePositionsByKey[cacheKey];
+              const hasOther = Object.keys(livePositionsByKey).some((k) => k.startsWith(sym + "_"));
+              if (!hasOther && onPositionClosed) onPositionClosed(sym, "binance");
             } else {
-              upsertLivePosition(p);
+              livePositionsByKey[cacheKey] = {
+                symbol: sym,
+                positionAmt: p.pa,
+                entryPrice: p.ep,
+                unrealizedProfit: p.up,
+                marginUsed: p.iw,
+                positionSide: p.ps,
+                markPrice: p.markPrice || null,
+                side: parseFloat(p.pa) > 0 ? "BUY" : "SELL",
+              };
             }
           }
           emitPositionUpdate();
@@ -1309,32 +1296,28 @@ async function hydratePositionsFromRest(credentials) {
       const symbolsInResponse = new Set();
       for (const p of list || []) {
         const sym = String(p?.symbol || "").toUpperCase();
-        const positionAmt = parseFloat(String(p?.positionAmt ?? 0));
-        const posSide = p?.positionSide === "LONG" || p?.positionSide === "SHORT" ? p.positionSide : "BOTH";
-        const key = `${sym}:${posSide}`;
-        symbolsInResponse.add(sym);
-        if (!sym || !Number.isFinite(positionAmt) || Math.abs(positionAmt) === 0) {
-          delete livePositionsByKey[key];
-          continue;
+        const amt = parseFloat(p?.positionAmt ?? 0);
+        const cacheKey = `${sym}_${p.positionSide}`; // FIX
+        if (Math.abs(amt) === 0 || Number.isNaN(amt)) {
+          delete livePositionsByKey[cacheKey];
+        } else {
+          livePositionsByKey[cacheKey] = {
+            symbol: sym,
+            positionAmt: p.positionAmt,
+            entryPrice: p.entryPrice,
+            unrealizedProfit: p.unrealizedProfit ?? p.unRealizedProfit ?? 0,
+            marginUsed: p.marginUsed ?? p.isolatedMargin ?? p.initialMargin ?? 0,
+            positionSide: p.positionSide,
+            leverage: p.leverage,
+            liquidationPrice: p.liquidationPrice,
+            markPrice: p.markPrice ?? null,
+            side: amt > 0 ? "BUY" : "SELL",
+          };
+          symbolsInResponse.add(cacheKey);
         }
-        const entryPrice = parseFloat(String(p?.entryPrice ?? 0)) || null;
-        const leverage = p?.leverage != null ? Number(p.leverage) : null;
-        const liquidationPrice = parseFloat(String(p?.liquidationPrice ?? 0)) || null;
-        livePositionsByKey[key] = {
-          symbol: sym,
-          unrealizedProfit: parseFloat(String(p?.unrealizedProfit ?? 0)) || 0,
-          marginUsed: parseFloat(String(p?.marginUsed ?? 0)) || 0,
-          positionAmt,
-          side: p?.side || (positionAmt > 0 ? "BUY" : "SELL"),
-          positionSide: posSide,
-          entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
-          leverage: Number.isFinite(leverage) ? leverage : null,
-          liquidationPrice: Number.isFinite(liquidationPrice) ? liquidationPrice : null,
-        };
       }
       Object.keys(livePositionsByKey).forEach((k) => {
-        const keySym = k.split(":")[0];
-        if (!symbolsInResponse.has(keySym)) delete livePositionsByKey[k];
+        if (!symbolsInResponse.has(k)) delete livePositionsByKey[k];
       });
       emitPositionUpdate();
       if (list?.length > 0) console.log("[Binance] Hydrated", list.length, "positions from REST");

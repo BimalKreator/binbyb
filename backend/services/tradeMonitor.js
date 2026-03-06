@@ -257,6 +257,14 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
   const [binanceResult, bybitResult] = await Promise.allSettled([binancePromise, bybitPromise]);
   const binanceFilled = binanceResult.status === "fulfilled" ? binanceResult.value : 0;
   const bybitFilled = bybitResult.status === "fulfilled" ? bybitResult.value : 0;
+
+  if (binanceResult.status === "rejected" || bybitResult.status === "rejected") {
+    failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
+    console.log(`[Phantom Protection] Failed to close ${sym}. Locked for 10 mins. Forcing REST Sync...`);
+    binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
+    bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
+  }
+
   if (binanceResult.status === "rejected") {
     const msg = binanceResult.reason?.message || String(binanceResult.reason);
     console.error("[TradeMonitor] closePair Binance exit sweep failed", sym, msg);
@@ -896,6 +904,10 @@ function start() {
   bybitManager.setOnPositionClosed((symbol, exchange) => handlePositionClosed(symbol, exchange));
 
   livePnlService.setExitCheckCallback(async (symbol, combinedPnl) => {
+    const sym = String(symbol).toUpperCase();
+    if (closingSymbols.has(sym)) return;
+    if (Date.now() < (failedClosesUntil[sym] || 0)) return; // DO NOT RETRY IF LOCKED
+
     const settings = await getTickSettings();
     if (!settings || !settings.autoExitEnabled) return;
 
@@ -904,7 +916,6 @@ function start() {
 
     const binList = binanceManager.getLivePositions() || [];
     const bybList = bybitManager.getLivePositions() || [];
-    const sym = String(symbol).toUpperCase();
     // FIX: Must filter by absolute quantity > 0 to grab the correct active Hedge leg
     const bp = binList.find((p) => String(p.symbol).toUpperCase() === sym && Math.abs(parseFloat(p.positionAmt || p.size || 0)) > 0);
     const yp = bybList.find((p) => String(p.symbol).toUpperCase() === sym && Math.abs(parseFloat(p.positionAmt || p.size || 0)) > 0);
