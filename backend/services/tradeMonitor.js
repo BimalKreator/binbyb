@@ -905,8 +905,9 @@ function start() {
     const binList = binanceManager.getLivePositions() || [];
     const bybList = bybitManager.getLivePositions() || [];
     const sym = String(symbol).toUpperCase();
-    const bp = binList.find((p) => String(p.symbol).toUpperCase() === sym);
-    const yp = bybList.find((p) => String(p.symbol).toUpperCase() === sym);
+    // FIX: Must filter by absolute quantity > 0 to grab the correct active Hedge leg
+    const bp = binList.find((p) => String(p.symbol).toUpperCase() === sym && Math.abs(parseFloat(p.positionAmt || p.size || 0)) > 0);
+    const yp = bybList.find((p) => String(p.symbol).toUpperCase() === sym && Math.abs(parseFloat(p.positionAmt || p.size || 0)) > 0);
 
     if (!bp || !yp) return;
 
