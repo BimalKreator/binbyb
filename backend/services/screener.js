@@ -24,6 +24,8 @@ let cachedUserMinSpread = 0;
 let cachedScreenerDirectionBy = "funding";
 /** When set, only tokens in this set (symbols on BOTH Binance and Bybit) are included. */
 let trackedCommonSymbols = new Set();
+let ioRef = null;
+let screenerEmitIntervalId = null;
 
 /**
  * Map interval milliseconds strictly to 1, 2, 4, 8 (then to '1h', '2h', '4h', '8h').
@@ -394,6 +396,10 @@ async function hydrateBinanceDataFromPremiumIndex(commonSymbols) {
   }
 }
 
+function init(io) {
+  ioRef = io;
+}
+
 /**
  * Connect to exchange managers so screener updates on every funding message.
  * Relies strictly on commonSymbols: only these symbols are included in ranked tokens and broadcast.
@@ -407,6 +413,16 @@ function start(commonSymbols) {
   }
   binanceManager.setOnFundingUpdate(onBinanceFunding);
   bybitManager.setOnFundingUpdate(onBybitFunding);
+  if (screenerEmitIntervalId) {
+    clearInterval(screenerEmitIntervalId);
+    screenerEmitIntervalId = null;
+  }
+  screenerEmitIntervalId = setInterval(() => {
+    if (ioRef) {
+      const list = getRankedTokens();
+      ioRef.emit("screener_data", list.slice(0, 100));
+    }
+  }, 1000);
   if (Array.isArray(commonSymbols) && commonSymbols.length > 0) {
     setTimeout(() => {
       hydrateBinanceDataFromPremiumIndex(commonSymbols).then(() => runScreener());
@@ -416,6 +432,11 @@ function start(commonSymbols) {
 }
 
 function stop() {
+  if (screenerEmitIntervalId) {
+    clearInterval(screenerEmitIntervalId);
+    screenerEmitIntervalId = null;
+  }
+  ioRef = null;
   binanceManager.setOnFundingUpdate(null);
   bybitManager.setOnFundingUpdate(null);
   trackedCommonSymbols = new Set();
@@ -595,6 +616,7 @@ function getSnapshot() {
 }
 
 module.exports = {
+  init,
   start,
   stop,
   getRankedTokens,

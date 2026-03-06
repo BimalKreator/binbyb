@@ -73,6 +73,7 @@ mongoose
     try {
       console.log("MongoDB connected:", MONGODB_URI);
       logService.init(io);
+      screener.init(io);
       // 7s startup delay before first REST calls to avoid API storm on PM2 crash loop
       await new Promise((r) => setTimeout(r, 7000));
       const symbols = await startExchanges();

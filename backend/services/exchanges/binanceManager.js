@@ -557,7 +557,8 @@ function connectBinanceDepthChunk(symbolsChunk) {
   depthWsArray.push(ws);
 
   ws.on("open", () => {
-    const streams = symbolsChunk.map((s) => String(s).toLowerCase() + "@depth20@100ms");
+    // Symbol already contains USDT (e.g. BTCUSDT); do not append "usdt" or stream becomes btcusdtusdt
+    const streams = symbolsChunk.map((s) => `${String(s).toLowerCase()}@depth20@100ms`);
     ws.send(JSON.stringify({ method: "SUBSCRIBE", params: streams, id: 1 }));
   });
 
@@ -1509,9 +1510,9 @@ function refreshAvailableBalanceInBackground(credentials) {
   (async () => {
     try {
       const timestamp = Date.now();
-      const queryString = `timestamp=${timestamp}`;
-      const signature = signQueryString(queryString, credentials.apiSecret);
-      const fullQuery = `${queryString}&signature=${signature}`;
+      const query = `recvWindow=60000&timestamp=${timestamp}`;
+      const signature = signQueryString(query, credentials.apiSecret);
+      const fullQuery = `${query}&signature=${signature}`;
       const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
         headers: { "X-MBX-APIKEY": credentials.apiKey },
       });
@@ -1569,9 +1570,9 @@ async function getBalances(credentials) {
   if (!credentials?.apiKey || !credentials?.apiSecret) return out;
   try {
     const timestamp = Date.now();
-    const queryString = `timestamp=${timestamp}`;
-    const signature = signQueryString(queryString, credentials.apiSecret);
-    const fullQuery = `${queryString}&signature=${signature}`;
+    const query = `recvWindow=60000&timestamp=${timestamp}`;
+    const signature = signQueryString(query, credentials.apiSecret);
+    const fullQuery = `${query}&signature=${signature}`;
     const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/account?${fullQuery}`, {
       headers: { "X-MBX-APIKEY": credentials.apiKey },
     });
@@ -1595,7 +1596,7 @@ async function getBalances(credentials) {
 async function getPositionSymbols(credentials) {
   try {
     const timestamp = Date.now();
-    const queryString = `timestamp=${timestamp}`;
+    const queryString = `recvWindow=60000&timestamp=${timestamp}`;
     const signature = signQueryString(queryString, credentials.apiSecret);
     const fullQuery = `${queryString}&signature=${signature}`;
     const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v2/positionRisk?${fullQuery}`, {
