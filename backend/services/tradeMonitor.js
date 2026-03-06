@@ -13,6 +13,7 @@ const screener = require("./screener");
 const autoTrader = require("./autoTrader");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
 const livePnlService = require("./livePnlService");
+const { dbLog } = require("../utils/logger");
 
 const ORPHAN_GRACE_MS = 10000; // 10 seconds: only close orphan if position age > this (avoids false orphan from leg latency)
 const ORPHAN_GRACE_PERIOD_MS = 10000; // 10 seconds: wait after first detecting an orphan before closing (avoids WS delay false orphans)
@@ -65,32 +66,42 @@ function buildPrimaryBySymbol(positions) {
 }
 
 /**
- * Real-time PnL % using manager mark prices; fallback to exchange native unrealized when mark missing.
+ * Real-time PnL % using Real L2 VWAP exit price (executable orderbook), not mark price.
  */
 function calculateRealtimePnlPercent(symbol, binancePos, bybitPos) {
   const sym = toUpperSymbol(symbol);
-  const binanceMark = binanceManager.getMarkPrice(sym) || 0;
-  const bybitMark = bybitManager.getMarkPrice(sym) || 0;
-
   const bEntry = parseFloat(binancePos?.entryPrice) || 0;
   const byEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || 0;
-
   const bQty = Math.abs(parseFloat(binancePos?.positionAmt) || 0);
   const byQty = Math.abs(parseFloat(bybitPos?.positionAmt) || 0);
+  const bAmt = parseFloat(binancePos?.positionAmt) || 0;
+  const byAmt = parseFloat(bybitPos?.positionAmt) || 0;
 
-  const bDir = (parseFloat(binancePos?.positionAmt) || 0) > 0 ? 1 : -1;
-  const byDir = String(bybitPos?.side || "").toLowerCase() === "buy" ? 1 : -1;
+  let binanceRealPnl = parseFloat(binancePos?.unrealizedProfit) || 0;
+  if (bQty > 0 && bEntry > 0) {
+    const binNotional = bQty * bEntry;
+    if (bAmt < 0) {
+      const vwapBuy = binanceManager.getVwapPrice(sym, "BUY", binNotional);
+      if (vwapBuy != null) binanceRealPnl = (bEntry - vwapBuy) * bQty;
+    } else if (bAmt > 0) {
+      const vwapSell = binanceManager.getVwapPrice(sym, "SELL", binNotional);
+      if (vwapSell != null) binanceRealPnl = (vwapSell - bEntry) * bQty;
+    }
+  }
 
-  const binanceRealtime = (binanceMark > 0 && bEntry > 0)
-    ? bDir * (binanceMark - bEntry) * bQty
-    : (parseFloat(binancePos?.unrealizedProfit) || 0);
+  let bybitRealPnl = parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0;
+  if (byQty > 0 && byEntry > 0) {
+    const bybNotional = byQty * byEntry;
+    if (byAmt < 0) {
+      const vwapBuy = bybitManager.getVwapPrice(sym, "Buy", bybNotional);
+      if (vwapBuy != null) bybitRealPnl = (byEntry - vwapBuy) * byQty;
+    } else if (byAmt > 0) {
+      const vwapSell = bybitManager.getVwapPrice(sym, "Sell", bybNotional);
+      if (vwapSell != null) bybitRealPnl = (vwapSell - byEntry) * byQty;
+    }
+  }
 
-  const bybitRealtime = (bybitMark > 0 && byEntry > 0)
-    ? byDir * (bybitMark - byEntry) * byQty
-    : (parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0);
-
-  const combinedUnrealizedPnL = binanceRealtime + bybitRealtime;
-
+  const combinedUnrealizedPnL = binanceRealPnl + bybitRealPnl;
   const bMargin = parseFloat(binancePos?.marginUsed) || parseFloat(binancePos?.initialMargin) || 0;
   const byMargin = parseFloat(bybitPos?.marginUsed) || parseFloat(bybitPos?.positionIM) || 0;
   const combinedMargin = bMargin + byMargin;
@@ -99,24 +110,41 @@ function calculateRealtimePnlPercent(symbol, binancePos, bybitPos) {
   return (combinedUnrealizedPnL / combinedMargin) * 100;
 }
 
-/** Compute combined unrealized PnL (real-time math) for closePair logging. */
+/** Compute combined unrealized PnL using Real L2 VWAP (for closePair logging). */
 function getCombinedUnrealizedPnL(symbol, binancePos, bybitPos) {
   const sym = toUpperSymbol(symbol);
-  const binanceMark = binanceManager.getMarkPrice(sym) || 0;
-  const bybitMark = bybitManager.getMarkPrice(sym) || 0;
   const bEntry = parseFloat(binancePos?.entryPrice) || 0;
   const byEntry = parseFloat(bybitPos?.entryPrice ?? bybitPos?.avgPrice) || 0;
   const bQty = Math.abs(parseFloat(binancePos?.positionAmt) || 0);
   const byQty = Math.abs(parseFloat(bybitPos?.positionAmt) || 0);
-  const bDir = (parseFloat(binancePos?.positionAmt) || 0) > 0 ? 1 : -1;
-  const byDir = String(bybitPos?.side || "").toLowerCase() === "buy" ? 1 : -1;
-  const binanceRealtime = (binanceMark > 0 && bEntry > 0)
-    ? bDir * (binanceMark - bEntry) * bQty
-    : (parseFloat(binancePos?.unrealizedProfit) || 0);
-  const bybitRealtime = (bybitMark > 0 && byEntry > 0)
-    ? byDir * (bybitMark - byEntry) * byQty
-    : (parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0);
-  return binanceRealtime + bybitRealtime;
+  const bAmt = parseFloat(binancePos?.positionAmt) || 0;
+  const byAmt = parseFloat(bybitPos?.positionAmt) || 0;
+
+  let binanceRealPnl = parseFloat(binancePos?.unrealizedProfit) || 0;
+  if (bQty > 0 && bEntry > 0) {
+    const binNotional = bQty * bEntry;
+    if (bAmt < 0) {
+      const vwapBuy = binanceManager.getVwapPrice(sym, "BUY", binNotional);
+      if (vwapBuy != null) binanceRealPnl = (bEntry - vwapBuy) * bQty;
+    } else if (bAmt > 0) {
+      const vwapSell = binanceManager.getVwapPrice(sym, "SELL", binNotional);
+      if (vwapSell != null) binanceRealPnl = (vwapSell - bEntry) * bQty;
+    }
+  }
+
+  let bybitRealPnl = parseFloat(bybitPos?.unrealizedProfit) || parseFloat(bybitPos?.unrealisedPnl) || 0;
+  if (byQty > 0 && byEntry > 0) {
+    const bybNotional = byQty * byEntry;
+    if (byAmt < 0) {
+      const vwapBuy = bybitManager.getVwapPrice(sym, "Buy", bybNotional);
+      if (vwapBuy != null) bybitRealPnl = (byEntry - vwapBuy) * byQty;
+    } else if (byAmt > 0) {
+      const vwapSell = bybitManager.getVwapPrice(sym, "Sell", bybNotional);
+      if (vwapSell != null) bybitRealPnl = (vwapSell - byEntry) * byQty;
+    }
+  }
+
+  return binanceRealPnl + bybitRealPnl;
 }
 
 /**
@@ -234,6 +262,14 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
   const bybitExecExit = fallbackMarkPrice;
 
   if (binanceOk || bybitOk) {
+    const exitReasonLabel = exitReasonOverride || (reason === "SL" ? "SL exit" : reason === "Target" ? "TP/Target exit" : reason);
+    dbLog("EXIT", `Auto-Exited: ${exitReasonLabel}`, sym, {
+      pnl: combinedUnrealizedPnL != null ? combinedUnrealizedPnL : undefined,
+      reason,
+      exitReasonOverride: exitReasonOverride || null,
+      binanceFilled,
+      bybitFilled,
+    });
     autoTrader.clearEntryFundingDirection(sym);
     const groupId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const reasonStr = reason === "SL" ? "SL" : "Target";
@@ -383,6 +419,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
     execExit: execExitPrice,
     fee: 0,
   }).catch((e) => console.error("[TradeMonitor] TradeLog create failed", e.message));
+  dbLog("EXIT", `Orphan closed: ${exitReason || "Orphan"}`, sym, { pnl: unrealized, exchange: exchangeName });
   console.log("[TradeMonitor] Orphan closed", exchange, sym);
 }
 

@@ -9,6 +9,7 @@ const { getDecryptedApiKeys } = require("./apiKeys");
 const { binanceManager, bybitManager } = require("./exchanges");
 const screener = require("./screener");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
+const { dbLog } = require("../utils/logger");
 
 const ENTRY_BUFFER_MS = 60 * 1000; // 60 seconds per symbol before re-entry
 const STRICT_ENTRY_WINDOW_MS = 120000; // 2-minute window: only enter when countdown in [entryTimeMs - 2min, entryTimeMs]
@@ -326,72 +327,123 @@ async function runAutoEntry() {
     } catch (levErr) {
       console.warn("[AutoTrader] setLeverage warning", top.symbol, levErr?.message ?? levErr);
     }
-    console.log(`[AutoTrader] Initiating Interleaved Sweep for ${totalQuantity} ${top.symbol}...`);
-    let remainingQty = totalQuantity;
-    let totalBybitFilled = 0;
-    let totalBinanceFilled = 0;
+    console.log(`[AutoTrader] Initiating Independent Legging Sweep for ${totalQuantity} ${top.symbol}...`);
+    const targetPrice = markPrice;
+    let bybitTotalFilled = 0;
+    let binanceTotalFilled = 0;
     let maxSweeps = 5;
+    let criticalExchangeError = false;
 
-    while (remainingQty > 0 && maxSweeps > 0) {
-      const bybitRes = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, remainingQty, levInt, 1);
-      const chunkFilled = bybitRes?.totalFilled || 0;
-      if (bybitRes?.error && chunkFilled <= 0) {
-        console.log("Bybit rejected: " + bybitRes.error);
-        break;
-      }
+    // Phase 1: Independent Concurrent Sweeping
+    while ((bybitTotalFilled < totalQuantity || binanceTotalFilled < totalQuantity) && maxSweeps > 0) {
+      let bybitNeeded = totalQuantity - bybitTotalFilled;
+      let binanceNeeded = totalQuantity - binanceTotalFilled;
 
-      if (chunkFilled <= 0) {
-        console.log(`[AutoTrader] Bybit chunk filled 0. Waiting 100ms for liquidity...`);
-        await new Promise((r) => setTimeout(r, 100));
-        maxSweeps--;
-        continue;
-      }
-
-      orderCircuitBreaker.recordOrderPlaced();
-      totalBybitFilled += chunkFilled;
-      remainingQty -= chunkFilled;
-
-      let binanceRemaining = chunkFilled;
-      let binanceFailsafe = 5;
-      while (binanceRemaining > 0 && binanceFailsafe > 0) {
-        const binanceRes = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceRemaining, levInt, 5);
-        const bFilled = binanceRes?.totalFilled || 0;
-        if (binanceRes?.error && bFilled <= 0) {
-          console.error("Binance rejected: " + binanceRes.error);
-          break;
+      if (binanceNeeded > 0) {
+        const estNotional = binanceNeeded * targetPrice;
+        if (estNotional < 5) {
+          binanceNeeded = Math.ceil(5 / targetPrice);
         }
-
-        if (bFilled > 0) orderCircuitBreaker.recordOrderPlaced();
-
-        totalBinanceFilled += bFilled;
-        binanceRemaining -= bFilled;
-
-        if (binanceRemaining > 0) {
-          console.log(`[AutoTrader] Binance partial fill. Remaining: ${binanceRemaining}. Waiting 100ms...`);
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        binanceFailsafe--;
       }
 
-      if (binanceRemaining > 0) {
-        console.error("Failsafe reached: Binance failed to match after 5 attempts. Aborting outer sweep. Mismatch monitor will handle the rest.");
+      const sweepPromises = [];
+      if (bybitNeeded > 0) {
+        sweepPromises.push(
+          bybitManager
+            .executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, bybitNeeded, levInt, 1)
+            .then((res) => ({ exchange: "bybit", res }))
+            .catch((err) => ({ exchange: "bybit", res: { error: err?.message || "Bybit sweep failed", totalFilled: 0 } }))
+        );
+      }
+      if (binanceNeeded > 0) {
+        sweepPromises.push(
+          binanceManager
+            .executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceNeeded, levInt, 5)
+            .then((res) => ({ exchange: "binance", res }))
+            .catch((err) => ({ exchange: "binance", res: { error: err?.message || "Binance sweep failed", totalFilled: 0 } }))
+        );
+      }
+
+      if (sweepPromises.length === 0) break;
+
+      const results = await Promise.all(sweepPromises);
+      let bybitError = false;
+      let binanceError = false;
+
+      for (const r of results) {
+        if (r.exchange === "bybit") {
+          bybitTotalFilled += r.res.totalFilled || 0;
+          if (r.res.error && (r.res.totalFilled || 0) <= 0) bybitError = true;
+          if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
+        }
+        if (r.exchange === "binance") {
+          binanceTotalFilled += r.res.totalFilled || 0;
+          if (r.res.error && (r.res.totalFilled || 0) <= 0) binanceError = true;
+          if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
+        }
+      }
+
+      if (bybitError || binanceError) {
+        criticalExchangeError = true;
+        const errMsg = `CRITICAL: An exchange rejected the order (BybitError: ${bybitError}, BinanceError: ${binanceError}). Aborting sweeps instantly to prevent unhedged exposure.`;
+        console.error(`[AutoTrader] ${errMsg}`);
+        dbLog("ERROR", errMsg, top.symbol, { bybitError, binanceError, bybitTotalFilled, binanceTotalFilled });
         break;
       }
 
       maxSweeps--;
+      if (maxSweeps > 0) await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
-    if (totalBybitFilled <= 0) {
+    // Phase 2: Final Force-Balancing (True-up) — only if no critical exchange rejection
+    if (!criticalExchangeError) {
+      const mismatch = Math.abs(bybitTotalFilled - binanceTotalFilled);
+      const mismatchNotional = mismatch * targetPrice;
+      if (mismatchNotional > 6) {
+        console.log(`[AutoTrader] Final Balancing: Binance ${binanceTotalFilled}, Bybit ${bybitTotalFilled}. Fixing mismatch...`);
+        if (bybitTotalFilled > binanceTotalFilled) {
+          let catchUpQty = bybitTotalFilled - binanceTotalFilled;
+          if (catchUpQty * targetPrice < 5) catchUpQty = Math.ceil(5 / targetPrice);
+          try {
+            const res = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, catchUpQty, levInt, 5);
+            if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
+            binanceTotalFilled += res?.totalFilled || 0;
+          } catch (e) {
+            console.error("[AutoTrader] Binance catch-up sweep failed", e?.message ?? e);
+          }
+        } else if (binanceTotalFilled > bybitTotalFilled) {
+          const catchUpQty = binanceTotalFilled - bybitTotalFilled;
+          try {
+            const res = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, catchUpQty, levInt, 1);
+            if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
+            bybitTotalFilled += res?.totalFilled || 0;
+          } catch (e) {
+            console.error("[AutoTrader] Bybit catch-up sweep failed", e?.message ?? e);
+          }
+        }
+      }
+    } else {
+      console.log("[AutoTrader] Skipping Phase 2 balancing due to critical exchange rejection. Relying on TradeMonitor to handle the orphan/mismatch.");
+    }
+
+    if (bybitTotalFilled <= 0) {
       console.log(`[AutoTrader] Sweep failed or 0 filled on Bybit for ${top.symbol}. Aborting.`);
+      dbLog("ERROR", "Sweep failed or 0 filled on Bybit. Aborting.", top.symbol, { bybitTotalFilled, binanceTotalFilled });
       isExecutingTrade = false;
       return;
     }
 
+    const mismatch = Math.abs(bybitTotalFilled - binanceTotalFilled);
+    dbLog("ENTRY", `Chunk Executed: Binance ${binanceTotalFilled}, Bybit ${bybitTotalFilled}`, top.symbol, {
+      binanceTotalFilled,
+      bybitTotalFilled,
+      mismatch,
+    });
     lastFiredCycleKey = cycleKey;
     tradedCycles[symbol] = nextFundingTime;
     lastEntryTimeBySymbol[top.symbol] = Date.now();
     entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
-    console.log("[AutoTrader] Entry (liquidity sweep)", top.symbol, binanceSide, bybitSide, "bybitFilled", totalBybitFilled);
+    console.log("[AutoTrader] Entry (liquidity sweep)", top.symbol, binanceSide, bybitSide, "bybitFilled", bybitTotalFilled, "binanceFilled", binanceTotalFilled);
   } finally {
     isExecutingTrade = false;
   }

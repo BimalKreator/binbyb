@@ -213,8 +213,8 @@ router.get("/positions", async (req, res) => {
       const binancePos = binanceBySymbol[symbol] ?? defaultBinancePos;
       const bybitPos = bybitBySymbol[symbol] ?? defaultBybitPos;
 
-      const binanceMark = binanceManager.getMarkPrice(symbol) ?? 0;
-      const bybitMark = bybitManager.getMarkPrice(symbol) ?? 0;
+      let binanceMark = binanceManager.getMarkPrice(symbol) ?? 0;
+      let bybitMark = bybitManager.getMarkPrice(symbol) ?? 0;
       const binanceFundingRate = binanceManager.getCachedFundingRate(symbol) ?? 0;
       const bybitFundingRate = bybitManager.getCachedFundingRate(symbol) ?? 0;
 
@@ -222,6 +222,45 @@ router.get("/positions", async (req, res) => {
       const bybitAmt = parseFloat(String(bybitPos.positionAmt ?? 0)) || 0;
       const binanceQty = Math.abs(binanceAmt);
       const bybitQty = Math.abs(bybitAmt);
+      const binanceEntry = parseFloat(String(binancePos.entryPrice ?? 0)) || 0;
+      const bybitEntry = parseFloat(String(bybitPos.entryPrice ?? 0)) || 0;
+
+      // Real L2 VWAP PnL: notional = |amt| * entryPrice; close price = VWAP for closing side
+      let binanceUnrealized = parseFloat(String(binancePos.unrealizedProfit ?? 0)) || 0;
+      let bybitUnrealized = parseFloat(String(bybitPos.unrealizedProfit ?? 0)) || 0;
+      if (binanceQty > 0 && binanceEntry > 0) {
+        const notionalBinance = binanceQty * binanceEntry;
+        if (binanceAmt < 0) {
+          const vwapClose = binanceManager.getVwapPrice(symbol, "BUY", notionalBinance);
+          if (vwapClose != null) {
+            binanceUnrealized = (binanceEntry - vwapClose) * binanceQty;
+            binanceMark = vwapClose;
+          }
+        } else {
+          const vwapClose = binanceManager.getVwapPrice(symbol, "SELL", notionalBinance);
+          if (vwapClose != null) {
+            binanceUnrealized = (vwapClose - binanceEntry) * binanceQty;
+            binanceMark = vwapClose;
+          }
+        }
+      }
+      if (bybitQty > 0 && bybitEntry > 0) {
+        const notionalBybit = bybitQty * bybitEntry;
+        if (bybitAmt < 0) {
+          const vwapClose = bybitManager.getVwapPrice(symbol, "Buy", notionalBybit);
+          if (vwapClose != null) {
+            bybitUnrealized = (bybitEntry - vwapClose) * bybitQty;
+            bybitMark = vwapClose;
+          }
+        } else {
+          const vwapClose = bybitManager.getVwapPrice(symbol, "Sell", notionalBybit);
+          if (vwapClose != null) {
+            bybitUnrealized = (vwapClose - bybitEntry) * bybitQty;
+            bybitMark = vwapClose;
+          }
+        }
+      }
+
       const notionalBinance = binanceQty * (Number.isFinite(binanceMark) ? binanceMark : 0);
       const notionalBybit = bybitQty * (Number.isFinite(bybitMark) ? bybitMark : 0);
       const binanceFundingDecimal = Number(binanceFundingRate) || 0;
@@ -239,9 +278,7 @@ router.get("/positions", async (req, res) => {
       const isFundingFlipped = totalFundingIncome < 0;
       const totalNextFundingAmount = totalFundingIncome;
 
-      // Exchange-native unrealized PnL only (Binance: unRealizedProfit, Bybit: unrealisedPnl → normalized to unrealizedProfit)
-      const combinedUnrealized =
-        parseFloat(String(binancePos.unrealizedProfit ?? 0)) + parseFloat(String(bybitPos.unrealizedProfit ?? 0));
+      const combinedUnrealized = binanceUnrealized + bybitUnrealized;
       const combinedMargin =
         parseFloat(String(binancePos.marginUsed ?? 0)) + parseFloat(String(bybitPos.marginUsed ?? 0));
       const combinedPnlPct = combinedMargin > 0 ? (combinedUnrealized / combinedMargin) * 100 : null;
@@ -268,7 +305,7 @@ router.get("/positions", async (req, res) => {
           side: binancePos.side,
           positionSide: binancePos.positionSide,
           positionAmt: binanceAmt,
-          unrealizedProfit: parseFloat(String(binancePos.unrealizedProfit ?? 0)) || 0,
+          unrealizedProfit: binanceUnrealized,
           marginUsed: parseFloat(String(binancePos.marginUsed ?? 0)) || 0,
           entryPrice: binancePos.entryPrice,
           leverage: binancePos.leverage,
@@ -283,7 +320,7 @@ router.get("/positions", async (req, res) => {
           side: bybitPos.side,
           positionSide: bybitPos.positionSide ?? "NONE",
           positionAmt: bybitAmt,
-          unrealizedProfit: parseFloat(String(bybitPos.unrealizedProfit ?? 0)) || 0,
+          unrealizedProfit: bybitUnrealized,
           marginUsed: parseFloat(String(bybitPos.marginUsed ?? 0)) || 0,
           entryPrice: bybitPos.entryPrice,
           leverage: bybitPos.leverage,

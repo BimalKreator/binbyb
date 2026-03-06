@@ -28,10 +28,15 @@ type TradeRecord = {
 };
 
 type LogEntry = {
-  level: string;
+  _id?: string;
+  type?: string;
+  level?: string;
   message: string;
-  category: string | null;
+  category?: string | null;
+  symbol?: string | null;
+  details?: Record<string, unknown>;
   ts: number;
+  createdAt?: string;
 };
 
 const LIMIT = 20;
@@ -60,8 +65,9 @@ export default function TradesPage() {
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
-  const [connected, setConnected] = useState(false);
   const [logFilter, setLogFilter] = useState<"all" | "entry" | "exit" | "error">("all");
+  const [logDays, setLogDays] = useState(7);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const logsBottomRef = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
@@ -98,48 +104,26 @@ export default function TradesPage() {
   useEffect(() => {
     if (tradesTab !== "logs") return;
     setLoadingLogs(true);
+    const types =
+      logFilter === "all"
+        ? "ENTRY,EXIT,ERROR,SYSTEM"
+        : logFilter === "entry"
+          ? "ENTRY"
+          : logFilter === "exit"
+            ? "EXIT"
+            : "ERROR";
     api
-      .get<{ success: boolean; data: LogEntry[] }>("/logs")
+      .get<{ success: boolean; data: LogEntry[] }>("/logs/system", {
+        params: { type: types, days: logDays },
+      })
       .then(({ data }) => {
         if (data.success && Array.isArray(data.data)) setLogs(data.data);
       })
       .catch(() => setLogs([]))
       .finally(() => setLoadingLogs(false));
+  }, [tradesTab, logFilter, logDays]);
 
-    const { io } = require("socket.io-client");
-    const socket = io(getSocketOrigin().replace(/\/$/, ""), { path: "/socket.io", transports: ["websocket", "polling"] });
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("system-log", (payload: LogEntry) => {
-      setLogs((prev) => [
-        ...prev,
-        { level: payload.level, message: payload.message, category: payload.category ?? null, ts: payload.ts ?? Date.now() },
-      ]);
-    });
-    return () => {
-      socket.disconnect();
-    };
-  }, [tradesTab]);
-
-  const filteredLogs = logs.filter((l) => {
-    if (logFilter === "all") return true;
-    const msg = (l.message ?? "").toLowerCase();
-    const level = (l.level ?? "").toLowerCase();
-    const category = (l.category ?? "").toLowerCase();
-    if (logFilter === "error") {
-      if (level === "error" || category === "error") return true;
-      return /error|fail|reject|timeout/.test(msg);
-    }
-    if (logFilter === "entry") {
-      if (category === "entry") return true;
-      return /entry|new|executing trade|buy|sell/.test(msg);
-    }
-    if (logFilter === "exit") {
-      if (category === "exit") return true;
-      return /exit|tp|sl|close|filled/.test(msg);
-    }
-    return true;
-  });
+  const filteredLogs = logs;
 
   useEffect(() => {
     logsBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -177,11 +161,8 @@ export default function TradesPage() {
               <Terminal className="w-5 h-5" />
               System Logs
             </h2>
-            <span className={connected ? "text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400" : "text-xs px-2 py-0.5 rounded bg-slate-600/50 text-slate-400"}>
-              {connected ? "Live" : "Disconnected"}
-            </span>
           </div>
-          <div className="flex flex-wrap gap-2 mb-3">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             {(["all", "entry", "exit", "error"] as const).map((f) => (
               <button
                 key={f}
@@ -192,34 +173,62 @@ export default function TradesPage() {
                 {f === "all" ? "All" : f === "entry" ? "Entry" : f === "exit" ? "Exit" : "Errors"}
               </button>
             ))}
+            <span className="text-xs text-slate-500">Last</span>
+            <select
+              value={logDays}
+              onChange={(e) => setLogDays(Number(e.target.value) || 7)}
+              className="text-xs rounded-lg border border-slate-600 bg-slate-800 text-slate-300 px-2 py-1.5"
+            >
+              <option value={1}>1 day</option>
+              <option value={3}>3 days</option>
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+            </select>
           </div>
           <div className="flex-1 min-h-[200px] rounded-lg bg-slate-900 border border-slate-700 overflow-hidden flex flex-col">
-            <pre className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 whitespace-pre-wrap break-words max-h-[50vh]">
+            <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 max-h-[50vh] space-y-0.5">
               {loadingLogs ? (
                 <span className="text-slate-500">Loading logs…</span>
               ) : filteredLogs.length === 0 ? (
                 <span className="text-slate-500">No logs to show.</span>
               ) : (
                 filteredLogs.map((l, i) => {
-                  const msg = (l.message ?? "").toLowerCase();
-                  const isError =
-                    l.level === "error" ||
-                    (l.category ?? "").toLowerCase() === "error" ||
-                    /error|fail|reject|timeout/.test(msg);
-                  const isEntry =
-                    (l.category ?? "").toLowerCase() === "entry" || /entry|new|executing trade|buy|sell/.test(msg);
-                  const isExit =
-                    (l.category ?? "").toLowerCase() === "exit" || /exit|tp|sl|close|filled/.test(msg);
+                  const type = (l.type ?? l.level ?? "").toUpperCase();
+                  const isError = type === "ERROR";
+                  const isEntry = type === "ENTRY";
+                  const isExit = type === "EXIT";
                   const lineClass = isError ? "text-red-400" : isEntry ? "text-emerald-400" : isExit ? "text-amber-400" : "text-slate-300";
+                  const rowId = (typeof l._id === "string" ? l._id : (l._id as { toString?: () => string })?.toString?.()) ?? `${l.ts}-${i}`;
+                  const hasDetails = l.details && Object.keys(l.details).length > 0;
+                  const isExpanded = expandedLogId === rowId;
                   return (
-                    <div key={`${l.ts}-${i}`} className={lineClass}>
-                      {new Date(l.ts).toISOString()} [{l.level}] {l.message}
+                    <div key={rowId} className={lineClass}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedLogId(isExpanded ? null : rowId)}
+                        className="w-full text-left flex items-start gap-2 hover:bg-slate-800/50 rounded px-1 -mx-1"
+                      >
+                        {hasDetails ? (
+                          <span className="shrink-0 text-slate-500">{isExpanded ? "▼" : "▶"}</span>
+                        ) : (
+                          <span className="shrink-0 w-3" />
+                        )}
+                        <span className="flex-1 whitespace-pre-wrap break-words">
+                          {new Date(l.ts).toISOString()} [{type}] {l.symbol ? `[${l.symbol}] ` : ""}{l.message}
+                        </span>
+                      </button>
+                      {hasDetails && isExpanded && (
+                        <pre className="ml-5 mt-1 p-2 rounded bg-slate-800/80 text-slate-400 text-[11px] overflow-x-auto whitespace-pre-wrap break-words border border-slate-700">
+                          {JSON.stringify(l.details, null, 2)}
+                        </pre>
+                      )}
                     </div>
                   );
                 })
               )}
               <div ref={logsBottomRef} />
-            </pre>
+            </div>
           </div>
         </div>
       ) : (

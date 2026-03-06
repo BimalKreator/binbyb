@@ -23,10 +23,10 @@ function persistAndEmit(level, message, category) {
     ts: Date.now(),
   };
   SystemLog.create({
-    level,
+    type: level === "error" ? "ERROR" : "SYSTEM",
     message: payload.message,
-    source: "console",
-    metadata: { category: payload.category },
+    symbol: null,
+    details: { level, source: "console", category: payload.category },
   }).catch((e) => {
     if (io) io.to(ROOM).emit("system-log", { ...payload, level: "error", message: `[logService] ${e.message}` });
   });
