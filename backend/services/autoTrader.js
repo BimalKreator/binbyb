@@ -270,6 +270,17 @@ async function runAutoEntry() {
     binanceSide = isBinanceShort ? "SELL" : "BUY";
     bybitSide = isBinanceShort ? "Buy" : "Sell";
   }
+
+  if (settings.tradingMode === "l2" && settings.l2FavourableFundingOnly) {
+    const binFunding = binanceManager.getCachedFundingRate(symbol) ?? 0;
+    const bybFunding = bybitManager.getCachedFundingRate(symbol) ?? 0;
+    const netFunding = binanceSide === "SELL" ? binFunding - bybFunding : bybFunding - binFunding;
+    if (netFunding <= 0) {
+      console.log(`[AutoTrader-Failsafe] Skipping ${symbol}: Unfavorable Net Funding (${(netFunding * 100).toFixed(4)}%).`);
+      return;
+    }
+  }
+
   const nextFundingTime = top.nextFundingTime;
 
   const allocatedMargin = await getAllocatedMargin(keys);
