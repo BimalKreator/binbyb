@@ -80,7 +80,7 @@ function upsertLivePosition(raw) {
   const sideRaw = String(raw?.side || "").toLowerCase();
   const side = sideRaw === "buy" ? "Buy" : sideRaw === "sell" ? "Sell" : "";
   const idx = raw?.positionIdx != null ? String(raw.positionIdx) : "0";
-  const key = `${sym}:${side || "NONE"}:${idx}`;
+  const key = `${sym}_${idx}`; // UNIFIED: underscore separator, positionIdx only
   const existing = livePositionsByKey[key];
   // Bybit sends delta updates: when size is present, strictly overwrite local size/positionAmt
   const rawSize = raw?.size;

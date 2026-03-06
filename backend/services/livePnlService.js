@@ -6,6 +6,7 @@ let io = null;
 let binanceManager = null;
 let bybitManager = null;
 let onExitCheck = null;
+let lastLogTime = 0; // Diagnostic logging throttle
 
 const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
@@ -95,6 +96,13 @@ function broadcastLivePnl() {
   if (!io || !binanceManager || !bybitManager) return;
   const pairedSymbols = Object.keys(positionCache);
 
+  // Diagnostic logging every 10 seconds
+  const now = Date.now();
+  if (now - lastLogTime > 10000) {
+    console.log(`[LivePnL] Broadcasting to ${io.engine?.clientsCount || 0} clients. Active Pairs: ${pairedSymbols.length}`);
+    lastLogTime = now;
+  }
+
   for (const sym of pairedSymbols) {
     const pos = positionCache[sym];
     if (!pos || (parseFloat(pos.binanceQty || 0) === 0 && parseFloat(pos.bybitQty || 0) === 0)) continue;
@@ -118,9 +126,14 @@ function broadcastLivePnl() {
     const byBook = bybitManager.getBestBidAsk ? bybitManager.getBestBidAsk(sym) : null;
 
     // If exiting a LONG, we SELL at the Bid. If exiting a SHORT, we BUY at the Ask.
-    const bCalcPrice = bBook ? (bExitSide === "SELL" ? bBook.bestBid : bBook.bestAsk) : binanceMark;
-    const byCalcPrice = byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : bybitMark;
+    // Priority: Orderbook > Mark Price > Native PnL
+    let bCalcPrice = bBook ? (bExitSide === "SELL" ? bBook.bestBid : bBook.bestAsk) : 0;
+    if (!bCalcPrice || bCalcPrice <= 0) bCalcPrice = binanceMark;
+    
+    let byCalcPrice = byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : 0;
+    if (!byCalcPrice || byCalcPrice <= 0) byCalcPrice = bybitMark;
 
+    // Calculate live PnL using available price, fallback to native only if no price at all
     const binancePnL = (bCalcPrice > 0 && bEntry > 0)
       ? binanceDirection * (bCalcPrice - bEntry) * bQty
       : pos.binanceNativePnL;

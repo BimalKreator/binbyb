@@ -45,7 +45,11 @@ const io = new SocketServer(server, {
   path: "/socket.io",
 });
 io.on("connection", (socket) => {
+  console.log(`[Socket.IO] Client connected: ${socket.id}. Total: ${io.engine.clientsCount}`);
   socket.join("system-logs");
+  socket.on("disconnect", () => {
+    console.log(`[Socket.IO] Client disconnected: ${socket.id}. Total: ${io.engine.clientsCount}`);
+  });
 });
 
 app.use(

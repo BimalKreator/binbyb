@@ -123,7 +123,7 @@ function upsertLivePosition(raw) {
     positionSideRaw === "LONG" || positionSideRaw === "SHORT" ? positionSideRaw : "BOTH";
   if (!sym) return;
   const amt = parseFloat(raw?.pa ?? raw?.positionAmt ?? 0);
-  const key = `${sym}:${positionSide}`;
+  const key = `${sym}_${positionSide}`; // UNIFIED: underscore separator
   if (!Number.isFinite(amt) || Math.abs(amt) <= 0) {
     delete livePositionsByKey[key];
     if (typeof onPositionClosed === "function") onPositionClosed(sym, "binance");

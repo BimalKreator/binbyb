@@ -56,6 +56,7 @@ type PositionRow = {
   nextFundingPayment: { nextFundingTime: number; nextFundingTimeISO: string } | null;
   targetAmount?: number;
   stopLossAmount?: number;
+  lastUpdated?: number;
 };
 
 function formatUsd(n: number): string {
@@ -145,6 +146,7 @@ export default function Home() {
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [grandTotalNextFunding, setGrandTotalNextFunding] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [wsStatus, setWsStatus] = useState<"live" | "delayed" | "dead">("dead");
   const grandTotalPnl = useMemo(
     () => positions.reduce((s, p) => s + (p.combinedUnrealizedProfit ?? 0), 0),
     [positions]
@@ -239,15 +241,17 @@ export default function Home() {
     });
 
     const renderInterval = setInterval(() => {
-      const updates = latestPnlRef.current;
-      if (Object.keys(updates).length > 0) {
+      const currentPayloads = { ...latestPnlRef.current };
+      latestPnlRef.current = {}; // Clear BEFORE setState to prevent race condition
+      if (Object.keys(currentPayloads).length > 0) {
         setPositions((prev) =>
           prev.map((row) => {
-            const up = updates[row.symbol];
+            const up = currentPayloads[row.symbol];
             if (!up) return row;
             return {
               ...row,
               combinedUnrealizedProfit: Number.isFinite(up.combinedPnL) ? up.combinedPnL : row.combinedUnrealizedProfit,
+              lastUpdated: Date.now(),
               binance: {
                 ...row.binance,
                 unrealizedProfit: Number.isFinite(up.binancePnL) ? up.binancePnL : row.binance.unrealizedProfit,
@@ -261,7 +265,6 @@ export default function Home() {
             };
           })
         );
-        latestPnlRef.current = {};
       }
     }, 100);
 
@@ -270,6 +273,17 @@ export default function Home() {
       clearInterval(renderInterval);
     };
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const latestUpdate = Math.max(...positions.map((p) => p.lastUpdated || 0), 0);
+      const diff = Date.now() - latestUpdate;
+      if (latestUpdate > 0 && diff < 3000) setWsStatus("live");
+      else if (latestUpdate > 0 && diff < 10000) setWsStatus("delayed");
+      else setWsStatus("dead");
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [positions]);
 
   const handleCloseTrade = async (symbol: string) => {
     setClosingSymbol(symbol);
@@ -337,7 +351,19 @@ export default function Home() {
 
         {/* Active positions — expandable accordion */}
         <section>
-          <h3 className="text-base font-medium text-foreground mb-3">Active Positions</h3>
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="text-base font-medium text-foreground">Active Positions</h3>
+            <span
+              className={`w-2 h-2 rounded-full ${
+                wsStatus === "live"
+                  ? "bg-green-500 animate-pulse"
+                  : wsStatus === "delayed"
+                    ? "bg-yellow-500"
+                    : "bg-red-500"
+              }`}
+              title={`WS Status: ${wsStatus}`}
+            />
+          </div>
           {positions.length === 0 ? (
             <div className="rounded-xl border border-slate-700 bg-slate-800/30 p-6 text-center text-slate-400 text-sm">
               No open positions.
@@ -426,7 +452,7 @@ export default function Home() {
                             pnl >= 0 ? "text-[var(--profit)]" : "text-[var(--loss)]"
                           }`}
                         >
-                          {Number.isFinite(pnl) ? `$${Number(pnl).toFixed(2)}` : "—"}
+                          {Number.isFinite(pnl) ? `$${Number(pnl).toFixed(4)}` : "—"}
                         </span>
                         <button
                           type="button"
@@ -557,7 +583,7 @@ export default function Home() {
                                         }`}
                                       >
                                         $
-                                        {Number(safeLeg.unrealizedProfit ?? 0).toFixed(2)}
+                                        {Number(safeLeg.unrealizedProfit ?? 0).toFixed(4)}
                                       </td>
                                       <td
                                         className={`py-2 pr-2 text-right font-medium ${
