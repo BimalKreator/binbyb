@@ -552,7 +552,7 @@ function schedulePrivateReconnect() {
  */
 function connectBinanceDepthChunk(symbolsChunk) {
   if (!symbolsChunk || symbolsChunk.length === 0) return;
-  const url = `${PUBLIC_WS_BASE}/ws`;
+  const url = `${PUBLIC_WS_BASE}/stream`;
   const ws = new WebSocket(url, { family: 4 });
   depthWsArray.push(ws);
 
