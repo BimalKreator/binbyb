@@ -1906,13 +1906,36 @@ function getOrderbookPrice(symbol, side, slippagePct = DEFAULT_SLIPPAGE_PCT) {
   const sym = String(symbol).toUpperCase();
   const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : DEFAULT_SLIPPAGE_PCT;
   const isBuy = String(side).toUpperCase() === "BUY";
-  const book = bookTickerBySymbol[sym];
-  if (book && Number.isFinite(book.bestBid) && Number.isFinite(book.bestAsk) && book.bestBid > 0 && book.bestAsk > 0) {
-    return isBuy ? book.bestAsk * (1 + pct / 100) : book.bestBid * (1 - pct / 100);
+  let basePrice = null;
+
+  // Try L2 orderbook first
+  const ob = orderbooks[sym];
+  if (ob && ob.bids instanceof Map && ob.asks instanceof Map) {
+    const levels = isBuy ? Array.from(ob.asks.keys()) : Array.from(ob.bids.keys());
+    if (levels.length > 0) {
+      basePrice = isBuy ? Math.min(...levels.map(Number)) : Math.max(...levels.map(Number));
+    }
   }
-  const mark = lastMarkPriceBySymbol[sym];
-  if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
-  return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
+
+  // Fallback to L1 BookTicker
+  if (!basePrice || basePrice <= 0) {
+    const l1 = bookTickerBySymbol[sym];
+    if (l1 && parseFloat(l1.bestBid) > 0 && parseFloat(l1.bestAsk) > 0) {
+      basePrice = isBuy ? parseFloat(l1.bestAsk) : parseFloat(l1.bestBid);
+    }
+  }
+
+  // Fallback to mark price
+  if (!basePrice || basePrice <= 0) {
+    const mark = lastMarkPriceBySymbol[sym];
+    if (mark != null && Number.isFinite(mark) && mark > 0) {
+      basePrice = mark;
+    }
+  }
+
+  if (!basePrice || basePrice <= 0) return null;
+  const multiplier = isBuy ? (1 + pct / 100) : (1 - pct / 100);
+  return basePrice * multiplier;
 }
 
 async function fetchMarkPriceRest(symbol) {
@@ -1929,6 +1952,26 @@ module.exports = {
   start,
   stop,
   fetchMarkPriceRest,
+  subscribeAdditionalSymbols: (symbolsArray) => {
+    if (!symbolsArray || symbolsArray.length === 0) return;
+    if (!global.binanceL2Subs) global.binanceL2Subs = new Set();
+    
+    const newSymbols = symbolsArray.filter(sym => !global.binanceL2Subs.has(sym));
+    if (newSymbols.length === 0) return;
+
+    newSymbols.forEach(sym => global.binanceL2Subs.add(sym));
+    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to L2 depth streams`);
+
+    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
+    // Use publicWs which allows multiplexing
+    if (typeof publicWs !== 'undefined' && publicWs && publicWs.readyState === 1) { 
+      publicWs.send(JSON.stringify({
+        method: "SUBSCRIBE",
+        params: params,
+        id: Date.now()
+      }));
+    }
+  },
   placeIOCLimitOrder,
   placeWSOrder,
   prepareOrderPayload,

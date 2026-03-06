@@ -9,6 +9,7 @@ let onExitCheck = null;
 let lastLogTime = 0; // Diagnostic logging throttle
 let tickCounter = 0; // For verbose tick logging
 const bybitSubscribedSymbols = new Set(); // Track symbols we've asked Bybit to subscribe to
+const binanceSubscribedSymbols = new Set(); // Track symbols we've asked Binance to subscribe to
 
 const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
@@ -53,6 +54,15 @@ function refreshPositionCache() {
     if (missingSymbols.length > 0) {
       bybitManager.subscribeAdditionalSymbols(missingSymbols);
       missingSymbols.forEach(sym => bybitSubscribedSymbols.add(sym));
+    }
+  }
+
+  // Ensure Binance is subscribed to all active paired symbols L2 depth
+  if (binanceManager && binanceManager.subscribeAdditionalSymbols) {
+    const missingBinance = paired.filter(sym => !binanceSubscribedSymbols.has(sym));
+    if (missingBinance.length > 0) {
+      binanceManager.subscribeAdditionalSymbols(missingBinance);
+      missingBinance.forEach(sym => binanceSubscribedSymbols.add(sym));
     }
   }
 
@@ -245,6 +255,7 @@ function stop() {
   Object.keys(positionCache).forEach((k) => delete positionCache[k]);
   Object.keys(markPriceCache).forEach((k) => delete markPriceCache[k]);
   bybitSubscribedSymbols.clear();
+  binanceSubscribedSymbols.clear();
 }
 
 function setExitCheckCallback(cb) {

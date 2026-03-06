@@ -1186,13 +1186,36 @@ function getOrderbookPrice(symbol, side, slippagePct = DEFAULT_SLIPPAGE_PCT) {
   const sym = String(symbol).toUpperCase();
   const pct = Number.isFinite(slippagePct) ? Math.max(0, Math.min(100, slippagePct)) : DEFAULT_SLIPPAGE_PCT;
   const isBuy = String(side).toLowerCase() === "buy";
-  const book = getBestBidAsk(sym);
-  if (book) {
-    return isBuy ? book.bestAsk * (1 + pct / 100) : book.bestBid * (1 - pct / 100);
+  let basePrice = null;
+
+  // Try L2 orderbook first
+  const ob = orderbooksBySymbol[sym];
+  if (ob && ob.bids instanceof Map && ob.asks instanceof Map) {
+    const levels = isBuy ? Array.from(ob.asks.keys()) : Array.from(ob.bids.keys());
+    if (levels.length > 0) {
+      basePrice = isBuy ? Math.min(...levels.map(Number)) : Math.max(...levels.map(Number));
+    }
   }
-  const mark = lastMarkPriceBySymbol[sym];
-  if (mark == null || !Number.isFinite(mark) || mark <= 0) return null;
-  return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
+
+  // Fallback to L1 Ticker State
+  if (!basePrice || basePrice <= 0) {
+    const state = tickerStateBySymbol[sym];
+    if (state && parseFloat(state.bid1Price) > 0 && parseFloat(state.ask1Price) > 0) {
+      basePrice = isBuy ? parseFloat(state.ask1Price) : parseFloat(state.bid1Price);
+    }
+  }
+
+  // Fallback to mark price
+  if (!basePrice || basePrice <= 0) {
+    const mark = lastMarkPriceBySymbol[sym];
+    if (mark != null && Number.isFinite(mark) && mark > 0) {
+      basePrice = mark;
+    }
+  }
+
+  if (!basePrice || basePrice <= 0) return null;
+  const multiplier = isBuy ? (1 + pct / 100) : (1 - pct / 100);
+  return basePrice * multiplier;
 }
 
 /**
