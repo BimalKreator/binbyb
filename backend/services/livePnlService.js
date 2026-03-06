@@ -8,6 +8,7 @@ let bybitManager = null;
 let onExitCheck = null;
 let lastLogTime = 0; // Diagnostic logging throttle
 let tickCounter = 0; // For verbose tick logging
+const bybitSubscribedSymbols = new Set(); // Track symbols we've asked Bybit to subscribe to
 
 const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
@@ -44,6 +45,15 @@ function refreshPositionCache() {
   const binanceSymbols = new Set(binList.map(p => toUpperSymbol(p.symbol)).filter(Boolean));
   const bybitSymbols = new Set(bybList.map(p => toUpperSymbol(p.symbol)).filter(Boolean));
   const paired = [...binanceSymbols].filter((s) => bybitSymbols.has(s));
+
+  // Ensure Bybit is subscribed to all active paired symbols, even if they aren't in the common screener list
+  if (bybitManager && bybitManager.subscribeAdditionalSymbols) {
+    const missingSymbols = paired.filter(sym => !bybitSubscribedSymbols.has(sym));
+    if (missingSymbols.length > 0) {
+      bybitManager.subscribeAdditionalSymbols(missingSymbols);
+      missingSymbols.forEach(sym => bybitSubscribedSymbols.add(sym));
+    }
+  }
 
   for (const symbol of paired) {
     // FIX: Must strictly filter for active quantities > 0 to bypass empty hedge legs
@@ -202,6 +212,7 @@ function stop() {
   bybitManager = null;
   Object.keys(positionCache).forEach((k) => delete positionCache[k]);
   Object.keys(markPriceCache).forEach((k) => delete markPriceCache[k]);
+  bybitSubscribedSymbols.clear();
 }
 
 function setExitCheckCallback(cb) {

@@ -1846,6 +1846,27 @@ async function getOrderFilledQty(credentials, orderId) {
 module.exports = {
   start,
   stop,
+  subscribeAdditionalSymbols: (symbolsArray) => {
+    if (!symbolsArray || symbolsArray.length === 0) return;
+    const newSymbols = symbolsArray.filter(sym => !publicStreamSymbols.includes(sym));
+    if (newSymbols.length === 0) return;
+
+    console.log(`[Bybit] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to public streams`);
+    publicStreamSymbols.push(...newSymbols);
+
+    const subscribePayload = {
+      op: "subscribe",
+      args: newSymbols.flatMap(sym => [`tickers.${sym}`, `orderbook.50.${sym}`])
+    };
+
+    // Send the subscription request through the first active public WS
+    for (const ws of publicWsArray) {
+      if (ws && ws.readyState === 1) { // WebSocket.OPEN
+        ws.send(JSON.stringify(subscribePayload));
+        break;
+      }
+    }
+  },
   placeIOCLimitOrder,
   getOrderFillPrice,
   getOrderFilledQty,
