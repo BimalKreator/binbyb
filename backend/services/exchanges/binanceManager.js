@@ -1915,9 +1915,20 @@ function getOrderbookPrice(symbol, side, slippagePct = DEFAULT_SLIPPAGE_PCT) {
   return isBuy ? mark * (1 + pct / 100) : mark * (1 - pct / 100);
 }
 
+async function fetchMarkPriceRest(symbol) {
+  try {
+    const { data } = await binanceAxios.get(`${REST_BASE}/fapi/v1/premiumIndex?symbol=${symbol}`);
+    if (data && data.markPrice) return parseFloat(data.markPrice);
+  } catch (e) {
+    // silently ignore network errors
+  }
+  return null;
+}
+
 module.exports = {
   start,
   stop,
+  fetchMarkPriceRest,
   placeIOCLimitOrder,
   placeWSOrder,
   prepareOrderPayload,

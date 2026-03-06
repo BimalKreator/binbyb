@@ -15,6 +15,7 @@ const positionCache = Object.create(null);
 const markPriceCache = Object.create(null);
 let positionCacheIntervalId = null;
 let pnlIntervalId = null;
+let restPollingIntervalId = null;
 
 function toUpperSymbol(value) {
   return String(value || "").toUpperCase();
@@ -102,6 +103,25 @@ function onMarkPriceTick(symbol, markPrice, source) {
   if (!markPriceCache[sym]) markPriceCache[sym] = { binance: 0, bybit: 0 };
   if (source === "binance") markPriceCache[sym].binance = markPrice;
   else if (source === "bybit") markPriceCache[sym].bybit = markPrice;
+}
+
+async function pollPositionMarkPricesRest() {
+  if (!binanceManager || !bybitManager) return;
+  const pairedSymbols = Object.keys(positionCache);
+  for (const sym of pairedSymbols) {
+    try {
+      if (binanceManager.fetchMarkPriceRest) {
+        const bMark = await binanceManager.fetchMarkPriceRest(sym);
+        if (bMark) onMarkPriceTick(sym, bMark, "binance");
+      }
+      if (bybitManager.fetchMarkPriceRest) {
+        const byMark = await bybitManager.fetchMarkPriceRest(sym);
+        if (byMark) onMarkPriceTick(sym, byMark, "bybit");
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
 }
 
 function broadcastLivePnl() {
@@ -200,6 +220,7 @@ function init(socketServer, binance, bybit) {
 
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
   pnlIntervalId = setInterval(broadcastLivePnl, 300);
+  restPollingIntervalId = setInterval(pollPositionMarkPricesRest, 2000);
 }
 
 function stop() {
@@ -210,6 +231,10 @@ function stop() {
   if (pnlIntervalId) {
     clearInterval(pnlIntervalId);
     pnlIntervalId = null;
+  }
+  if (restPollingIntervalId) {
+    clearInterval(restPollingIntervalId);
+    restPollingIntervalId = null;
   }
   if (binanceManager) binanceManager.setOnMarkPriceUpdate(null);
   if (bybitManager) bybitManager.setOnMarkPriceUpdate(null);

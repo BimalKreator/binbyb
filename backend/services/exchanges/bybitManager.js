@@ -1848,9 +1848,21 @@ async function getOrderFilledQty(credentials, orderId) {
   return 0;
 }
 
+async function fetchMarkPriceRest(symbol) {
+  try {
+    const { data } = await axios.get(`${REST_BASE}/v5/market/tickers?category=linear&symbol=${symbol}`);
+    const list = data?.result?.list || [];
+    if (list.length > 0 && list[0].markPrice) return parseFloat(list[0].markPrice);
+  } catch (e) {
+    // silently ignore network errors
+  }
+  return null;
+}
+
 module.exports = {
   start,
   stop,
+  fetchMarkPriceRest,
   subscribeAdditionalSymbols: (symbolsArray) => {
     if (!symbolsArray || symbolsArray.length === 0) return;
     const newSymbols = symbolsArray.filter(sym => !publicStreamSymbols.includes(sym));
