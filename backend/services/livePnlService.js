@@ -11,6 +11,7 @@ const POSITION_CACHE_INTERVAL_MS = 1000;
 const positionCache = Object.create(null);
 const markPriceCache = Object.create(null);
 let positionCacheIntervalId = null;
+let pnlIntervalId = null;
 
 function toUpperSymbol(value) {
   return String(value || "").toUpperCase();
@@ -83,66 +84,67 @@ function refreshPositionCache() {
 }
 
 function onMarkPriceTick(symbol, markPrice, source) {
-  if (!io || !symbol || markPrice == null || !Number.isFinite(markPrice)) return;
-
+  if (!symbol || markPrice == null || !Number.isFinite(markPrice)) return;
   const sym = toUpperSymbol(symbol);
   if (!markPriceCache[sym]) markPriceCache[sym] = { binance: 0, bybit: 0 };
-
   if (source === "binance") markPriceCache[sym].binance = markPrice;
   else if (source === "bybit") markPriceCache[sym].bybit = markPrice;
+}
 
-  const pos = positionCache[sym];
-  if (!pos) return;
+function broadcastLivePnl() {
+  if (!io || !binanceManager || !bybitManager) return;
+  const pairedSymbols = Object.keys(positionCache);
 
-  const binanceMark = markPriceCache[sym].binance || 0;
-  const bybitMark = markPriceCache[sym].bybit || 0;
+  for (const sym of pairedSymbols) {
+    const pos = positionCache[sym];
+    if (!pos) continue;
 
-  const bEntry = pos.binanceEntry || 0;
-  const bQty = pos.binanceQty || 0;
-  const byEntry = pos.bybitEntry || 0;
-  const byQty = pos.bybitQty || 0;
+    const binanceMark = binanceManager.getMarkPrice(sym) || markPriceCache[sym]?.binance || 0;
+    const bybitMark = bybitManager.getMarkPrice(sym) || markPriceCache[sym]?.bybit || 0;
 
-  const binanceDirection = pos.binanceDirection === 1 ? 1 : -1;
-  const bybitDirection = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
+    const bEntry = pos.binanceEntry || 0;
+    const bQty = pos.binanceQty || 0;
+    const byEntry = pos.bybitEntry || 0;
+    const byQty = pos.bybitQty || 0;
 
-  // Calculate target notional for VWAP
-  const bTargetNotional = bQty * binanceMark;
-  const byTargetNotional = byQty * bybitMark;
+    const binanceDirection = pos.binanceDirection === 1 ? 1 : -1;
+    const bybitDirection = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
 
-  // Determine exit sides
-  const bExitSide = binanceDirection === 1 ? "SELL" : "BUY";
-  const byExitSide = bybitDirection === 1 ? "Sell" : "Buy";
+    const bTargetNotional = bQty * binanceMark;
+    const byTargetNotional = byQty * bybitMark;
 
-  // Fetch L2 VWAP for the required exit notional (fallback to mark price if orderbook is too thin)
-  const bVwap = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bExitSide, bTargetNotional) : null;
-  const byVwap = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, byExitSide, byTargetNotional) : null;
+    const bExitSide = binanceDirection === 1 ? "SELL" : "BUY";
+    const byExitSide = bybitDirection === 1 ? "Sell" : "Buy";
 
-  const bCalcPrice = bVwap || binanceMark;
-  const byCalcPrice = byVwap || bybitMark;
+    const bVwap = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bExitSide, bTargetNotional) : null;
+    const byVwap = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, byExitSide, byTargetNotional) : null;
 
-  // STRICTLY INDEPENDENT MATH: Use L2 VWAP (or Mark) Math
-  const binancePnL = (bCalcPrice > 0 && bEntry > 0)
-    ? binanceDirection * (bCalcPrice - bEntry) * bQty
-    : pos.binanceNativePnL;
+    const bCalcPrice = bVwap || binanceMark;
+    const byCalcPrice = byVwap || bybitMark;
 
-  const bybitPnL = (byCalcPrice > 0 && byEntry > 0)
-    ? bybitDirection * (byCalcPrice - byEntry) * byQty
-    : pos.bybitNativePnL;
+    const binancePnL = (bCalcPrice > 0 && bEntry > 0)
+      ? binanceDirection * (bCalcPrice - bEntry) * bQty
+      : pos.binanceNativePnL;
 
-  const combinedPnL = binancePnL + bybitPnL;
+    const bybitPnL = (byCalcPrice > 0 && byEntry > 0)
+      ? bybitDirection * (byCalcPrice - byEntry) * byQty
+      : pos.bybitNativePnL;
 
-  if (onExitCheck && Number.isFinite(combinedPnL)) {
-    onExitCheck(sym, combinedPnL);
+    const combinedPnL = binancePnL + bybitPnL;
+
+    io.emit("live_pnl_update", {
+      symbol: sym,
+      binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
+      bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
+      combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
+      binanceMarkPrice: binanceMark,
+      bybitMarkPrice: bybitMark,
+    });
+
+    if (onExitCheck && Number.isFinite(combinedPnL)) {
+      onExitCheck(sym, combinedPnL);
+    }
   }
-
-  io.emit("live_pnl_update", {
-    symbol: sym,
-    binancePnL: Number.isFinite(binancePnL) ? binancePnL : 0,
-    bybitPnL: Number.isFinite(bybitPnL) ? bybitPnL : 0,
-    combinedPnL: Number.isFinite(combinedPnL) ? combinedPnL : 0,
-    binanceMarkPrice: binanceMark,
-    bybitMarkPrice: bybitMark,
-  });
 }
 
 function init(socketServer, binance, bybit) {
@@ -158,12 +160,17 @@ function init(socketServer, binance, bybit) {
   bybitManager.setOnMarkPriceUpdate(tickHandler);
 
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
+  pnlIntervalId = setInterval(broadcastLivePnl, 300);
 }
 
 function stop() {
   if (positionCacheIntervalId) {
     clearInterval(positionCacheIntervalId);
     positionCacheIntervalId = null;
+  }
+  if (pnlIntervalId) {
+    clearInterval(pnlIntervalId);
+    pnlIntervalId = null;
   }
   if (binanceManager) binanceManager.setOnMarkPriceUpdate(null);
   if (bybitManager) bybitManager.setOnMarkPriceUpdate(null);
