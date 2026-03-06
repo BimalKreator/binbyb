@@ -197,6 +197,7 @@ async function runAutoEntry() {
   const windowEndMs = Math.max(0, entryTimeMs - STRICT_ENTRY_WINDOW_MS);
   const cooldownMs = (settings?.cooldownMinutes ?? 15) * 60 * 1000;
   const minL2Spread = Number(settings?.minL2Spread) ?? 0.15;
+  const minL2VwapSpread = Number(settings?.minL2VwapSpread) ?? 0.15;
   const minFundingSpread = Number(settings?.minFundingSpread) ?? 0.15;
   const now = Date.now();
 
@@ -211,7 +212,17 @@ async function runAutoEntry() {
     if (countdownMs < windowEndMs) continue; // Missed strict window
     if (tradedCycles[sym] === nextFundingTime) continue; // Already traded
     if (countdownMs <= 0 || countdownMs > entryTimeMs) continue; // Expired or Too early
-    if ((token.spreadPctAbs || 0) < minFundingSpread) continue; // Use Absolute gap for bot filter
+    if (settings.tradingMode === "l2") {
+      if (token.l2SpreadVwap == null || token.l2SpreadVwap < minL2VwapSpread) {
+        console.log(`[AutoTrader] Skipped ${token.symbol}: L2 VWAP Spread (${token.l2SpreadVwap}%) < Minimum (${minL2VwapSpread}%)`);
+        continue;
+      }
+    } else {
+      if ((token.spreadPctAbs || 0) < minFundingSpread) {
+        console.log(`[AutoTrader] Skipped ${token.symbol}: Funding Spread < Minimum`);
+        continue;
+      }
+    }
     if (lastEntryTimeBySymbol[sym] && now - lastEntryTimeBySymbol[sym] < ENTRY_BUFFER_MS) continue;
 
     // Await inside loop is fine here as it's limited to 10 iterations max
@@ -286,6 +297,22 @@ async function runAutoEntry() {
 
   isExecutingTrade = true;
   try {
+    if (settings.tradingMode === "l2") {
+      const targetNotional = Math.max(1, Number(settings.screenerTradeNotional) || 500);
+      const binBuy = binanceManager.getVwapPrice(top.symbol, "BUY", targetNotional);
+      const binSell = binanceManager.getVwapPrice(top.symbol, "SELL", targetNotional);
+      const bybBuy = bybitManager.getVwapPrice(top.symbol, "Buy", targetNotional);
+      const bybSell = bybitManager.getVwapPrice(top.symbol, "Sell", targetNotional);
+      const spreadIfBinShort = binSell && bybBuy ? ((binSell - bybBuy) / bybBuy) * 100 : -Infinity;
+      const spreadIfBybShort = bybSell && binBuy ? ((bybSell - binBuy) / binBuy) * 100 : -Infinity;
+      const liveL2Spread = binanceSide === "SELL" ? spreadIfBinShort : spreadIfBybShort;
+      const minL2Vwap = Number(settings?.minL2VwapSpread) ?? 0.15;
+      if (liveL2Spread == null || !Number.isFinite(liveL2Spread) || liveL2Spread < minL2Vwap) {
+        console.log(`[AutoTrader-Failsafe] Aborting ${top.symbol}: Live L2 VWAP spread (${liveL2Spread}%) < minimum (${minL2Vwap}%).`);
+        isExecutingTrade = false;
+        return;
+      }
+    }
     const finalSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
     if (finalSpread === null || finalSpread < 0) {
         console.warn(`[AutoTrader-Failsafe] Aborting execution for ${top.symbol}! Final L2 Expected Spread dropped below 0 (${finalSpread}%).`);

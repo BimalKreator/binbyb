@@ -36,6 +36,7 @@ const settingSchema = new mongoose.Schema(
     rankStepC: { type: Boolean, default: true },
     minFundingConsistency: { type: Number, default: 75 },
     minFundingSpread: { type: Number, default: 0.15 },
+    minL2VwapSpread: { type: Number, default: 0.15 },
     allowedIntervals: { type: [Number], default: [1, 2, 4, 8] },
     binanceMarginAllowedPct: { type: Number, default: 50, min: 0, max: 100 },
     bybitMarginAllowedPct: { type: Number, default: 50, min: 0, max: 100 },

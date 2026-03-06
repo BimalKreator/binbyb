@@ -53,6 +53,7 @@ router.put("/", async (req, res) => {
       rankStepC,
       minFundingConsistency,
       minFundingSpread,
+      minL2VwapSpread,
       allowedIntervals,
       binanceMarginAllowedPct,
       bybitMarginAllowedPct,
@@ -91,6 +92,7 @@ router.put("/", async (req, res) => {
     if (rankStepC !== undefined) update.rankStepC = Boolean(rankStepC);
     if (minFundingConsistency !== undefined) update.minFundingConsistency = Math.max(0, Math.min(100, Number(minFundingConsistency) ?? 75));
     if (minFundingSpread !== undefined) update.minFundingSpread = Number(minFundingSpread);
+    if (minL2VwapSpread !== undefined) update.minL2VwapSpread = Number(minL2VwapSpread);
     if (allowedIntervals !== undefined) {
       update.allowedIntervals = Array.isArray(allowedIntervals)
         ? allowedIntervals.map((n) => Number(n)).filter((n) => Number.isFinite(n) && [1, 2, 4, 8].includes(n))

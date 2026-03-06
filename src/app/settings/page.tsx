@@ -23,6 +23,7 @@ type SettingRecord = {
   entryTimeMs?: number;
   entrySlippagePct?: number;
   minL2Spread?: number;
+  minL2VwapSpread?: number;
   userMinSpread?: number;
   mismatchMinNotionalFilter?: boolean;
   liquidationAutoClose?: boolean;
@@ -65,6 +66,7 @@ export default function SettingsPage() {
   const [entrySlippagePct, setEntrySlippagePct] = useState(0.1);
   const [cooldownMinutes, setCooldownMinutes] = useState(15);
   const [minL2Spread, setMinL2Spread] = useState("0.15");
+  const [minL2VwapSpread, setMinL2VwapSpread] = useState("0.15");
   const [minFundingConsistency, setMinFundingConsistency] = useState(75);
   const [binanceMarginAllowedPct, setBinanceMarginAllowedPct] = useState(50);
   const [bybitMarginAllowedPct, setBybitMarginAllowedPct] = useState(50);
@@ -123,6 +125,7 @@ export default function SettingsPage() {
           setEntrySlippagePct(s.entrySlippagePct ?? 0.1);
           setCooldownMinutes(s.cooldownMinutes ?? 15);
           setMinL2Spread(String(s.minL2Spread ?? 0.15));
+          setMinL2VwapSpread(String(s.minL2VwapSpread ?? 0.15));
           setMinFundingConsistency(s.minFundingConsistency ?? 75);
           setBinanceMarginAllowedPct(s.binanceMarginAllowedPct ?? 50);
           setBybitMarginAllowedPct(s.bybitMarginAllowedPct ?? 50);
@@ -224,6 +227,7 @@ export default function SettingsPage() {
         entrySlippagePct,
         cooldownMinutes,
         minL2Spread: Number(minL2Spread),
+        minL2VwapSpread: Number(minL2VwapSpread),
         minFundingConsistency,
         binanceMarginAllowedPct,
         bybitMarginAllowedPct,
@@ -597,6 +601,21 @@ export default function SettingsPage() {
               />
               <span className="text-xs text-slate-500 mt-0.5 block">
                 Minimum live orderbook spread % required for bot entry (Phase 1 gate).
+              </span>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Minimum L2 VWAP Spread (%)</span>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={minL2VwapSpread}
+                onChange={(e) => setMinL2VwapSpread(e.target.value)}
+                className={inputClass}
+                placeholder="0.15"
+              />
+              <span className="text-xs text-slate-500 mt-0.5 block">
+                Minimum L2 VWAP spread % for screener display and bot entry when using L2 mode.
               </span>
             </label>
             <label className="block">

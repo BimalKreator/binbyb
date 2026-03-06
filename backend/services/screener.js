@@ -299,6 +299,15 @@ async function runScreener() {
       });
     }
 
+    const minL2 = Number(settings?.minL2VwapSpread) || 0.15;
+    const minFunding = Number(settings?.minFundingSpread) || 0.15;
+    rankedTokens = rankedTokens.filter((t) => {
+      if (settings?.screenerDirectionBy === "l2") {
+        return t.l2SpreadVwap != null && Number.isFinite(t.l2SpreadVwap) && t.l2SpreadVwap >= minL2;
+      }
+      return (t.spreadPctAbs ?? 0) >= minFunding;
+    });
+
     // Apply Active, Last, Next labels
     try {
       const autoTrader = require("./autoTrader");

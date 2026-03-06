@@ -1277,7 +1277,10 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
     }
 
     const isBuy = sideNorm === "Buy";
-    const bufferedPrice = isBuy ? targetPrice * 1.001 : targetPrice * 0.999;
+    let bufferedPrice = isBuy ? targetPrice * 1.002 : targetPrice * 0.998; // 0.2% buffer for IOC (strict cancellation)
+    if (filters?.tickSize) {
+      bufferedPrice = parseFloat(formatPriceToTickSize(bufferedPrice, filters.tickSize)) || bufferedPrice;
+    }
 
     let chunkQty = availableQty != null && Number.isFinite(availableQty) && availableQty > 0
       ? Math.min(totalQtyRemaining, availableQty * 0.5)
