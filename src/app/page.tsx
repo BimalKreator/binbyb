@@ -243,32 +243,46 @@ export default function Home() {
     });
 
     const renderInterval = setInterval(() => {
+      // 1. Grab pending updates and clear the ref instantly
       const currentPayloads = { ...latestPnlRef.current };
-      latestPnlRef.current = {}; // Clear BEFORE setState to prevent race condition
-      if (Object.keys(currentPayloads).length > 0) {
-        setPositions((prev) =>
-          prev.map((row) => {
+      const keys = Object.keys(currentPayloads);
+      
+      // 2. Only trigger a React re-render IF there is new data
+      if (keys.length > 0) {
+        latestPnlRef.current = {}; 
+        
+        setPositions((prev) => {
+          let stateChanged = false;
+          
+          const newState = prev.map((row) => {
             const up = currentPayloads[row.symbol];
-            if (!up) return row;
-            return {
-              ...row,
-              combinedUnrealizedProfit: Number.isFinite(up.combinedPnL) ? up.combinedPnL : row.combinedUnrealizedProfit,
-              lastUpdated: Date.now(),
-              binance: {
-                ...row.binance,
-                unrealizedProfit: Number.isFinite(up.binancePnL) ? up.binancePnL : row.binance.unrealizedProfit,
-                markPrice: up.binanceMarkPrice ?? row.binance.markPrice,
-              },
-              bybit: {
-                ...row.bybit,
-                unrealizedProfit: Number.isFinite(up.bybitPnL) ? up.bybitPnL : row.bybit.unrealizedProfit,
-                markPrice: up.bybitMarkPrice ?? row.bybit.markPrice,
-              },
-            };
-          })
-        );
+            if (up) {
+              stateChanged = true;
+              // STRICT IMMUTABILITY: Return a completely new object so React detects the change
+              return { 
+                ...row, 
+                combinedUnrealizedProfit: Number.isFinite(up.combinedPnL) ? up.combinedPnL : row.combinedUnrealizedProfit,
+                lastUpdated: Date.now(),
+                binance: {
+                  ...row.binance,
+                  unrealizedProfit: Number.isFinite(up.binancePnL) ? up.binancePnL : row.binance.unrealizedProfit,
+                  markPrice: up.binanceMarkPrice ?? row.binance.markPrice,
+                },
+                bybit: {
+                  ...row.bybit,
+                  unrealizedProfit: Number.isFinite(up.bybitPnL) ? up.bybitPnL : row.bybit.unrealizedProfit,
+                  markPrice: up.bybitMarkPrice ?? row.bybit.markPrice,
+                },
+              };
+            }
+            return row; // No update for this symbol
+          });
+
+          // Only return the new array if a position was actually updated
+          return stateChanged ? [...newState] : prev;
+        });
       }
-    }, 100);
+    }, 100); // 100ms render loop
 
     return () => {
       socket.disconnect();
