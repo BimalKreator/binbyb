@@ -104,13 +104,28 @@ function onMarkPriceTick(symbol, markPrice, source) {
   const binanceDirection = pos.binanceDirection === 1 ? 1 : -1;
   const bybitDirection = String(pos.bybitSide || "").toLowerCase() === "buy" ? 1 : -1;
 
-  // STRICTLY INDEPENDENT MATH: Use local tick math if mark exists, otherwise use Exchange Native PnL
-  const binancePnL = (binanceMark > 0 && bEntry > 0)
-    ? binanceDirection * (binanceMark - bEntry) * bQty
+  // Calculate target notional for VWAP
+  const bTargetNotional = bQty * binanceMark;
+  const byTargetNotional = byQty * bybitMark;
+
+  // Determine exit sides
+  const bExitSide = binanceDirection === 1 ? "SELL" : "BUY";
+  const byExitSide = bybitDirection === 1 ? "Sell" : "Buy";
+
+  // Fetch L2 VWAP for the required exit notional (fallback to mark price if orderbook is too thin)
+  const bVwap = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bExitSide, bTargetNotional) : null;
+  const byVwap = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, byExitSide, byTargetNotional) : null;
+
+  const bCalcPrice = bVwap || binanceMark;
+  const byCalcPrice = byVwap || bybitMark;
+
+  // STRICTLY INDEPENDENT MATH: Use L2 VWAP (or Mark) Math
+  const binancePnL = (bCalcPrice > 0 && bEntry > 0)
+    ? binanceDirection * (bCalcPrice - bEntry) * bQty
     : pos.binanceNativePnL;
 
-  const bybitPnL = (bybitMark > 0 && byEntry > 0)
-    ? bybitDirection * (bybitMark - byEntry) * byQty
+  const bybitPnL = (byCalcPrice > 0 && byEntry > 0)
+    ? bybitDirection * (byCalcPrice - byEntry) * byQty
     : pos.bybitNativePnL;
 
   const combinedPnL = binancePnL + bybitPnL;

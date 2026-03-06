@@ -61,6 +61,7 @@ router.put("/", async (req, res) => {
       screenerTradeNotional,
       tradingMode,
       screenerDirectionBy,
+      l2FavourableFundingOnly,
     } = req.body;
     const update = {};
     if (capitalPercent !== undefined) update.capitalPercent = Number(capitalPercent);
@@ -107,6 +108,7 @@ router.put("/", async (req, res) => {
     if (screenerTradeNotional !== undefined) update.screenerTradeNotional = Math.max(1, Number(screenerTradeNotional) || 500);
     if (tradingMode !== undefined) update.tradingMode = (tradingMode === "l2" ? "l2" : "funding");
     if (screenerDirectionBy !== undefined) update.screenerDirectionBy = (screenerDirectionBy === "l2" ? "l2" : "funding");
+    if (l2FavourableFundingOnly !== undefined) update.l2FavourableFundingOnly = Boolean(l2FavourableFundingOnly);
 
     const doc = await Setting.findOneAndUpdate({}, update, { new: true, upsert: true }).lean();
     res.json({ success: true, data: doc });

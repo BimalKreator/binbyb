@@ -36,6 +36,7 @@ type SettingRecord = {
   screenerTradeNotional?: number;
   tradingMode?: "funding" | "l2";
   screenerDirectionBy?: "funding" | "l2";
+  l2FavourableFundingOnly?: boolean;
 };
 
 type ApiKeyRecord = { _id: string; exchange: string; label?: string };
@@ -74,6 +75,7 @@ export default function SettingsPage() {
   const [screenerTradeNotional, setScreenerTradeNotional] = useState(500);
   const [tradingMode, setTradingMode] = useState<"funding" | "l2">("funding");
   const [screenerDirectionBy, setScreenerDirectionBy] = useState<"funding" | "l2">("funding");
+  const [l2FavourableFundingOnly, setL2FavourableFundingOnly] = useState(false);
 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
@@ -133,6 +135,7 @@ export default function SettingsPage() {
           setScreenerTradeNotional(s.screenerTradeNotional ?? 500);
           setTradingMode(s.tradingMode === "l2" ? "l2" : "funding");
           setScreenerDirectionBy(s.screenerDirectionBy === "l2" ? "l2" : "funding");
+          setL2FavourableFundingOnly(s.l2FavourableFundingOnly ?? false);
         }
       })
       .catch(() => toast.error("Failed to load settings"))
@@ -235,6 +238,7 @@ export default function SettingsPage() {
         screenerTradeNotional,
         tradingMode,
         screenerDirectionBy,
+        l2FavourableFundingOnly,
       });
       if (data.success && data.data) setSettings(data.data);
       toast.success("Settings saved.");
@@ -674,6 +678,17 @@ export default function SettingsPage() {
               >
                 <option value="funding">Based on Funding</option>
                 <option value="l2">Based on L2 Spread</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelClass}>L2 Mode Funding Filter</span>
+              <select
+                value={l2FavourableFundingOnly ? "favourable" : "all"}
+                onChange={(e) => setL2FavourableFundingOnly(e.target.value === "favourable")}
+                className={inputClass}
+              >
+                <option value="all">Show All Funding</option>
+                <option value="favourable">Favourable Funding Only</option>
               </select>
             </label>
             <label className="block">

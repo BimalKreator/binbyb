@@ -81,6 +81,7 @@ export default function ScreenerPage() {
   const [minSpreadPct, setMinSpreadPct] = useState<string>("-100");
   const [minL2Spread, setMinL2Spread] = useState(0.15);
   const [screenerDirectionBy, setScreenerDirectionBy] = useState<"funding" | "l2">("funding");
+  const [l2FavourableFundingOnly, setL2FavourableFundingOnly] = useState(false);
   const [popupToken, setPopupToken] = useState<RankedToken | null>(null);
   const [quantity, setQuantity] = useState("");
   const [leverage, setLeverage] = useState("");
@@ -168,6 +169,7 @@ export default function ScreenerPage() {
           minFundingSpread?: number;
           minL2VwapSpread?: number;
           screenerDirectionBy?: "funding" | "l2";
+          l2FavourableFundingOnly?: boolean;
         };
       }>("/settings")
       .then(({ data }) => {
@@ -183,6 +185,7 @@ export default function ScreenerPage() {
         if (d.minFundingSpread !== undefined) setMinSpreadPct(String(d.minFundingSpread));
         setMinL2Spread(d.minL2VwapSpread ?? 0.15);
         setScreenerDirectionBy(d.screenerDirectionBy === "l2" ? "l2" : "funding");
+        setL2FavourableFundingOnly(d.l2FavourableFundingOnly ?? false);
       })
       .catch(() => {});
   }, []);
@@ -274,6 +277,12 @@ export default function ScreenerPage() {
     list = list.filter((t) => allowedIntervals.includes(t.intervalHours ?? 8));
     if (screenerDirectionBy === "l2") {
       list = list.filter((t) => t.l2SpreadVwap != null && t.l2SpreadVwap >= minL2Spread);
+      if (l2FavourableFundingOnly) {
+        list = list.filter((t) => {
+          const netFunding = getL2DirectionNetFunding(t);
+          return netFunding != null && netFunding > 0;
+        });
+      }
     } else {
       const minFundingSpread = parseFloat(minSpreadPct);
       if (!Number.isNaN(minFundingSpread)) {
@@ -281,7 +290,7 @@ export default function ScreenerPage() {
       }
     }
     return list;
-  }, [data?.rankedTokens, search, allowedIntervals, minSpreadPct, minL2Spread, screenerDirectionBy]);
+  }, [data?.rankedTokens, search, allowedIntervals, minSpreadPct, minL2Spread, screenerDirectionBy, l2FavourableFundingOnly]);
 
   const bannedSet = useMemo(() => new Set(bannedTokens.map((s) => s.toUpperCase())), [bannedTokens]);
   const coolingSet = useMemo(() => new Set(coolingTokens.map((s) => s.toUpperCase())), [coolingTokens]);
@@ -362,18 +371,35 @@ export default function ScreenerPage() {
         </div>
         <div className="flex w-full gap-2 flex-wrap">
           {screenerDirectionBy === "l2" ? (
-            <label className="flex flex-1 items-center gap-1.5 min-w-0">
-              <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min L2 VWAP Spread %</span>
-              <input
-                type="number"
-                step="any"
-                value={minL2Spread}
-                onChange={(e) => setMinL2Spread(Number(e.target.value) || 0.15)}
-                onBlur={(e) => handleL2SpreadChange(Number(e.target.value) || 0.15)}
-                placeholder="0.15"
-                className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
-              />
-            </label>
+            <>
+              <label className="flex flex-1 items-center gap-1.5 min-w-0">
+                <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min L2 VWAP Spread %</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={minL2Spread}
+                  onChange={(e) => setMinL2Spread(Number(e.target.value) || 0.15)}
+                  onBlur={(e) => handleL2SpreadChange(Number(e.target.value) || 0.15)}
+                  placeholder="0.15"
+                  className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-foreground text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                />
+              </label>
+              <select
+                value={l2FavourableFundingOnly ? "favourable" : "all"}
+                onChange={async (e) => {
+                  const val = e.target.value === "favourable";
+                  setL2FavourableFundingOnly(val);
+                  try {
+                    await api.put("/settings", { l2FavourableFundingOnly: val });
+                    toast.success("Filter updated.");
+                  } catch (err) {}
+                }}
+                className="h-9 px-2 rounded-lg border border-slate-600 bg-slate-800/50 text-slate-300 text-xs focus:outline-none focus:border-[var(--primary)]"
+              >
+                <option value="all">All Funding</option>
+                <option value="favourable">Favourable Funding Only</option>
+              </select>
+            </>
           ) : (
             <label className="flex flex-1 items-center gap-1.5 min-w-0">
               <span className="text-slate-400 text-xs whitespace-nowrap shrink-0">Min Funding Spread %</span>

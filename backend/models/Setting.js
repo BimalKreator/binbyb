@@ -44,6 +44,7 @@ const settingSchema = new mongoose.Schema(
     screenerTradeNotional: { type: Number, default: 500, min: 1 },
     tradingMode: { type: String, enum: ["funding", "l2"], default: "funding" },
     screenerDirectionBy: { type: String, enum: ["funding", "l2"], default: "funding" },
+    l2FavourableFundingOnly: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
