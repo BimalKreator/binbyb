@@ -429,8 +429,9 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
   const exitSweepIterations = 30;
 
   try {
+    let res;
     if (exchange === "binance") {
-      const res = await binanceManager.executeLiquiditySweep(
+      res = await binanceManager.executeLiquiditySweep(
         credentials.binance,
         sym,
         closeSide,
@@ -439,9 +440,8 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
         exitSweepIterations,
         { reduceOnly: true, positionSide: binancePositionSide }
       );
-      if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
     } else {
-      const res = await bybitManager.executeLiquiditySweep(
+      res = await bybitManager.executeLiquiditySweep(
         credentials.bybit,
         sym,
         closeSide,
@@ -450,10 +450,33 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
         exitSweepIterations,
         { reduceOnly: true }
       );
-      if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
+    }
+    if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
+    if (res?.error) {
+      const msg = String(res.error);
+      if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("notional") || msg.includes("minimum order value")) {
+        console.log(`[Phantom Position Detected] ${sym} on ${exchange}. Locking for 10 mins + REST Sync...`);
+        failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
+        if (exchange === "binance") {
+          binanceManager.hydratePositionsFromRest(credentials?.binance).catch(() => {});
+        } else {
+          bybitManager.hydratePositionsFromRest(credentials?.bybit).catch(() => {});
+        }
+        return;
+      }
     }
   } catch (e) {
-    console.error("[TradeMonitor] closeOrphanPosition exit sweep failed", exchange, sym, e?.message ?? e);
+    const msg = e?.message ?? String(e ?? "");
+    console.error("[TradeMonitor] closeOrphanPosition exit sweep failed", exchange, sym, msg);
+    if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("notional") || msg.includes("minimum order value")) {
+      console.log(`[Phantom Position Detected] ${sym} on ${exchange}. Locking for 10 mins + REST Sync...`);
+      failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
+      if (exchange === "binance") {
+        binanceManager.hydratePositionsFromRest(credentials?.binance).catch(() => {});
+      } else {
+        bybitManager.hydratePositionsFromRest(credentials?.bybit).catch(() => {});
+      }
+    }
     return;
   }
 

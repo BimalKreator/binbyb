@@ -822,15 +822,19 @@ async function startPrivateStream(credentials) {
               const hasOther = Object.keys(livePositionsByKey).some((k) => k.startsWith(sym + "_"));
               if (!hasOther && onPositionClosed) onPositionClosed(sym, "binance");
             } else {
+              const parsedAmt = parseFloat(p.pa) || 0;
+              const parsedEntry = parseFloat(p.ep) || 0;
+              const parsedPnl = parseFloat(p.up) || 0;
+              const parsedMargin = parseFloat(p.iw) || 0;
               livePositionsByKey[cacheKey] = {
                 symbol: sym,
-                positionAmt: p.pa,
-                entryPrice: p.ep,
-                unrealizedProfit: p.up,
-                marginUsed: p.iw,
+                positionAmt: parsedAmt,
+                entryPrice: parsedEntry,
+                unrealizedProfit: parsedPnl,
+                marginUsed: parsedMargin,
                 positionSide: p.ps,
                 markPrice: p.markPrice || null,
-                side: parseFloat(p.pa) > 0 ? "BUY" : "SELL",
+                side: parsedAmt > 0 ? "BUY" : "SELL",
               };
             }
           }
@@ -1303,14 +1307,14 @@ async function hydratePositionsFromRest(credentials) {
         } else {
           livePositionsByKey[cacheKey] = {
             symbol: sym,
-            positionAmt: p.positionAmt,
-            entryPrice: p.entryPrice,
-            unrealizedProfit: p.unrealizedProfit ?? p.unRealizedProfit ?? 0,
-            marginUsed: p.marginUsed ?? p.isolatedMargin ?? p.initialMargin ?? 0,
+            positionAmt: amt,
+            entryPrice: parseFloat(p.entryPrice) || null,
+            unrealizedProfit: parseFloat(p.unrealizedProfit ?? p.unRealizedProfit) || 0,
+            marginUsed: parseFloat(p.marginUsed ?? p.isolatedMargin ?? p.initialMargin) || 0,
             positionSide: p.positionSide,
-            leverage: p.leverage,
-            liquidationPrice: p.liquidationPrice,
-            markPrice: p.markPrice ?? null,
+            leverage: p.leverage != null ? Number(p.leverage) : null,
+            liquidationPrice: parseFloat(p.liquidationPrice) || null,
+            markPrice: p.markPrice != null ? parseFloat(p.markPrice) : null,
             side: amt > 0 ? "BUY" : "SELL",
           };
           symbolsInResponse.add(cacheKey);
@@ -1832,8 +1836,9 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
     try {
       res = await placeWSOrder(credentials, sym, sideNorm, chunkQty, bufferedPrice, orderOpts);
     } catch (e) {
-      console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, e?.message ?? e);
-      return { totalFilled, error: e?.message || "Order failed" };
+      const msg = e?.message ?? String(e ?? "");
+      console.error("[Binance] executeLiquiditySweep placeWSOrder failed", sym, msg);
+      return { totalFilled, error: msg || "Order failed" };
     }
     console.log("[Binance] executeLiquiditySweep order placed", {
       sym,

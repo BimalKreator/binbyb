@@ -139,6 +139,8 @@ function broadcastLivePnl() {
       binanceMarkPrice: binanceMark,
       bybitMarkPrice: bybitMark,
     };
+
+
     io.emit("live_pnl_update", pnlPayload);
 
     if (onExitCheck && Number.isFinite(combinedPnL)) {
