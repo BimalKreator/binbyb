@@ -565,13 +565,21 @@ function connectBinanceDepthChunk(symbolsChunk) {
     try {
       const parsed = JSON.parse(raw.toString());
 
-      // Handle Binance combined stream format: { stream: "btcusdt@depth20@100ms", data: { bids, asks } }
+      // Handle Binance combined stream format
       if (parsed && parsed.stream && parsed.data) {
         const streamName = parsed.stream;
         const data = parsed.data;
 
         const symMatch = streamName.split("@")[0];
-        if (symMatch && data.bids && data.asks) {
+
+        // Binance Futures uses 'b' and 'a'. Check for both formats just in case.
+        if (symMatch && data.b && data.a) {
+          const sym = symMatch.toUpperCase();
+          orderbooks[sym] = {
+            bids: data.b.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+            asks: data.a.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
+          };
+        } else if (symMatch && data.bids && data.asks) {
           const sym = symMatch.toUpperCase();
           orderbooks[sym] = {
             bids: data.bids.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
