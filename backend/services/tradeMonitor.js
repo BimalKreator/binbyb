@@ -952,6 +952,78 @@ function start() {
 
     if (!bp || !yp) return;
 
+    // ---------------------------------------------------------
+    // UNIVERSAL FUNDING FLIP EXIT LOGIC (VWAP BASED)
+    // ---------------------------------------------------------
+    const binFundingInfo = binanceManager.getCachedFundingRate(sym);
+    const bybFundingInfo = bybitManager.getCachedFundingRate(sym);
+
+    if (binFundingInfo && bybFundingInfo && settings?.autoExitEnabled) {
+      const bFunding = typeof binFundingInfo === "number" ? binFundingInfo : (binFundingInfo?.fundingRate || 0);
+      const yFunding = typeof bybFundingInfo === "number" ? bybFundingInfo : (bybFundingInfo?.fundingRate || 0);
+
+      // Determine direction based on Binance leg
+      const isBinanceLong = String(bp.side || "").toUpperCase() === "BUY" || parseFloat(bp.positionAmt || 0) > 0;
+      
+      // Net funding: If Binance is Long, we receive Binance funding and pay Bybit funding
+      const netFunding = isBinanceLong ? (bFunding - yFunding) : (yFunding - bFunding);
+
+      if (netFunding < 0) { // Funding has flipped against us
+        const nextFundingTime = Math.min(
+          binFundingInfo?.nextFundingTime || Infinity,
+          bybFundingInfo?.nextFundingTime || Infinity
+        );
+        
+        const timeToFundingMs = nextFundingTime - Date.now();
+        const twoMinutesMs = 2 * 60 * 1000;
+
+        let shouldExit = false;
+        let exitLogReason = "";
+
+        if (timeToFundingMs > 0 && timeToFundingMs <= twoMinutesMs) {
+          // Less than 2 minutes left -> Force Exit
+          shouldExit = true;
+          exitLogReason = "Funding Flip (Force Exit < 2 mins)";
+        } else {
+          // Wait for L2 VWAP Spread to become positive
+          const bMark = binanceManager.getMarkPrice(sym) || 0;
+          const yMark = bybitManager.getMarkPrice(sym) || 0;
+          
+          const bQty = Math.abs(parseFloat(bp.positionAmt || 0));
+          const yQty = Math.abs(parseFloat(yp.size || yp.positionAmt || 0));
+
+          const bTargetNotional = bQty * bMark;
+          const yTargetNotional = yQty * yMark;
+
+          // Exit sides are opposite of entry sides
+          const bExitSide = isBinanceLong ? "SELL" : "BUY";
+          const yExitSide = isBinanceLong ? "Buy" : "Sell"; 
+
+          const bVwap = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bExitSide, bTargetNotional) : null;
+          const yVwap = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, yExitSide, yTargetNotional) : null;
+
+          if (bVwap && yVwap) {
+            // Calculate VWAP spread exactly like the Screener does for exits
+            const exitVwapSpread = isBinanceLong
+              ? ((bVwap - yVwap) / yVwap) * 100
+              : ((yVwap - bVwap) / bVwap) * 100;
+
+            if (exitVwapSpread > 0) {
+              shouldExit = true;
+              exitLogReason = `Funding Flip (Smart VWAP Spread: +${exitVwapSpread.toFixed(4)}%)`;
+            }
+          }
+        }
+
+        if (shouldExit && !closingSymbols.has(sym)) {
+          console.log(`[TradeMonitor] ${sym} triggering Funding Flip Exit: ${exitLogReason}`);
+          await closePair(keys, sym, bp, yp, "Funding Flip", exitLogReason);
+          return; // Exit this callback, position is closing
+        }
+      }
+    }
+    // ---------------------------------------------------------
+
     const bMargin = parseFloat(bp.marginUsed) || 0;
     const yMargin = parseFloat(yp.marginUsed) || 0;
     const totalMargin = bMargin + yMargin;
