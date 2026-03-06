@@ -199,7 +199,7 @@ export default function TradesPage() {
                   const isEntry = type === "ENTRY";
                   const isExit = type === "EXIT";
                   const lineClass = isError ? "text-red-400" : isEntry ? "text-emerald-400" : isExit ? "text-amber-400" : "text-slate-300";
-                  const rowId = (typeof l._id === "string" ? l._id : (l._id as { toString?: () => string })?.toString?.()) ?? `${l.ts}-${i}`;
+                  const rowId = (typeof l._id === "string" ? l._id : (l._id as any)?.toString?.()) ?? `${l.ts}-${i}`;
                   const hasDetails = l.details && Object.keys(l.details).length > 0;
                   const isExpanded = expandedLogId === rowId;
                   return (

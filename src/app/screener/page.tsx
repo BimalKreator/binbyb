@@ -60,6 +60,19 @@ function formatNetPct(val: number | undefined | null): string {
   return (n >= 0 ? "+" : "") + n.toFixed(4) + "%";
 }
 
+/**
+ * When L2 mode is ON: net funding in the L2-suggested direction.
+ * Binance Short (Bybit Long): we receive Binance funding, pay Bybit → net = fundingBinance - fundingBybit.
+ * Binance Long (Bybit Short): we pay Binance, receive Bybit → net = fundingBybit - fundingBinance.
+ * Positive = we get paid (favorable), negative = we pay (unfavorable).
+ */
+function getL2DirectionNetFunding(row: RankedToken): number | null {
+  const bin = Number(row.fundingBinance);
+  const byb = Number(row.fundingBybit);
+  if (row.recommendedBinanceSide == null || !Number.isFinite(bin) || !Number.isFinite(byb)) return null;
+  return row.recommendedBinanceSide === "Short" ? bin - byb : byb - bin;
+}
+
 export default function ScreenerPage() {
   const [data, setData] = useState<{ rankedTokens: RankedToken[] } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -503,6 +516,20 @@ export default function ScreenerPage() {
                   const binanceIsLong = row.recommendedBinanceSide != null ? row.recommendedBinanceSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && binNum <= bybNum);
                   const bybitIsLong = row.recommendedBybitSide != null ? row.recommendedBybitSide === "Long" : (!Number.isNaN(binNum) && !Number.isNaN(bybNum) && bybNum <= binNum);
                   const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
+                  const l2NetFunding = screenerDirectionBy === "l2" ? getL2DirectionNetFunding(row) : null;
+                  const fundingFavorable = l2NetFunding != null ? l2NetFunding > 0 : null;
+                  const fundingCellClass =
+                    screenerDirectionBy === "l2" && fundingFavorable !== null
+                      ? fundingFavorable
+                        ? "text-[var(--profit)]"
+                        : "text-[var(--loss)]"
+                      : "text-slate-300";
+                  const fundingCellTitle =
+                    screenerDirectionBy === "l2" && fundingFavorable !== null
+                      ? fundingFavorable
+                        ? "L2 direction: you get paid funding (favorable)"
+                        : "L2 direction: you pay funding (unfavorable)"
+                      : undefined;
                   return (
                     <tr key={row.symbol} className="border-b border-slate-700/50">
                       <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
@@ -525,7 +552,7 @@ export default function ScreenerPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
+                      <td className={`py-1 px-2 text-[10px] sm:text-xs ${fundingCellClass}`} title={fundingCellTitle}>
                         <span className="block leading-tight">
                           {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
                         </span>
@@ -635,6 +662,20 @@ export default function ScreenerPage() {
                       const countdownMs = row.nextFundingTime != null ? row.nextFundingTime - now : null;
                       const isCooling = coolingSet.has(row.symbol.toUpperCase());
                       const isBanned = bannedSet.has(row.symbol.toUpperCase());
+                      const l2NetFundingB = screenerDirectionBy === "l2" ? getL2DirectionNetFunding(row) : null;
+                      const fundingFavorableB = l2NetFundingB != null ? l2NetFundingB > 0 : null;
+                      const fundingCellClassB =
+                        screenerDirectionBy === "l2" && fundingFavorableB !== null
+                          ? fundingFavorableB
+                            ? "text-[var(--profit)]"
+                            : "text-[var(--loss)]"
+                          : "text-slate-300";
+                      const fundingCellTitleB =
+                        screenerDirectionBy === "l2" && fundingFavorableB !== null
+                          ? fundingFavorableB
+                            ? "L2 direction: you get paid funding (favorable)"
+                            : "L2 direction: you pay funding (unfavorable)"
+                          : undefined;
                       return (
                         <tr key={row.symbol} className="border-b border-slate-700/50">
                           <td className="py-1 px-2 font-medium text-foreground text-[11px] sm:text-xs truncate max-w-[80px] sm:max-w-[120px]" title={row.symbol}>
@@ -657,7 +698,7 @@ export default function ScreenerPage() {
                               )}
                             </div>
                           </td>
-                          <td className="py-1 px-2 text-slate-300 text-[10px] sm:text-xs">
+                          <td className={`py-1 px-2 text-[10px] sm:text-xs ${fundingCellClassB}`} title={fundingCellTitleB}>
                             <span className="block leading-tight">
                               {formatFundingWithDirection(row.fundingBinance, "Binance", binanceIsLong)}
                             </span>
