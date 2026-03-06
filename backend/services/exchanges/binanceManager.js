@@ -757,6 +757,40 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           }
         }
       }
+
+      // Dynamic L2 Depth streams (from subscribeAdditionalSymbols)
+      if (stream && stream.includes("@depth")) {
+        const ob = payload;
+        const sym = ob?.s;
+        if (sym) {
+          const symbol = sym.toUpperCase();
+          if (!orderbooks[symbol]) {
+            orderbooks[symbol] = { bids: new Map(), asks: new Map() };
+          }
+          const bidsMap = new Map();
+          (ob.bids || ob.b || []).forEach(b => bidsMap.set(parseFloat(b[0]), parseFloat(b[1])));
+          const asksMap = new Map();
+          (ob.asks || ob.a || []).forEach(a => asksMap.set(parseFloat(a[0]), parseFloat(a[1])));
+          
+          orderbooks[symbol].bids = bidsMap;
+          orderbooks[symbol].asks = asksMap;
+        }
+      }
+
+      // Dynamic individual bookTicker streams (from subscribeAdditionalSymbols)
+      if (stream && stream.endsWith("@bookTicker") && stream !== "!bookTicker") {
+        const sym = payload?.s ? String(payload.s).toUpperCase() : "";
+        if (sym && payload.b != null && payload.a != null) {
+          const bestBid = parseFloat(payload.b) || 0;
+          const bestBidQty = parseFloat(payload.B) || 0;
+          const bestAsk = parseFloat(payload.a) || 0;
+          const bestAskQty = parseFloat(payload.A) || 0;
+          if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
+            bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
+            topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
+          }
+        }
+      }
     } catch (e) {
       console.error("[Binance-WS-Error] Failed to parse message:", e.message);
     }
@@ -1962,7 +1996,10 @@ module.exports = {
     newSymbols.forEach(sym => global.binanceL2Subs.add(sym));
     console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to L2 depth streams`);
 
-    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
+    const params = newSymbols.flatMap(sym => [
+      `${String(sym).toLowerCase()}@depth20@100ms`,
+      `${String(sym).toLowerCase()}@bookTicker`
+    ]);
     // Use publicWs which allows multiplexing
     if (typeof publicWs !== 'undefined' && publicWs && publicWs.readyState === 1) { 
       publicWs.send(JSON.stringify({
