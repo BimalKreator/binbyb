@@ -1136,27 +1136,34 @@ const DEFAULT_SLIPPAGE_PCT = 0.1;
 function getBestBidAsk(symbol) {
   const sym = String(symbol).toUpperCase();
   
-  // Priority 1: Live L2 Orderbook (Always updated)
+  // 1. Try Live L2 Orderbook first (Always updated)
   const ob = orderbooksBySymbol[sym];
   if (ob && ob.bids instanceof Map && ob.asks instanceof Map) {
     if (ob.bids.size > 0 && ob.asks.size > 0) {
-      const bestBid = Math.max(...Array.from(ob.bids.keys()).map(Number).filter(n => n > 0));
-      const bestAsk = Math.min(...Array.from(ob.asks.keys()).map(Number).filter(n => n > 0));
+      const bestBid = Math.max(...Array.from(ob.bids.keys()).map(Number));
+      const bestAsk = Math.min(...Array.from(ob.asks.keys()).map(Number));
       if (bestBid > 0 && bestAsk > 0) {
-        return { bestBid, bestAsk };
+        return { bestBid, bestAsk, bestBidQty: 0, bestAskQty: 0 };
       }
     }
   }
 
-  // Priority 2: Fallback to Ticker State (snapshot only, often missing bid1Price)
+  // 2. Fallback to Ticker State
   const state = tickerStateBySymbol[sym];
-  if (state && parseFloat(state.bid1Price) > 0 && parseFloat(state.ask1Price) > 0) {
-    return {
-      bestBid: parseFloat(state.bid1Price),
-      bestAsk: parseFloat(state.ask1Price)
+  if (!state) return null;
+  const bestBid = parseFloat(state.bid1Price);
+  const bestAsk = parseFloat(state.ask1Price);
+  const bestBidQty = parseFloat(state.bid1Size);
+  const bestAskQty = parseFloat(state.ask1Size);
+  
+  if (Number.isFinite(bestBid) && Number.isFinite(bestAsk) && bestBid > 0 && bestAsk > 0) {
+    return { 
+      bestBid, 
+      bestBidQty: Number.isFinite(bestBidQty) ? bestBidQty : 0, 
+      bestAsk, 
+      bestAskQty: Number.isFinite(bestAskQty) ? bestAskQty : 0 
     };
   }
-  
   return null;
 }
 
