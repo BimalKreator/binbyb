@@ -623,35 +623,27 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and L2 depth...");
-    
-    const streamNames = ["!markPrice@arr@1s", "!bookTicker"];
-    trackedSymbols.forEach((sym) => {
-      const s = String(sym).toLowerCase();
-      streamNames.push(`${s}@markPrice@1s`);
-      streamNames.push(`${s}@depth20@100ms`); // CRITICAL FIX: Subscribe to L2 Depth
-    });
+    console.log("[Binance] Public WebSocket connected. Subscribing to global streams...");
 
-    // Flush any dynamically queued symbols that failed to subscribe during boot
+    // 1. Subscribe to Global Streams (Covers all 447 symbols using only 2 streams!)
+    const streamNames = [
+      "!markPrice@arr@1s",
+      "!bookTicker"
+    ];
+
+    // 2. Add dynamic L2 subscriptions ONLY for active positions
     if (global.pendingBinanceSubs && global.pendingBinanceSubs.length > 0) {
        global.pendingBinanceSubs.forEach(sym => {
-          const s = String(sym).toLowerCase();
-          streamNames.push(`${s}@markPrice@1s`);
-          streamNames.push(`${s}@depth20@100ms`);
+          streamNames.push(`${String(sym).toLowerCase()}@depth20@100ms`);
        });
-       global.pendingBinanceSubs = [];
+       global.pendingBinanceSubs = []; // Clear queue
     }
 
-    // Binance allows 1024 streams per connection. Chunking by 200 is extremely safe.
-    const chunkSize = 200; 
-    for (let i = 0; i < streamNames.length; i += chunkSize) {
-      const chunk = streamNames.slice(i, i + chunkSize);
-      ws.send(JSON.stringify({
-        method: "SUBSCRIBE",
-        params: chunk,
-        id: Date.now() + i
-      }));
-    }
+    ws.send(JSON.stringify({
+      method: "SUBSCRIBE",
+      params: streamNames,
+      id: Date.now()
+    }));
   });
 
   ws.on("message", (raw) => {
@@ -1942,11 +1934,8 @@ module.exports = {
       return;
     }
 
-    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to streams`);
-    const params = newSymbols.flatMap(sym => [
-      `${String(sym).toLowerCase()}@depth20@100ms`,
-      `${String(sym).toLowerCase()}@markPrice@1s`
-    ]);
+    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to L2 depth streams`);
+    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
     
     publicWs.send(JSON.stringify({
       method: "SUBSCRIBE",
