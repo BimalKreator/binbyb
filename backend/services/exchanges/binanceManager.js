@@ -573,16 +573,18 @@ function connectBinanceDepthChunk(symbolsChunk) {
       if (!streamName.includes("@depth20")) return;
 
       const sym = streamName.split("@")[0].toUpperCase();
-      if (!Array.isArray(data.bids) || !Array.isArray(data.asks)) return;
+      const bidsArr = Array.isArray(data.b) ? data.b : data.bids;
+      const asksArr = Array.isArray(data.a) ? data.a : data.asks;
+      if (!Array.isArray(bidsArr) || !Array.isArray(asksArr)) return;
 
       const bidsMap = new Map();
-      data.bids.forEach(x => {
+      bidsArr.forEach(x => {
         const p = parseFloat(x[0]);
         const q = parseFloat(x[1]);
         if (p > 0 && q > 0) bidsMap.set(p, q);
       });
       const asksMap = new Map();
-      data.asks.forEach(x => {
+      asksArr.forEach(x => {
         const p = parseFloat(x[0]);
         const q = parseFloat(x[1]);
         if (p > 0 && q > 0) asksMap.set(p, q);
@@ -640,12 +642,10 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
     try {
       let payload = JSON.parse(raw.toString());
 
-      // Ignore subscription confirmations
       if (payload && payload.result === null && payload.id != null) return;
 
       let streamName = "";
 
-      // Unwrap multiplexed payload
       if (payload.stream && payload.data) {
         streamName = payload.stream;
         payload = payload.data;
@@ -670,17 +670,13 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       };
 
       if (Array.isArray(payload)) {
-        payload.forEach((item) => {
-          if (item && item.e === "markPriceUpdate") {
-            processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
-          } else if (item && item.e === "bookTicker") {
-            const sym = (item.s || "").toUpperCase();
-            if (sym && item.b != null && item.a != null) {
-              bookTickerBySymbol[sym] = { bestBid: parseFloat(item.b) || 0, bestBidQty: parseFloat(item.B) || 0, bestAsk: parseFloat(item.a) || 0, bestAskQty: parseFloat(item.A) || 0 };
-            }
-          }
+        payload.forEach(item => {
+          if (item && item.s && item.p) lastMarkPriceBySymbol[item.s.toUpperCase()] = parseFloat(item.p);
         });
-      } else if (payload && payload.e === "bookTicker") {
+        payload.forEach(item => {
+          if (item && item.e === "markPriceUpdate") processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
+        });
+      } else if (streamName && streamName.includes("@bookTicker")) {
         const sym = String(payload.s || "").toUpperCase();
         if (sym) {
           bookTickerBySymbol[sym] = {
@@ -688,20 +684,17 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
             bestAsk: parseFloat(payload.a)
           };
         }
-      }
-
-      // Fixed L2 Depth Snapshot Parser (@depth20 uses .bids / .asks)
-      if (streamName && streamName.includes("@depth20")) {
+      } else if (streamName && streamName.includes("@depth20")) {
         const sym = streamName.split("@")[0].toUpperCase();
-        if (sym && Array.isArray(payload.bids) && Array.isArray(payload.asks)) {
+        if (sym && Array.isArray(payload.b) && Array.isArray(payload.a)) {
           const bidsMap = new Map();
-          payload.bids.forEach(x => {
+          payload.b.forEach(x => {
             const p = parseFloat(x[0]);
             const q = parseFloat(x[1]);
             if (p > 0 && q > 0) bidsMap.set(p, q);
           });
           const asksMap = new Map();
-          payload.asks.forEach(x => {
+          payload.a.forEach(x => {
             const p = parseFloat(x[0]);
             const q = parseFloat(x[1]);
             if (p > 0 && q > 0) asksMap.set(p, q);
@@ -1927,7 +1920,12 @@ module.exports = {
     }
 
     console.log(`[Binance] Restoring Active L2 Sub for PnL VWAP: ${newSymbols.join(", ")}`);
-    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
+    const params = [];
+    newSymbols.forEach(sym => {
+      const lower = String(sym).toLowerCase();
+      params.push(`${lower}@depth20@100ms`);
+      params.push(`${lower}@bookTicker`);
+    });
 
     try {
       publicWs.send(JSON.stringify({
