@@ -761,16 +761,21 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       // Dynamic L2 Depth streams (from subscribeAdditionalSymbols)
       if (stream && stream.includes("@depth")) {
         const ob = payload;
-        const sym = ob?.s;
+        // Binance @depth streams don't contain 's' inside data, extract from stream name!
+        let sym = ob?.s; 
+        if (!sym) {
+          sym = stream.split('@')[0].toUpperCase();
+        }
+        
         if (sym) {
           const symbol = sym.toUpperCase();
           if (!orderbooks[symbol]) {
             orderbooks[symbol] = { bids: new Map(), asks: new Map() };
           }
           const bidsMap = new Map();
-          (ob.bids || ob.b || []).forEach(b => bidsMap.set(parseFloat(b[0]), parseFloat(b[1])));
+          (ob.bids || []).forEach(b => bidsMap.set(parseFloat(b[0]), parseFloat(b[1])));
           const asksMap = new Map();
-          (ob.asks || ob.a || []).forEach(a => asksMap.set(parseFloat(a[0]), parseFloat(a[1])));
+          (ob.asks || []).forEach(a => asksMap.set(parseFloat(a[0]), parseFloat(a[1])));
           
           orderbooks[symbol].bids = bidsMap;
           orderbooks[symbol].asks = asksMap;
