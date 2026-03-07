@@ -720,6 +720,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   ws.on("close", (code, reason) => {
     publicWs = null;
     ws.removeAllListeners?.();
+    if (global.binanceL2Subs) global.binanceL2Subs.clear();
     console.log("[Binance] Public WebSocket closed", code, reason?.toString());
     if (!publicStopped) schedulePublicReconnect();
   });
@@ -1908,8 +1909,29 @@ module.exports = {
   stop,
   fetchMarkPriceRest,
   subscribeAdditionalSymbols: (symbolsArray) => {
-    // Disabled to prevent Binance Error 1006 limit drops.
-    // Global !bookTicker provides all necessary L1 data for exits and PnL.
+    if (!symbolsArray || symbolsArray.length === 0) return;
+    if (!global.binanceL2Subs) global.binanceL2Subs = new Set();
+
+    const newSymbols = symbolsArray.filter(sym => !global.binanceL2Subs.has(sym));
+    if (newSymbols.length === 0) return;
+
+    newSymbols.forEach(sym => global.binanceL2Subs.add(sym));
+
+    // Queue if WS is not ready
+    if (typeof publicWs === 'undefined' || !publicWs || publicWs.readyState !== 1) {
+      if (!global.pendingBinanceSubs) global.pendingBinanceSubs = [];
+      global.pendingBinanceSubs.push(...newSymbols);
+      return;
+    }
+
+    console.log(`[Binance] Restoring Active L2 Sub for PnL VWAP: ${newSymbols.join(", ")}`);
+    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
+
+    publicWs.send(JSON.stringify({
+      method: "SUBSCRIBE",
+      params: params,
+      id: Date.now() + Math.floor(Math.random() * 100)
+    }));
   },
   placeIOCLimitOrder,
   placeWSOrder,
