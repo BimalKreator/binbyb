@@ -2,6 +2,7 @@ const express = require("express");
 const { protect } = require("../middleware/auth");
 const { getDecryptedApiKeys } = require("../services/apiKeys");
 const { binanceManager, bybitManager } = require("../services/exchanges");
+const { executeSequentialSmartArbitrage } = require("../services/executionEngine");
 const autoTrader = require("../services/autoTrader");
 const screener = require("../services/screener");
 const TradeLog = require("../models/TradeLog");
@@ -82,109 +83,33 @@ router.post("/arbitrage", async (req, res) => {
       } catch (levErr) {
         console.warn("[Manual Trade] setLeverage warning", sym, levErr?.message ?? levErr);
       }
-      console.log(`[Manual Trade] Initiating Independent Legging Sweep for ${qty} ${symbol}...`);
-      const targetPrice = price;
-      let bybitTotalFilled = 0;
-      let binanceTotalFilled = 0;
-      let maxSweeps = 5;
-      let criticalExchangeError = false;
+      console.log(`[Manual Trade] Initiating sequential smart arbitrage for ${qty} ${symbol}...`);
+      const bPositionSide = binanceSideNorm.toUpperCase() === "BUY" ? "LONG" : "SHORT";
 
-      // Phase 1: Independent Concurrent Sweeping
-      while ((bybitTotalFilled < qty || binanceTotalFilled < qty) && maxSweeps > 0) {
-        let bybitNeeded = qty - bybitTotalFilled;
-        let binanceNeeded = qty - binanceTotalFilled;
+      const execResult = await executeSequentialSmartArbitrage({
+        symbol: sym,
+        targetQty: qty,
+        bybitSide: bybitSideApi,
+        binanceSide: binanceSideNorm,
+        binancePositionSide: bPositionSide,
+        leverage: levInt,
+        slippagePct,
+        markPrice: price,
+        keys,
+        isExit: false
+      });
 
-        if (binanceNeeded > 0) {
-          const estNotional = binanceNeeded * targetPrice;
-          if (estNotional < 5) {
-            binanceNeeded = Math.ceil(5 / targetPrice);
-          }
-        }
+      const totalBybitFilled = execResult.bybitTotalFilled;
+      const totalBinanceFilled = execResult.binanceTotalFilled;
 
-        const sweepPromises = [];
-        if (bybitNeeded > 0) {
-          sweepPromises.push(
-            bybitManager
-              .executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, bybitNeeded, levInt, 1, { slippagePct })
-              .then((res) => ({ exchange: "bybit", res }))
-              .catch((err) => ({ exchange: "bybit", res: { error: err?.message || "Bybit sweep failed", totalFilled: 0 } }))
-          );
-        }
-        if (binanceNeeded > 0) {
-          const bPositionSide = binanceSideNorm.toUpperCase() === "BUY" ? "LONG" : "SHORT";
-          sweepPromises.push(
-            binanceManager
-              .executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, binanceNeeded, levInt, 5, { positionSide: bPositionSide, slippagePct })
-              .then((res) => ({ exchange: "binance", res }))
-              .catch((err) => ({ exchange: "binance", res: { error: err?.message || "Binance sweep failed", totalFilled: 0 } }))
-          );
-        }
-
-        if (sweepPromises.length === 0) break;
-
-        const results = await Promise.all(sweepPromises);
-        let bybitError = false;
-        let binanceError = false;
-
-        for (const r of results) {
-          if (r.exchange === "bybit") {
-            bybitTotalFilled += r.res.totalFilled || 0;
-            if (r.res.error && (r.res.totalFilled || 0) <= 0) bybitError = true;
-            if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          }
-          if (r.exchange === "binance") {
-            binanceTotalFilled += r.res.totalFilled || 0;
-            if (r.res.error && (r.res.totalFilled || 0) <= 0) binanceError = true;
-            if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          }
-        }
-
-        if (bybitError || binanceError) {
-          criticalExchangeError = true;
-          const errMsg = `CRITICAL: An exchange rejected the order (BybitError: ${bybitError}, BinanceError: ${binanceError}). Aborting sweeps instantly to prevent unhedged exposure.`;
-          console.error(`[Manual Trade] ${errMsg}`);
-          dbLog("ERROR", errMsg, symbol, { bybitError, binanceError, bybitTotalFilled, binanceTotalFilled });
-          break;
-        }
-
-        maxSweeps--;
-        if (maxSweeps > 0) await new Promise((resolve) => setTimeout(resolve, 150));
+      if (!execResult.success) {
+        console.error(`[Manual Trade] ${execResult.reason}`);
+        dbLog("ERROR", execResult.reason, symbol, { bybitTotalFilled: totalBybitFilled, binanceTotalFilled: totalBinanceFilled });
+        return res.status(400).json({
+          success: false,
+          message: execResult.reason || "Sequential execution failed. No unhedged exposure created.",
+        });
       }
-
-      // Phase 2: Final Force-Balancing (True-up) — only if no critical exchange rejection
-      if (!criticalExchangeError) {
-        const mismatch = Math.abs(bybitTotalFilled - binanceTotalFilled);
-        const mismatchNotional = mismatch * targetPrice;
-        if (mismatchNotional > 6) {
-          console.log(`[Manual Trade] Final Balancing: Binance ${binanceTotalFilled}, Bybit ${bybitTotalFilled}. Fixing mismatch...`);
-          if (bybitTotalFilled > binanceTotalFilled) {
-            let catchUpQty = bybitTotalFilled - binanceTotalFilled;
-            if (catchUpQty * targetPrice < 5) catchUpQty = Math.ceil(5 / targetPrice);
-            try {
-              const bPositionSide = binanceSideNorm.toUpperCase() === "BUY" ? "LONG" : "SHORT";
-              const res = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, catchUpQty, levInt, 5, { positionSide: bPositionSide, slippagePct });
-              if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
-              binanceTotalFilled += res?.totalFilled || 0;
-            } catch (e) {
-              console.error("[Manual Trade] Binance catch-up sweep failed", e?.message ?? e);
-            }
-          } else if (binanceTotalFilled > bybitTotalFilled) {
-            const catchUpQty = binanceTotalFilled - bybitTotalFilled;
-            try {
-              const res = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, catchUpQty, levInt, 1, { slippagePct });
-              if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
-              bybitTotalFilled += res?.totalFilled || 0;
-            } catch (e) {
-              console.error("[Manual Trade] Bybit catch-up sweep failed", e?.message ?? e);
-            }
-          }
-        }
-      } else {
-        console.log("[Manual Trade] Skipping Phase 2 balancing due to critical exchange rejection. Relying on TradeMonitor to handle the orphan/mismatch.");
-      }
-
-      const totalBybitFilled = bybitTotalFilled;
-      const totalBinanceFilled = binanceTotalFilled;
       const mismatch = Math.abs(totalBybitFilled - totalBinanceFilled);
 
       if (totalBybitFilled <= 0) {

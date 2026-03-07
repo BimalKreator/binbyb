@@ -9,6 +9,7 @@ const { getDecryptedApiKeys } = require("./apiKeys");
 const { binanceManager, bybitManager } = require("./exchanges");
 const screener = require("./screener");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
+const { executeSequentialSmartArbitrage } = require("./executionEngine");
 const { dbLog } = require("../utils/logger");
 
 const ENTRY_BUFFER_MS = 60 * 1000; // 60 seconds per symbol before re-entry
@@ -396,172 +397,36 @@ async function runAutoEntry() {
     let maxSweeps = 5;
     let criticalExchangeError = false;
 
-    // Phase 1: Independent Concurrent Sweeping
-    // Absolute minimum safe notional for Binance/Bybit is $5. We use $6 to be safe.
-    const safeProbeNotional = 6.0;
-    const probeQty = Math.max(safeProbeNotional / targetPrice, stepSize || 0.001);
-    const slippagePct = Number.isFinite(Number(settings?.entrySlippagePct)) ? Number(settings.entrySlippagePct) : 0.5;
+    const slippagePct = Number.isFinite(Number(settings?.entrySlippagePct)) ? Number(settings.entrySlippagePct) : 2.0;
+    const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
 
-    while ((bybitTotalFilled < totalQuantity || binanceTotalFilled < totalQuantity) && maxSweeps > 0) {
-      let bybitNeeded = totalQuantity - bybitTotalFilled;
-      let binanceNeeded = totalQuantity - binanceTotalFilled;
+    const execResult = await executeSequentialSmartArbitrage({
+      symbol: top.symbol,
+      targetQty: totalQuantity,
+      bybitSide,
+      binanceSide,
+      binancePositionSide: bPositionSide,
+      leverage: levInt,
+      slippagePct,
+      markPrice: targetPrice,
+      keys,
+      isExit: false
+    });
 
-      const isProbeChunk = (maxSweeps === 5);
+    let bybitTotalFilled = execResult.bybitTotalFilled;
+    let binanceTotalFilled = execResult.binanceTotalFilled;
 
-      if (isProbeChunk) {
-        bybitNeeded = Math.min(bybitNeeded, probeQty);
-        binanceNeeded = Math.min(binanceNeeded, probeQty);
-        console.log(`[AutoTrader] Probe Chunk: Testing ${top.symbol} with ~$${safeProbeNotional} worth (qty: ${probeQty.toFixed(6)})`);
-      }
-
-      if (binanceNeeded > 0) {
-        const estNotional = binanceNeeded * targetPrice;
-        if (estNotional < 5) {
-          binanceNeeded = Math.ceil(5 / targetPrice);
-        }
-      }
-
-      const currentBinanceChunks = isProbeChunk ? 1 : 5;
-      let bybitError = false;
-      let binanceError = false;
-
-      // --- SEQUENTIAL EXECUTION FOR PROBE CHUNK ---
-      if (isProbeChunk) {
-        // 1. Execute Bybit FIRST
-        if (bybitNeeded > 0) {
-          try {
-            const res = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, bybitNeeded, levInt, 1, { slippagePct });
-            bybitTotalFilled += res?.totalFilled || 0;
-            if (res?.error && (res?.totalFilled || 0) <= 0) bybitError = true;
-            if ((res?.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          } catch (err) {
-            bybitError = true;
-          }
-        }
-
-        // 2. CHECK BYBIT SUCCESS BEFORE BINANCE
-        if (bybitError || bybitTotalFilled === 0) {
-          criticalExchangeError = true;
-          const errMsg = `[AutoTrader-Failsafe] Probe chunk rejected on Bybit for ${top.symbol}. Aborting BEFORE Binance entry to prevent orphan fees.`;
-          console.error(errMsg);
-          dbLog("ERROR", errMsg, top.symbol, { bybitTotalFilled, binanceTotalFilled });
-
-          try {
-            const mongoose = require('mongoose');
-            const collection = mongoose.connection.db.collection('bans');
-            await collection.updateOne(
-              { symbol: top.symbol },
-              { $set: { symbol: top.symbol, reason: 'Probe Chunk Rejected by Bybit', createdAt: new Date() } },
-              { upsert: true }
-            );
-          } catch (banErr) {}
-          break; // Exit loop instantly, Binance is untouched
-        }
-
-        // 3. BYBIT SUCCEEDED, NOW FIRE BINANCE
-        if (binanceNeeded > 0) {
-          const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
-          try {
-            const res = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceNeeded, levInt, currentBinanceChunks, { positionSide: bPositionSide, slippagePct });
-            binanceTotalFilled += res?.totalFilled || 0;
-            if (res?.error && (res?.totalFilled || 0) <= 0) binanceError = true;
-            if ((res?.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          } catch (err) {
-            binanceError = true;
-          }
-        }
-
-        if (binanceError || binanceTotalFilled === 0) {
-          criticalExchangeError = true;
-          console.error(`[AutoTrader-Failsafe] Probe chunk rejected on Binance for ${top.symbol}.`);
-          try {
-            const mongoose = require('mongoose');
-            const collection = mongoose.connection.db.collection('bans');
-            await collection.updateOne(
-              { symbol: top.symbol },
-              { $set: { symbol: top.symbol, reason: 'Probe Chunk Rejected by Binance', createdAt: new Date() } },
-              { upsert: true }
-            );
-          } catch (banErr) {}
-          break;
-        }
-
-      } else {
-        // --- CONCURRENT EXECUTION FOR REMAINING CHUNKS ---
-        const sweepPromises = [];
-        if (bybitNeeded > 0) {
-          sweepPromises.push(
-            bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, bybitNeeded, levInt, 1, { slippagePct })
-              .then((res) => ({ exchange: "bybit", res }))
-              .catch((err) => ({ exchange: "bybit", res: { error: err?.message || "Bybit sweep failed", totalFilled: 0 } }))
-          );
-        }
-        if (binanceNeeded > 0) {
-          const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
-          sweepPromises.push(
-            binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceNeeded, levInt, currentBinanceChunks, { positionSide: bPositionSide, slippagePct })
-              .then((res) => ({ exchange: "binance", res }))
-              .catch((err) => ({ exchange: "binance", res: { error: err?.message || "Binance sweep failed", totalFilled: 0 } }))
-          );
-        }
-
-        if (sweepPromises.length === 0) break;
-        const results = await Promise.all(sweepPromises);
-
-        for (const r of results) {
-          if (r.exchange === "bybit") {
-            bybitTotalFilled += r.res.totalFilled || 0;
-            if (r.res.error && (r.res.totalFilled || 0) <= 0) bybitError = true;
-            if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          }
-          if (r.exchange === "binance") {
-            binanceTotalFilled += r.res.totalFilled || 0;
-            if (r.res.error && (r.res.totalFilled || 0) <= 0) binanceError = true;
-            if ((r.res.totalFilled || 0) > 0) orderCircuitBreaker.recordOrderPlaced();
-          }
-        }
-
-        if (bybitError || binanceError) {
-          criticalExchangeError = true;
-          console.error(`[AutoTrader] CRITICAL: An exchange rejected a chunk. Aborting remaining sweeps.`);
-          break;
-        }
-      }
-
-      maxSweeps--;
-      if (maxSweeps > 0) await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-
-    // Phase 2: Final Force-Balancing (True-up) — only if no critical exchange rejection
-    if (!criticalExchangeError) {
-      const mismatch = Math.abs(bybitTotalFilled - binanceTotalFilled);
-      const mismatchNotional = mismatch * targetPrice;
-      if (mismatchNotional > 6) {
-        console.log(`[AutoTrader] Final Balancing: Binance ${binanceTotalFilled}, Bybit ${bybitTotalFilled}. Fixing mismatch...`);
-        if (bybitTotalFilled > binanceTotalFilled) {
-          let catchUpQty = bybitTotalFilled - binanceTotalFilled;
-          if (catchUpQty * targetPrice < 5) catchUpQty = Math.ceil(5 / targetPrice);
-          try {
-            const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
-            const res = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, catchUpQty, levInt, 5, { positionSide: bPositionSide });
-            if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
-            binanceTotalFilled += res?.totalFilled || 0;
-          } catch (e) {
-            console.error("[AutoTrader] Binance catch-up sweep failed", e?.message ?? e);
-          }
-        } else if (binanceTotalFilled > bybitTotalFilled) {
-          const catchUpQty = binanceTotalFilled - bybitTotalFilled;
-          try {
-            const res = await bybitManager.executeLiquiditySweep(keys.bybit, top.symbol, bybitSide, catchUpQty, levInt, 1);
-            if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
-            bybitTotalFilled += res?.totalFilled || 0;
-          } catch (e) {
-            console.error("[AutoTrader] Bybit catch-up sweep failed", e?.message ?? e);
-          }
-        }
-      }
-    } else {
-      console.log("[AutoTrader] Skipping Phase 2 balancing due to critical exchange rejection. Relying on TradeMonitor to handle the orphan/mismatch.");
+    if (!execResult.success) {
+      const errMsg = `CRITICAL: Probe rejected (${execResult.reason}). Aborted to prevent unhedged exposure.`;
+      console.error(`[AutoTrader] ${errMsg}`);
+      try {
+        const mongoose = require('mongoose');
+        const collection = mongoose.connection.db.collection('bans');
+        await collection.updateOne({ symbol: top.symbol }, { $set: { symbol: top.symbol, reason: execResult.reason, createdAt: new Date() } }, { upsert: true });
+      } catch (e) {}
+      if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
+      isExecutingTrade = false;
+      return;
     }
 
     if (bybitTotalFilled <= 0) {

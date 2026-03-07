@@ -13,6 +13,7 @@ const screener = require("./screener");
 const autoTrader = require("./autoTrader");
 const orderCircuitBreaker = require("./orderCircuitBreaker");
 const livePnlService = require("./livePnlService");
+const { executeSequentialSmartArbitrage } = require("./executionEngine");
 const { dbLog } = require("../utils/logger");
 
 let cachedSettingsForTick = null;
@@ -227,80 +228,45 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
         : "SHORT";
 
   const lev = Math.max(1, Number(binancePos?.leverage ?? bybitPos?.leverage ?? 1));
-  const exitSweepIterations = 30;
+  const targetExitQty = Math.min(binanceQty, bybitQty);
+  const bMark = fallbackMarkPrice;
 
-  const binancePromise =
-    binanceQty > 0
-      ? binanceManager
-          .executeLiquiditySweep(
-            credentials.binance,
-            sym,
-            binanceCloseSide,
-            binanceQty,
-            lev,
-            exitSweepIterations,
-            { reduceOnly: true, positionSide: binancePositionSideForClose, slippagePct }
-          )
-          .then((res) => {
-            const filled = res?.totalFilled ?? 0;
-            if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
-            return filled;
-          })
-      : Promise.resolve(0);
-  const bybitPromise =
-    bybitQty > 0
-      ? bybitManager
-          .executeLiquiditySweep(credentials.bybit, sym, bybitCloseSide, bybitQty, lev, exitSweepIterations, { reduceOnly: true, slippagePct })
-          .then((res) => {
-            const filled = res?.totalFilled ?? 0;
-            if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
-            return filled;
-          })
-      : Promise.resolve(0);
+  let binanceFilled = 0;
+  let bybitFilled = 0;
+  if (targetExitQty > 0) {
+    const execResult = await executeSequentialSmartArbitrage({
+      symbol: sym,
+      targetQty: targetExitQty,
+      bybitSide: bybitCloseSide,
+      binanceSide: binanceCloseSide,
+      binancePositionSide: binancePositionSideForClose,
+      leverage: parseInt(settings?.leverage || 10, 10) || lev,
+      slippagePct,
+      markPrice: bMark,
+      keys: credentials,
+      isExit: true
+    });
+    bybitFilled = execResult.bybitTotalFilled || 0;
+    binanceFilled = execResult.binanceTotalFilled || 0;
+  }
 
-  const [binanceResult, bybitResult] = await Promise.allSettled([binancePromise, bybitPromise]);
-  const binanceFilled = binanceResult.status === "fulfilled" ? binanceResult.value : 0;
-  const bybitFilled = bybitResult.status === "fulfilled" ? bybitResult.value : 0;
-
-  if (binanceResult.status === "rejected" || bybitResult.status === "rejected") {
+  const hadRejection = targetExitQty > 0 && (binanceFilled <= 0 || bybitFilled <= 0);
+  if (hadRejection) {
     failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
     console.log(`[Phantom Protection] Failed to close ${sym}. Locked for 10s. Forcing REST Sync...`);
     binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
     bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
   }
 
-  if (binanceResult.status === "rejected") {
-    const msg = binanceResult.reason?.message || String(binanceResult.reason);
-    console.error("[TradeMonitor] closePair Binance exit sweep failed", sym, msg);
-    if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("notional")) {
-      console.log(`[Phantom Position Detected] ${sym} on Binance. Forcing REST Sync...`);
-      binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
-    }
+  if (targetExitQty > 0 && binanceFilled <= 0) {
+    console.error("[TradeMonitor] closePair Binance exit filled 0", sym);
+    console.log(`[Phantom Position Detected] ${sym} on Binance. Forcing REST Sync...`);
+    binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
   }
-  if (bybitResult.status === "rejected") {
-    const msg = bybitResult.reason?.message || String(bybitResult.reason);
-    console.error("[TradeMonitor] closePair Bybit exit sweep failed", sym, msg);
-    if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("minimum order value")) {
-      console.log(`[Phantom Position Detected] ${sym} on Bybit. Forcing REST Sync...`);
-      bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
-    }
-  }
-
-  const isPhantomError = (err) => {
-    const msg = err?.message ?? String(err ?? "");
-    return msg.includes("ReduceOnly") || msg.includes("position is zero");
-  };
-  if (
-    (binanceResult.status === "rejected" && isPhantomError(binanceResult.reason)) ||
-    (bybitResult.status === "rejected" && isPhantomError(bybitResult.reason))
-  ) {
-    console.log(`[Phantom Position Detected] ${sym}. Forcing REST sync to clear frozen cache...`);
-    if (credentials?.binance && binanceManager.hydratePositionsFromRest) {
-      binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
-    }
-    if (credentials?.bybit && bybitManager.hydratePositionsFromRest) {
-      bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
-    }
+  if (targetExitQty > 0 && bybitFilled <= 0) {
+    console.error("[TradeMonitor] closePair Bybit exit filled 0", sym);
+    console.log(`[Phantom Position Detected] ${sym} on Bybit. Forcing REST Sync...`);
+    bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
   }
 
   const binanceOk = binanceQty <= 0 || binanceFilled > 0;
