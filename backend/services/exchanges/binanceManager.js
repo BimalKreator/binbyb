@@ -9,6 +9,7 @@ const CryptoJS = require("crypto-js");
 const { formatMs, logLatency } = require("./latencyTracker");
 
 const PUBLIC_WS_BASE = "wss://fstream.binance.com";
+let WS_URL = "wss://fstream.binance.com/stream";
 const WS_FAPI_BASE = "wss://ws-fapi.binance.com/ws-fapi/v1";
 const REST_BASE = "https://fapi.binance.com";
 const SPOT_REST_BASE = "https://api.binance.com";
@@ -566,28 +567,27 @@ function connectBinanceDepthChunk(symbolsChunk) {
     try {
       const parsed = JSON.parse(raw.toString());
 
-      // Handle Binance combined stream format
-      if (parsed && parsed.stream && parsed.data) {
-        const streamName = parsed.stream;
-        const data = parsed.data;
+      if (!parsed || !parsed.stream || !parsed.data) return;
+      const streamName = parsed.stream;
+      const data = parsed.data;
+      if (!streamName.includes("@depth20")) return;
 
-        const symMatch = streamName.split("@")[0];
+      const sym = streamName.split("@")[0].toUpperCase();
+      if (!Array.isArray(data.bids) || !Array.isArray(data.asks)) return;
 
-        // Binance Futures uses 'b' and 'a'. Check for both formats just in case.
-        if (symMatch && data.b && data.a) {
-          const sym = symMatch.toUpperCase();
-          orderbooks[sym] = {
-            bids: data.b.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-            asks: data.a.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-          };
-        } else if (symMatch && data.bids && data.asks) {
-          const sym = symMatch.toUpperCase();
-          orderbooks[sym] = {
-            bids: data.bids.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-            asks: data.asks.map((x) => [parseFloat(x[0]), parseFloat(x[1])]),
-          };
-        }
-      }
+      const bidsMap = new Map();
+      data.bids.forEach(x => {
+        const p = parseFloat(x[0]);
+        const q = parseFloat(x[1]);
+        if (p > 0 && q > 0) bidsMap.set(p, q);
+      });
+      const asksMap = new Map();
+      data.asks.forEach(x => {
+        const p = parseFloat(x[0]);
+        const q = parseFloat(x[1]);
+        if (p > 0 && q > 0) asksMap.set(p, q);
+      });
+      orderbooks[sym] = { bids: bidsMap, asks: asksMap };
     } catch (e) {
       console.error("[Binance-Depth-WS] Parse error:", e.message);
     }
@@ -608,7 +608,7 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   publicStreamSymbols = symbols;
   const trackedSymbols = new Set((symbols || []).map((s) => String(s).toUpperCase()));
-  const url = `${PUBLIC_WS_BASE}/ws`;
+  const url = WS_URL;
 
   depthWsArray.forEach((w) => {
     try {
@@ -638,19 +638,26 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("message", (raw) => {
     try {
-      const data = JSON.parse(raw.toString());
+      let payload = JSON.parse(raw.toString());
 
       // Ignore subscription confirmations
-      if (data && data.result === null && data.id != null) return;
+      if (payload && payload.result === null && payload.id != null) return;
+
+      let streamName = "";
+
+      // Unwrap multiplexed payload
+      if (payload.stream && payload.data) {
+        streamName = payload.stream;
+        payload = payload.data;
+      }
 
       const processMarkPrice = (sym, p, r, T, E) => {
         const mp = parseFloat(p);
         if (!sym || Number.isNaN(mp) || mp <= 0) return;
         lastMarkPriceBySymbol[sym] = mp;
         cachedFundingRates[sym] = { fundingRate: parseFloat(r) || 0, nextFundingTime: Number(T) || null };
-        
         if (onMarkPriceUpdate && trackedSymbols.has(sym)) {
-          try { onMarkPriceUpdate(sym, mp, "binance"); } catch(e){}
+          try { onMarkPriceUpdate(sym, mp, "binance"); } catch (e) {}
         }
         if (onFundingUpdate && trackedSymbols.has(sym)) {
           const now = Date.now();
@@ -662,60 +669,44 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
         }
       };
 
-      // 1. Handle Raw Array (e.g. from !markPrice@arr@1s)
-      if (Array.isArray(data)) {
-        data.forEach((item) => {
+      if (Array.isArray(payload)) {
+        payload.forEach((item) => {
           if (item && item.e === "markPriceUpdate") {
-             processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
+            processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
           } else if (item && item.e === "bookTicker") {
-             const sym = (item.s || "").toUpperCase();
-             if (sym && item.b != null && item.a != null) {
-               bookTickerBySymbol[sym] = { bestBid: parseFloat(item.b)||0, bestBidQty: parseFloat(item.B)||0, bestAsk: parseFloat(item.a)||0, bestAskQty: parseFloat(item.A)||0 };
-             }
+            const sym = (item.s || "").toUpperCase();
+            if (sym && item.b != null && item.a != null) {
+              bookTickerBySymbol[sym] = { bestBid: parseFloat(item.b) || 0, bestBidQty: parseFloat(item.B) || 0, bestAsk: parseFloat(item.a) || 0, bestAskQty: parseFloat(item.A) || 0 };
+            }
           }
         });
-        return;
+      } else if (payload && payload.e === "bookTicker") {
+        const sym = String(payload.s || "").toUpperCase();
+        if (sym) {
+          bookTickerBySymbol[sym] = {
+            bestBid: parseFloat(payload.b),
+            bestAsk: parseFloat(payload.a)
+          };
+        }
       }
 
-      // 2. Handle Single Object (Wrapped stream OR Raw payload)
-      const stream = data.stream || "";
-      const payload = data.data || data;
-
-      if (!payload) return;
-
-      // Extract symbol robustly (Payload 's' field OR parsed from stream name)
-      const sym = (payload.s || stream.split("@")[0] || "").toUpperCase();
-
-      if (payload.e === "markPriceUpdate") {
-        processMarkPrice(sym, payload.p, payload.r, payload.T, payload.E);
-        return;
-      }
-
-      // 3. Dynamic L1 / L2 Depth Fallback Parser
-      // 3. Dynamic L2 Depth Fallback Parser
-      if (sym && Array.isArray(payload.b) && Array.isArray(payload.a)) {
-        const bidsMap = new Map();
-        payload.b.forEach(x => {
-          const p = parseFloat(x[0]);
-          const q = parseFloat(x[1]);
-          if (p > 0 && q > 0) bidsMap.set(p, q);
-        });
-        const asksMap = new Map();
-        payload.a.forEach(x => {
-          const p = parseFloat(x[0]);
-          const q = parseFloat(x[1]);
-          if (p > 0 && q > 0) asksMap.set(p, q);
-        });
-        // Completely replace to ensure fresh snapshot
-        orderbooks[sym] = { bids: bidsMap, asks: asksMap };
-      } 
-      else if (sym && typeof payload.b === "string" && typeof payload.a === "string") {
-        // It's an L1 BookTicker (bids/asks are string values)
-        const bestBid = parseFloat(payload.b) || 0;
-        const bestAsk = parseFloat(payload.a) || 0;
-        if (bestBid > 0 && bestAsk > 0) {
-           bookTickerBySymbol[sym] = { bestBid, bestBidQty: parseFloat(payload.B)||0, bestAsk, bestAskQty: parseFloat(payload.A)||0 };
-           topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: parseFloat(payload.B)||0, topAskPrice: bestAsk, topAskQty: parseFloat(payload.A)||0 };
+      // Fixed L2 Depth Snapshot Parser (@depth20 uses .bids / .asks)
+      if (streamName && streamName.includes("@depth20")) {
+        const sym = streamName.split("@")[0].toUpperCase();
+        if (sym && Array.isArray(payload.bids) && Array.isArray(payload.asks)) {
+          const bidsMap = new Map();
+          payload.bids.forEach(x => {
+            const p = parseFloat(x[0]);
+            const q = parseFloat(x[1]);
+            if (p > 0 && q > 0) bidsMap.set(p, q);
+          });
+          const asksMap = new Map();
+          payload.asks.forEach(x => {
+            const p = parseFloat(x[0]);
+            const q = parseFloat(x[1]);
+            if (p > 0 && q > 0) asksMap.set(p, q);
+          });
+          orderbooks[sym] = { bids: bidsMap, asks: asksMap };
         }
       }
 
@@ -1682,10 +1673,10 @@ function getTopOfBook(symbol) {
  * Falls back to L1 BookTicker if depth is empty/thin.
  * @param {string} symbol
  * @param {string} side - 'BUY' | 'SELL'
- * @param {number} targetNotional - USD notional to fill
+ * @param {number} targetQty - target quantity (contracts) to fill
  * @returns {number|null} VWAP price or null if no depth
  */
-function getVwapPrice(symbol, side, targetNotional) {
+function getVwapPrice(symbol, side, targetQty) {
   const sym = String(symbol).toUpperCase();
   const isBuy = String(side).toUpperCase() === "BUY";
   const book = orderbooks[sym];
@@ -1694,7 +1685,7 @@ function getVwapPrice(symbol, side, targetNotional) {
 
   const hasBids = book && (Array.isArray(book.bids) || (book.bids instanceof Map && book.bids.size > 0));
   const hasAsks = book && (Array.isArray(book.asks) || (book.asks instanceof Map && book.asks.size > 0));
-  if (hasBids && hasAsks && targetNotional > 0) {
+  if (hasBids && hasAsks && targetQty > 0) {
     const toArr = (side) => {
       const raw = side === "bids" ? book.bids : book.asks;
       if (Array.isArray(raw)) return raw.map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0);
@@ -1706,26 +1697,24 @@ function getVwapPrice(symbol, side, targetNotional) {
     const levels = isBuy ? asksArr : bidsArr;
 
     if (levels.length > 0) {
-      let remaining = targetNotional;
-      let totalCost = 0;
-      let totalQty = 0;
+      let accumulatedQty = 0;
+      let accumulatedNotional = 0;
+      for (let i = 0; i < levels.length; i++) {
+        const price = levels[i][0];
+        const qty = levels[i][1];
 
-      for (const [p, q] of levels) {
-        const levelNotional = p * q;
-        if (remaining <= levelNotional) {
-          const neededQty = remaining / p;
-          totalCost += remaining;
-          totalQty += neededQty;
-          remaining = 0;
+        if (accumulatedQty + qty >= targetQty) {
+          const neededQty = targetQty - accumulatedQty;
+          accumulatedQty += neededQty;
+          accumulatedNotional += (neededQty * price);
           break;
         } else {
-          totalCost += levelNotional;
-          totalQty += q;
-          remaining -= levelNotional;
+          accumulatedQty += qty;
+          accumulatedNotional += (qty * price);
         }
       }
-      if (remaining === 0 && totalQty > 0) {
-        vwapPrice = totalCost / totalQty;
+      if (accumulatedQty > 0) {
+        vwapPrice = accumulatedNotional / accumulatedQty;
       }
     }
   }

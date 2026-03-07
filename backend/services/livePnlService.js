@@ -152,16 +152,24 @@ function broadcastLivePnl() {
     const bExitSide = binanceDirection === 1 ? "SELL" : "BUY";
     const byExitSide = bybitDirection === 1 ? "Sell" : "Buy";
 
-    // Use Top of Book for blazing fast, never-null tick PnL
+    // User rule: VWAP depth up to exactly double the active trade's quantity
+    const bTargetQty = Math.max(bQty * 2, 0.0001);
+    const byTargetQty = Math.max(byQty * 2, 0.0001);
+
+    const bSideForVwap = bExitSide;
+    const bySideForVwap = byExitSide;
+
+    const bCalc = binanceManager.getVwapPrice ? binanceManager.getVwapPrice(sym, bSideForVwap, bTargetQty) : null;
+    const byCalc = bybitManager.getVwapPrice ? bybitManager.getVwapPrice(sym, bySideForVwap, byTargetQty) : null;
+
+    // Fallback: Top of Book then Mark Price
     const bBook = binanceManager.getBestBidAsk ? binanceManager.getBestBidAsk(sym) : null;
     const byBook = bybitManager.getBestBidAsk ? bybitManager.getBestBidAsk(sym) : null;
 
-    // If exiting a LONG, we SELL at the Bid. If exiting a SHORT, we BUY at the Ask.
-    // Priority: Orderbook > Mark Price > Native PnL
-    let bCalcPrice = bBook ? (bExitSide === "SELL" ? bBook.bestBid : bBook.bestAsk) : 0;
+    let bCalcPrice = (bCalc && bCalc > 0) ? bCalc : (bBook ? (bExitSide === "SELL" ? bBook.bestBid : bBook.bestAsk) : 0);
     if (!bCalcPrice || bCalcPrice <= 0) bCalcPrice = binanceMark;
-    
-    let byCalcPrice = byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : 0;
+
+    let byCalcPrice = (byCalc && byCalc > 0) ? byCalc : (byBook ? (byExitSide === "Sell" ? byBook.bestBid : byBook.bestAsk) : 0);
     if (!byCalcPrice || byCalcPrice <= 0) byCalcPrice = bybitMark;
 
     // CROSS-EXCHANGE FALLBACK: Prevent PnL Freeze

@@ -1244,16 +1244,16 @@ function getTopOfBook(symbol) {
  * Returns VWAP of whatever depth is available even if below targetNotional (never null if any level exists).
  * @param {string} symbol
  * @param {string} side - 'Buy' | 'Sell'
- * @param {number} targetNotional - USD notional to fill
+ * @param {number} targetQty - target quantity (contracts) to fill
  * @returns {number|null} VWAP price or null if no depth
  */
-function getVwapPrice(symbol, side, targetNotional) {
+function getVwapPrice(symbol, side, targetQty) {
   const sym = String(symbol).toUpperCase();
   const isBuy = String(side).toLowerCase() === "buy";
   let vwapPrice = null;
 
   const ob = orderbooksBySymbol[sym];
-  if (ob && ob.bids && ob.asks && targetNotional > 0) {
+  if (ob && ob.bids && ob.asks && targetQty > 0) {
     const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
     const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
     const levels = isBuy ? asksArr : bidsArr;
@@ -1263,16 +1263,15 @@ function getVwapPrice(symbol, side, targetNotional) {
       for (let i = 0; i < levels.length; i++) {
         const price = levels[i][0];
         const qty = levels[i][1];
-        const levelNotional = price * qty;
-        if (accumulatedNotional + levelNotional >= targetNotional) {
-          const neededNotional = targetNotional - accumulatedNotional;
-          const neededQty = neededNotional / price;
+
+        if (accumulatedQty + qty >= targetQty) {
+          const neededQty = targetQty - accumulatedQty;
           accumulatedQty += neededQty;
-          accumulatedNotional = targetNotional;
+          accumulatedNotional += (neededQty * price);
           break;
         } else {
           accumulatedQty += qty;
-          accumulatedNotional += levelNotional;
+          accumulatedNotional += (qty * price);
         }
       }
       if (accumulatedQty > 0) {
