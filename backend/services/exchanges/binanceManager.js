@@ -640,164 +640,80 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
     try {
       const data = JSON.parse(raw.toString());
 
-      if (data && data.result === null && data.id === 1) {
-        console.log("[Binance] Successfully subscribed to !markPrice@arr@1s");
-        return;
-      }
+      // Ignore subscription confirmations
+      if (data && data.result === null && data.id != null) return;
 
+      const processMarkPrice = (sym, p, r, T, E) => {
+        const mp = parseFloat(p);
+        if (!sym || Number.isNaN(mp) || mp <= 0) return;
+        lastMarkPriceBySymbol[sym] = mp;
+        cachedFundingRates[sym] = { fundingRate: parseFloat(r) || 0, nextFundingTime: Number(T) || null };
+        
+        if (onMarkPriceUpdate && trackedSymbols.has(sym)) {
+          try { onMarkPriceUpdate(sym, mp, "binance"); } catch(e){}
+        }
+        if (onFundingUpdate && trackedSymbols.has(sym)) {
+          const now = Date.now();
+          const last = lastFundingEmitBySymbol[sym];
+          if (last == null || now - last >= FUNDING_THROTTLE_MS) {
+            lastFundingEmitBySymbol[sym] = now;
+            onFundingUpdate({ symbol: sym, fundingRate: parseFloat(r), nextFundingTime: T, markPrice: mp, eventTime: E });
+          }
+        }
+      };
+
+      // 1. Handle Raw Array (e.g. from !markPrice@arr@1s)
       if (Array.isArray(data)) {
         data.forEach((item) => {
-          if (item && item.e === "bookTicker") {
-            const sym = item.s ? String(item.s).toUpperCase() : "";
-            if (sym && item.b != null && item.a != null) {
-              const bestBid = parseFloat(item.b) || 0;
-              const bestBidQty = parseFloat(item.B) || 0;
-              const bestAsk = parseFloat(item.a) || 0;
-              const bestAskQty = parseFloat(item.A) || 0;
-              if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
-                bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
-                topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
-              }
-            }
-            return;
-          }
           if (item && item.e === "markPriceUpdate") {
-            const sym = item.s ? String(item.s).toUpperCase() : "";
-            const mp = parseFloat(item.p);
-            const fr = parseFloat(item.r);
-            const nextTime = Number.isFinite(parseInt(item.T, 10)) ? parseInt(item.T, 10) : null;
-
-            if (sym && !Number.isNaN(mp) && mp > 0) {
-              lastMarkPriceBySymbol[sym] = mp;
-              cachedFundingRates[sym] = {
-                fundingRate: Number.isFinite(fr) ? fr : 0,
-                nextFundingTime: nextTime,
-              };
-
-              if (onMarkPriceUpdate && trackedSymbols.has(sym)) {
-                try {
-                  onMarkPriceUpdate(sym, mp, "binance");
-                } catch (e) {
-                  console.error("[Binance-WS-Error]", e.message);
-                }
-              }
-
-              if (onFundingUpdate && trackedSymbols.has(sym)) {
-                const now = Date.now();
-                const last = lastFundingEmitBySymbol[sym];
-                if (last == null || now - last >= FUNDING_THROTTLE_MS) {
-                  lastFundingEmitBySymbol[sym] = now;
-                  onFundingUpdate({
-                    symbol: sym,
-                    fundingRate: fr,
-                    nextFundingTime: nextTime,
-                    markPrice: mp,
-                    eventTime: item.E,
-                  });
-                }
-              }
-            }
+             processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
+          } else if (item && item.e === "bookTicker") {
+             const sym = (item.s || "").toUpperCase();
+             if (sym && item.b != null && item.a != null) {
+               bookTickerBySymbol[sym] = { bestBid: parseFloat(item.b)||0, bestBidQty: parseFloat(item.B)||0, bestAsk: parseFloat(item.a)||0, bestAskQty: parseFloat(item.A)||0 };
+             }
           }
         });
         return;
       }
 
+      // 2. Handle Single Object (Wrapped stream OR Raw payload)
       const stream = data.stream || "";
       const payload = data.data || data;
 
-      if (payload && payload.E) {
-        logLatency("binance", stream || payload.e || "public", payload.E, { s: payload.s });
-      }
+      if (!payload) return;
 
-      if (payload && payload.e === "bookTicker") {
-        const { s, b, B, a, A } = payload;
-        const sym = s ? String(s).toUpperCase() : "";
-        if (sym && b != null && a != null) {
-          const bestBid = parseFloat(b) || 0;
-          const bestBidQty = parseFloat(B) || 0;
-          const bestAsk = parseFloat(a) || 0;
-          const bestAskQty = parseFloat(A) || 0;
-          if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
-            bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
-            topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
-          }
-        }
+      // Extract symbol robustly (Payload 's' field OR parsed from stream name)
+      const sym = (payload.s || stream.split("@")[0] || "").toUpperCase();
+
+      if (payload.e === "markPriceUpdate") {
+        processMarkPrice(sym, payload.p, payload.r, payload.T, payload.E);
         return;
       }
-      if (payload && payload.e === "markPriceUpdate") {
-        const { s, p, r, T, E } = payload;
-        const sym = s ? String(s).toUpperCase() : s;
-        if (sym && p != null) lastMarkPriceBySymbol[sym] = parseFloat(p) || 0;
-        if (onMarkPriceUpdate && sym && p != null) {
-          try {
-            onMarkPriceUpdate(sym, parseFloat(p), "binance");
-          } catch (e) {
-            console.error("[Binance-WS-Error]", e.message);
-          }
-        }
-        if (sym != null) {
-          const nextFundingTime = T != null ? Number(T) : null;
-          cachedFundingRates[sym] = {
-            fundingRate: Number.isFinite(parseFloat(r)) ? parseFloat(r) : 0,
-            nextFundingTime,
-          };
-        }
-        if (onFundingUpdate && sym) {
-          const now = Date.now();
-          const last = lastFundingEmitBySymbol[sym];
-          if (last == null || now - last >= FUNDING_THROTTLE_MS) {
-            lastFundingEmitBySymbol[sym] = now;
-            onFundingUpdate({
-              symbol: sym,
-              fundingRate: parseFloat(r),
-              nextFundingTime: T,
-              markPrice: parseFloat(p),
-              eventTime: E,
-            });
-          }
+
+      // 3. Dynamic L1 / L2 Depth Fallback Parser
+      if (sym && Array.isArray(payload.b) && Array.isArray(payload.a)) {
+        // It's an L2 Depth stream (bids/asks are arrays of arrays)
+        if (!orderbooks[sym]) orderbooks[sym] = { bids: new Map(), asks: new Map() };
+        const bidsMap = new Map();
+        payload.b.forEach(x => { if (parseFloat(x[0]) > 0) bidsMap.set(parseFloat(x[0]), parseFloat(x[1])) });
+        const asksMap = new Map();
+        payload.a.forEach(x => { if (parseFloat(x[0]) > 0) asksMap.set(parseFloat(x[0]), parseFloat(x[1])) });
+        orderbooks[sym].bids = bidsMap;
+        orderbooks[sym].asks = asksMap;
+      } 
+      else if (sym && typeof payload.b === "string" && typeof payload.a === "string") {
+        // It's an L1 BookTicker (bids/asks are string values)
+        const bestBid = parseFloat(payload.b) || 0;
+        const bestAsk = parseFloat(payload.a) || 0;
+        if (bestBid > 0 && bestAsk > 0) {
+           bookTickerBySymbol[sym] = { bestBid, bestBidQty: parseFloat(payload.B)||0, bestAsk, bestAskQty: parseFloat(payload.A)||0 };
+           topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: parseFloat(payload.B)||0, topAskPrice: bestAsk, topAskQty: parseFloat(payload.A)||0 };
         }
       }
 
-      // Dynamic L2 Depth streams (from subscribeAdditionalSymbols)
-      if (stream && stream.includes("@depth")) {
-        const ob = payload;
-        // Binance @depth streams don't contain 's' inside data, extract from stream name!
-        let sym = ob?.s; 
-        if (!sym) {
-          sym = stream.split('@')[0].toUpperCase();
-        }
-        
-        if (sym) {
-          const symbol = sym.toUpperCase();
-          if (!orderbooks[symbol]) {
-            orderbooks[symbol] = { bids: new Map(), asks: new Map() };
-          }
-          const bidsMap = new Map();
-          (ob.bids || []).forEach(b => bidsMap.set(parseFloat(b[0]), parseFloat(b[1])));
-          const asksMap = new Map();
-          (ob.asks || []).forEach(a => asksMap.set(parseFloat(a[0]), parseFloat(a[1])));
-          
-          orderbooks[symbol].bids = bidsMap;
-          orderbooks[symbol].asks = asksMap;
-        }
-      }
-
-      // Dynamic individual bookTicker streams (from subscribeAdditionalSymbols)
-      if (stream && stream.endsWith("@bookTicker") && stream !== "!bookTicker") {
-        const sym = payload?.s ? String(payload.s).toUpperCase() : "";
-        if (sym && payload.b != null && payload.a != null) {
-          const bestBid = parseFloat(payload.b) || 0;
-          const bestBidQty = parseFloat(payload.B) || 0;
-          const bestAsk = parseFloat(payload.a) || 0;
-          const bestAskQty = parseFloat(payload.A) || 0;
-          if (Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
-            bookTickerBySymbol[sym] = { bestBid, bestBidQty, bestAsk, bestAskQty };
-            topOfBookBySymbol[sym] = { topBidPrice: bestBid, topBidQty: bestBidQty, topAskPrice: bestAsk, topAskQty: bestAskQty };
-          }
-        }
-      }
     } catch (e) {
-      console.error("[Binance-WS-Error] Failed to parse message:", e.message);
+      // silently ignore parse errors
     }
   });
 
