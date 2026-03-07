@@ -1278,10 +1278,25 @@ function getVwapPrice(symbol, side, targetQty) {
       if (accumulatedQty > 0) {
         vwapPrice = accumulatedNotional / accumulatedQty;
       }
+
+      // Only fall back to L1 if the orderbook is COMPLETELY empty
+      if (!vwapPrice || vwapPrice <= 0 || Number.isNaN(vwapPrice)) {
+        const state = tickerStateBySymbol[sym];
+        if (state) {
+          vwapPrice = isBuy ? parseFloat(state.ask1Price) : parseFloat(state.bid1Price);
+        }
+      }
+
+      // Final fallback to Mark Price
+      if (!vwapPrice || vwapPrice <= 0 || Number.isNaN(vwapPrice)) {
+        vwapPrice = lastMarkPriceBySymbol[sym] || null;
+      }
+
+      return vwapPrice && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
     }
   }
 
-  // L1 Fallback if VWAP is null or zero
+  // L1 Fallback if VWAP is null or zero (no orderbook or no levels)
   if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
     const state = tickerStateBySymbol[sym];
     if (state) {

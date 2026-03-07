@@ -677,11 +677,13 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
           if (item && item.e === "markPriceUpdate") processMarkPrice((item.s || "").toUpperCase(), item.p, item.r, item.T, item.E);
         });
       } else if (streamName && streamName.includes("@bookTicker")) {
-        const sym = String(payload.s || "").toUpperCase();
-        if (sym) {
+        // Binance Futures bookTicker does not wrap inside "data" sometimes
+        const bookTickerData = payload.s ? payload : (payload.data || {});
+        if (bookTickerData && bookTickerData.s) {
+          const sym = String(bookTickerData.s).toUpperCase();
           bookTickerBySymbol[sym] = {
-            bestBid: parseFloat(payload.b),
-            bestAsk: parseFloat(payload.a)
+            bestBid: parseFloat(bookTickerData.b),
+            bestAsk: parseFloat(bookTickerData.a)
           };
         }
       } else if (streamName && streamName.includes("@depth20")) {
@@ -1710,10 +1712,24 @@ function getVwapPrice(symbol, side, targetQty) {
       if (accumulatedQty > 0) {
         vwapPrice = accumulatedNotional / accumulatedQty;
       }
+
+      // Only fall back to L1 if the orderbook is COMPLETELY empty
+      if (!vwapPrice || vwapPrice <= 0 || Number.isNaN(vwapPrice)) {
+        if (sym && bookTickerBySymbol[sym]) {
+          vwapPrice = isBuy ? bookTickerBySymbol[sym].bestAsk : bookTickerBySymbol[sym].bestBid;
+        }
+      }
+
+      // Final fallback to Mark Price
+      if (!vwapPrice || vwapPrice <= 0 || Number.isNaN(vwapPrice)) {
+        vwapPrice = lastMarkPriceBySymbol[sym] || null;
+      }
+
+      return vwapPrice && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
     }
   }
 
-  // L1 Fallback if VWAP is null or zero
+  // L1 Fallback if VWAP is null or zero (no orderbook or no levels)
   if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
     const l1 = bookTickerBySymbol[sym];
     if (l1) {
