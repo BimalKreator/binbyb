@@ -623,16 +623,34 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
 
   ws.on("open", () => {
     publicReconnectAttempts = 0;
-    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and bookTicker...");
-    ws.send(JSON.stringify({
-      method: "SUBSCRIBE",
-      params: ["!markPrice@arr@1s", "!bookTicker"],
-      id: 1,
-    }));
-    const symList = symbols || [];
-    for (let i = 0; i < symList.length; i += BINANCE_DEPTH_CHUNK_SIZE) {
-      const chunk = symList.slice(i, i + BINANCE_DEPTH_CHUNK_SIZE);
-      connectBinanceDepthChunk(chunk);
+    console.log("[Binance] Public WebSocket connected. Subscribing to markPrice and L2 depth...");
+    
+    const streamNames = ["!markPrice@arr@1s", "!bookTicker"];
+    trackedSymbols.forEach((sym) => {
+      const s = String(sym).toLowerCase();
+      streamNames.push(`${s}@markPrice@1s`);
+      streamNames.push(`${s}@depth20@100ms`); // CRITICAL FIX: Subscribe to L2 Depth
+    });
+
+    // Flush any dynamically queued symbols that failed to subscribe during boot
+    if (global.pendingBinanceSubs && global.pendingBinanceSubs.length > 0) {
+       global.pendingBinanceSubs.forEach(sym => {
+          const s = String(sym).toLowerCase();
+          streamNames.push(`${s}@markPrice@1s`);
+          streamNames.push(`${s}@depth20@100ms`);
+       });
+       global.pendingBinanceSubs = [];
+    }
+
+    // Binance allows 1024 streams per connection. Chunking by 200 is extremely safe.
+    const chunkSize = 200; 
+    for (let i = 0; i < streamNames.length; i += chunkSize) {
+      const chunk = streamNames.slice(i, i + chunkSize);
+      ws.send(JSON.stringify({
+        method: "SUBSCRIBE",
+        params: chunk,
+        id: Date.now() + i
+      }));
     }
   });
 
@@ -1915,20 +1933,26 @@ module.exports = {
     if (newSymbols.length === 0) return;
 
     newSymbols.forEach(sym => global.binanceL2Subs.add(sym));
-    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to L2 depth streams`);
 
+    // CRITICAL FIX: If WS is not fully open yet, queue it for the ws.on('open') event
+    if (typeof publicWs === 'undefined' || !publicWs || publicWs.readyState !== 1) {
+      console.log(`[Binance] WS not ready, queuing ${newSymbols.join(", ")}`);
+      if (!global.pendingBinanceSubs) global.pendingBinanceSubs = [];
+      global.pendingBinanceSubs.push(...newSymbols);
+      return;
+    }
+
+    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to streams`);
     const params = newSymbols.flatMap(sym => [
       `${String(sym).toLowerCase()}@depth20@100ms`,
-      `${String(sym).toLowerCase()}@bookTicker`
+      `${String(sym).toLowerCase()}@markPrice@1s`
     ]);
-    // Use publicWs which allows multiplexing
-    if (typeof publicWs !== 'undefined' && publicWs && publicWs.readyState === 1) { 
-      publicWs.send(JSON.stringify({
-        method: "SUBSCRIBE",
-        params: params,
-        id: Date.now()
-      }));
-    }
+    
+    publicWs.send(JSON.stringify({
+      method: "SUBSCRIBE",
+      params: params,
+      id: Date.now()
+    }));
   },
   placeIOCLimitOrder,
   placeWSOrder,

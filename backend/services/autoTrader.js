@@ -437,6 +437,30 @@ async function runAutoEntry() {
         break;
       }
 
+      // PROBE CHUNK SAFETY CHECK (Only run on the 1st sweep iteration)
+      if (maxSweeps === 5) {
+        if (binanceTotalFilled === 0 || bybitTotalFilled === 0) {
+          console.log(`[AutoTrader-Failsafe] Probe chunk rejected for ${top.symbol}. Binance Filled: ${binanceTotalFilled}, Bybit Filled: ${bybitTotalFilled}. Aborting remaining sweeps.`);
+          
+          // Auto-Ban the symbol in the database
+          try {
+            const mongoose = require('mongoose');
+            const collection = mongoose.connection.db.collection('bans');
+            await collection.updateOne(
+              { symbol: top.symbol },
+              { $set: { symbol: top.symbol, reason: 'Probe Chunk Rejected / API Error', createdAt: new Date() } },
+              { upsert: true }
+            );
+            console.log(`[AutoTrader-Failsafe] Automatically added ${top.symbol} to Ban List to prevent future failures.`);
+          } catch (banErr) {
+            console.error(`[AutoTrader-Failsafe] Failed to auto-ban ${top.symbol}:`, banErr);
+          }
+
+          criticalExchangeError = true;
+          break; 
+        }
+      }
+
       maxSweeps--;
       if (maxSweeps > 0) await new Promise((resolve) => setTimeout(resolve, 150));
     }
