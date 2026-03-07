@@ -186,8 +186,8 @@ export default function TradesPage() {
               <option value={30}>30 days</option>
             </select>
           </div>
-          <div className="flex-1 min-h-[200px] rounded-lg bg-slate-900 border border-slate-700 overflow-hidden flex flex-col">
-            <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 max-h-[50vh] space-y-0.5">
+          <div className="flex-1 min-h-[200px] rounded-lg bg-slate-900 border border-slate-700 overflow-hidden flex flex-col select-text">
+            <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 max-h-[50vh] space-y-0.5 select-text whitespace-pre-wrap">
               {loadingLogs ? (
                 <span className="text-slate-500">Loading logs…</span>
               ) : filteredLogs.length === 0 ? (
@@ -214,12 +214,12 @@ export default function TradesPage() {
                         ) : (
                           <span className="shrink-0 w-3" />
                         )}
-                        <span className="flex-1 whitespace-pre-wrap break-words">
+                        <span className="flex-1 whitespace-pre-wrap break-words select-text">
                           {new Date(l.ts).toISOString()} [{type}] {l.symbol ? `[${l.symbol}] ` : ""}{l.message}
                         </span>
                       </button>
                       {hasDetails && isExpanded && (
-                        <pre className="ml-5 mt-1 p-2 rounded bg-slate-800/80 text-slate-400 text-[11px] overflow-x-auto whitespace-pre-wrap break-words border border-slate-700">
+                        <pre className="ml-5 mt-1 p-2 rounded bg-slate-800/80 text-slate-400 text-[11px] overflow-x-auto whitespace-pre-wrap break-words border border-slate-700 select-text">
                           {JSON.stringify(l.details, null, 2)}
                         </pre>
                       )}

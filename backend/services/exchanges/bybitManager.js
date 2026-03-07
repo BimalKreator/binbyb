@@ -1275,24 +1275,26 @@ function getVwapPrice(symbol, side, targetNotional) {
           accumulatedNotional += levelNotional;
         }
       }
-      if (accumulatedQty > 0) vwapPrice = accumulatedNotional / accumulatedQty;
+      if (accumulatedQty > 0) {
+        vwapPrice = accumulatedNotional / accumulatedQty;
+      }
     }
   }
 
   // L1 Fallback if VWAP is null or zero
   if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
     const state = tickerStateBySymbol[sym];
-    if (state && parseFloat(state.bid1Price) > 0 && parseFloat(state.ask1Price) > 0) {
+    if (state) {
       vwapPrice = isBuy ? parseFloat(state.ask1Price) : parseFloat(state.bid1Price);
     }
   }
 
-  // Final fallback to mark price just to keep UI ticking if orderbook is completely dead
+  // Final fallback to mark price just to keep UI ticking if orderbook is dead
   if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
     vwapPrice = lastMarkPriceBySymbol[sym] || null;
   }
 
-  return vwapPrice != null && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
+  return vwapPrice && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
 }
 
 const SWEEP_SLEEP_MS = 20;
