@@ -64,6 +64,9 @@ router.post("/arbitrage", async (req, res) => {
     const bybitSideApi = bybitSideNorm === "buy" ? "Buy" : "Sell";
     const levInt = Math.max(1, Math.min(125, Math.floor(Number(leverage)) || 1));
 
+    const settings = await Setting.findOne().lean();
+    const slippagePct = Number.isFinite(Number(settings?.entrySlippagePct)) ? Number(settings.entrySlippagePct) : 1.0;
+
     if (!orderCircuitBreaker.canPlaceOrder()) {
       return res.status(503).json({
         success: false,
@@ -102,15 +105,16 @@ router.post("/arbitrage", async (req, res) => {
         if (bybitNeeded > 0) {
           sweepPromises.push(
             bybitManager
-              .executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, bybitNeeded, levInt, 1)
+              .executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, bybitNeeded, levInt, 1, { slippagePct })
               .then((res) => ({ exchange: "bybit", res }))
               .catch((err) => ({ exchange: "bybit", res: { error: err?.message || "Bybit sweep failed", totalFilled: 0 } }))
           );
         }
         if (binanceNeeded > 0) {
+          const bPositionSide = binanceSideNorm.toUpperCase() === "BUY" ? "LONG" : "SHORT";
           sweepPromises.push(
             binanceManager
-              .executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, binanceNeeded, levInt, 5)
+              .executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, binanceNeeded, levInt, 5, { positionSide: bPositionSide, slippagePct })
               .then((res) => ({ exchange: "binance", res }))
               .catch((err) => ({ exchange: "binance", res: { error: err?.message || "Binance sweep failed", totalFilled: 0 } }))
           );
@@ -157,7 +161,8 @@ router.post("/arbitrage", async (req, res) => {
             let catchUpQty = bybitTotalFilled - binanceTotalFilled;
             if (catchUpQty * targetPrice < 5) catchUpQty = Math.ceil(5 / targetPrice);
             try {
-              const res = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, catchUpQty, levInt, 5);
+              const bPositionSide = binanceSideNorm.toUpperCase() === "BUY" ? "LONG" : "SHORT";
+              const res = await binanceManager.executeLiquiditySweep(keys.binance, symbol, binanceSideNorm, catchUpQty, levInt, 5, { positionSide: bPositionSide, slippagePct });
               if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
               binanceTotalFilled += res?.totalFilled || 0;
             } catch (e) {
@@ -166,7 +171,7 @@ router.post("/arbitrage", async (req, res) => {
           } else if (binanceTotalFilled > bybitTotalFilled) {
             const catchUpQty = binanceTotalFilled - bybitTotalFilled;
             try {
-              const res = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, catchUpQty, levInt, 1);
+              const res = await bybitManager.executeLiquiditySweep(keys.bybit, symbol, bybitSideApi, catchUpQty, levInt, 1, { slippagePct });
               if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
               bybitTotalFilled += res?.totalFilled || 0;
             } catch (e) {
