@@ -413,8 +413,8 @@ async function runAutoEntry() {
       isExit: false
     });
 
-    let bybitTotalFilled = execResult.bybitTotalFilled;
-    let binanceTotalFilled = execResult.binanceTotalFilled;
+    bybitTotalFilled = execResult.bybitTotalFilled;
+    binanceTotalFilled = execResult.binanceTotalFilled;
 
     if (!execResult.success) {
       const errMsg = `CRITICAL: Probe rejected (${execResult.reason}). Aborted to prevent unhedged exposure.`;
