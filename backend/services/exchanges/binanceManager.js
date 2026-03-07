@@ -1713,6 +1713,7 @@ function getVwapPrice(symbol, side, targetQty) {
           accumulatedNotional += (qty * price);
         }
       }
+      // CRITICAL: Ensure division by zero doesn't happen; use whatever quantity we could gather
       if (accumulatedQty > 0) {
         vwapPrice = accumulatedNotional / accumulatedQty;
       }
@@ -1928,11 +1929,15 @@ module.exports = {
     console.log(`[Binance] Restoring Active L2 Sub for PnL VWAP: ${newSymbols.join(", ")}`);
     const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
 
-    publicWs.send(JSON.stringify({
-      method: "SUBSCRIBE",
-      params: params,
-      id: Date.now() + Math.floor(Math.random() * 100)
-    }));
+    try {
+      publicWs.send(JSON.stringify({
+        method: "SUBSCRIBE",
+        params: params,
+        id: Date.now() + Math.floor(Math.random() * 100)
+      }));
+    } catch (e) {
+      console.error("[Binance] Failed to send L2 sub:", e.message);
+    }
   },
   placeIOCLimitOrder,
   placeWSOrder,

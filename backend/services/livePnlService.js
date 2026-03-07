@@ -226,7 +226,7 @@ function init(socketServer, binance, bybit) {
   bybitManager.setOnMarkPriceUpdate(tickHandler);
 
   positionCacheIntervalId = setInterval(refreshPositionCache, POSITION_CACHE_INTERVAL_MS);
-  pnlIntervalId = setInterval(broadcastLivePnl, 300);
+  pnlIntervalId = setInterval(broadcastLivePnl, 250);
 }
 
 function stop() {

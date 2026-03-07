@@ -1274,6 +1274,7 @@ function getVwapPrice(symbol, side, targetQty) {
           accumulatedNotional += (qty * price);
         }
       }
+      // CRITICAL: Ensure division by zero doesn't happen; use whatever quantity we could gather
       if (accumulatedQty > 0) {
         vwapPrice = accumulatedNotional / accumulatedQty;
       }
