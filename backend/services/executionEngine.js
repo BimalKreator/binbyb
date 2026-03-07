@@ -67,11 +67,18 @@ async function executeSequentialSmartArbitrage(params) {
   }
   binanceTotalFilled += binProbeFilled;
 
-  // 3. L1 DYNAMIC CHUNKING LOOP WITH DUST-FOLDING LOCK-STEP
-  let remainingQty = targetQty - Math.max(bybitTotalFilled, binanceTotalFilled);
+  // 3. L1 DYNAMIC CHUNKING LOOP WITH STRICT CAPS
   let emptyLoops = 0;
 
-  while (remainingQty >= stepSize && emptyLoops < 10) {
+  while (emptyLoops < 10) {
+    // STRICT CAP: If either exchange hits the target, BREAK the loop entirely.
+    if (bybitTotalFilled >= targetQty || binanceTotalFilled >= targetQty) {
+      break;
+    }
+
+    let remainingQty = targetQty - Math.max(bybitTotalFilled, binanceTotalFilled);
+    if (remainingQty < stepSize) break;
+
     // Get next base chunk size from Bybit's L1 book
     const bybBook = bybitManager.getTopOfBook(symbol);
     if (!bybBook) { emptyLoops++; await new Promise(r => setTimeout(r, 100)); continue; }
@@ -89,6 +96,11 @@ async function executeSequentialSmartArbitrage(params) {
       bybOrderQty += (binanceTotalFilled - bybitTotalFilled);
     }
 
+    // Prevent over-ordering past the global target
+    if (bybitTotalFilled + bybOrderQty > targetQty) {
+      bybOrderQty = targetQty - bybitTotalFilled;
+    }
+
     // 1. Execute Bybit first
     const bybFilled = await executeChunkWithRetries('bybit', bybitSide, bybOrderQty);
 
@@ -96,15 +108,12 @@ async function executeSequentialSmartArbitrage(params) {
       bybitTotalFilled += bybFilled;
 
       // 2. FOLDING LOGIC: Binance must now match Bybit's NEW total.
-      // This automatically adds any previous Binance deficit to the new chunk!
       const binanceNeededNow = bybitTotalFilled - binanceTotalFilled;
 
       if (binanceNeededNow >= stepSize) {
         const binFilled = await executeChunkWithRetries('binance', binanceSide, binanceNeededNow);
         binanceTotalFilled += binFilled;
       }
-
-      remainingQty = targetQty - Math.max(bybitTotalFilled, binanceTotalFilled);
       emptyLoops = 0;
     } else {
       emptyLoops++;

@@ -752,12 +752,12 @@ async function runMonitor() {
         // Only fix if the difference is worth > $6 to avoid API spam on dust
         if (notionalDiff >= 6.0) {
           if (!mismatchFirstSeen[symbol]) {
-            console.log(`[TradeMonitor] Mismatch detected on ${symbol}: Binance ${bQty}, Bybit ${byQty}. Starting 60s timer.`);
+            console.log(`[TradeMonitor] Mismatch detected on ${symbol}: Binance ${bQty}, Bybit ${byQty}. Starting 5s timer.`);
             mismatchFirstSeen[symbol] = now;
           } else {
             const elapsed = now - mismatchFirstSeen[symbol];
-            if (elapsed > 60000) {
-              console.log(`[TradeMonitor] 60s elapsed for mismatch on ${symbol}. Attempting fix.`);
+            if (elapsed > 5000) {
+              console.log(`[TradeMonitor] 5s elapsed for mismatch on ${symbol}. Attempting fix.`);
 
               const lowExchange = bQty < byQty ? "binance" : "bybit";
               const highExchange = bQty > byQty ? "binance" : "bybit";
