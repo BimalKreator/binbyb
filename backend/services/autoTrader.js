@@ -429,9 +429,10 @@ async function runAutoEntry() {
         );
       }
       if (binanceNeeded > 0) {
+        const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
         sweepPromises.push(
           binanceManager
-            .executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceNeeded, levInt, 5)
+            .executeLiquiditySweep(keys.binance, top.symbol, binanceSide, binanceNeeded, levInt, 5, { positionSide: bPositionSide })
             .then((res) => ({ exchange: "binance", res }))
             .catch((err) => ({ exchange: "binance", res: { error: err?.message || "Binance sweep failed", totalFilled: 0 } }))
         );
@@ -517,7 +518,8 @@ async function runAutoEntry() {
           let catchUpQty = bybitTotalFilled - binanceTotalFilled;
           if (catchUpQty * targetPrice < 5) catchUpQty = Math.ceil(5 / targetPrice);
           try {
-            const res = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, catchUpQty, levInt, 5);
+            const bPositionSide = binanceSide.toUpperCase() === "BUY" ? "LONG" : "SHORT";
+            const res = await binanceManager.executeLiquiditySweep(keys.binance, top.symbol, binanceSide, catchUpQty, levInt, 5, { positionSide: bPositionSide });
             if (res?.totalFilled > 0) orderCircuitBreaker.recordOrderPlaced();
             binanceTotalFilled += res?.totalFilled || 0;
           } catch (e) {
