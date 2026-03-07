@@ -1777,27 +1777,28 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
   const stepSize = filters?.stepSize ?? null;
   let totalFilled = 0;
 
+  const defaultSlippagePct = 0.1;
   while (totalQtyRemaining > 0 && maxIterations > 0) {
     const topOfBook = getTopOfBook(sym);
     let targetPrice;
     let availableQty;
+    const slippagePct = Number.isFinite(opts.slippagePct) ? Math.max(0, Math.min(100, opts.slippagePct)) : defaultSlippagePct;
 
     if (topOfBook && Number.isFinite(topOfBook.topBidPrice) && Number.isFinite(topOfBook.topAskPrice)) {
       const isBuy = sideNorm === "BUY";
       targetPrice = isBuy ? topOfBook.topAskPrice : topOfBook.topBidPrice;
       availableQty = isBuy ? (topOfBook.topAskQty ?? 0) : (topOfBook.topBidQty ?? 0);
     } else {
-      targetPrice = getOrderbookPrice(sym, sideNorm);
+      targetPrice = getOrderbookPrice(sym, sideNorm, slippagePct);
       if (targetPrice == null || !Number.isFinite(targetPrice)) break;
       availableQty = null;
     }
 
-    // 0.1% buffer to prevent IOC minimum notional ping-pong expiration
     let bufferedPrice = targetPrice;
     if (sideNorm.toUpperCase() === "BUY") {
-      bufferedPrice = targetPrice * 1.001;
+      bufferedPrice = targetPrice * (1 + slippagePct / 100);
     } else {
-      bufferedPrice = targetPrice * 0.999;
+      bufferedPrice = targetPrice * (1 - slippagePct / 100);
     }
     if (filters?.tickSize) {
       bufferedPrice = parseFloat(formatPriceToTickSize(bufferedPrice, filters.tickSize)) || bufferedPrice;

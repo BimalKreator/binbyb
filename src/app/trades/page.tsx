@@ -204,24 +204,25 @@ export default function TradesPage() {
                   const isExpanded = expandedLogId === rowId;
                   return (
                     <div key={rowId} className={lineClass}>
-                      <button
-                        type="button"
-                        onClick={() => setExpandedLogId(isExpanded ? null : rowId)}
-                        className="w-full text-left flex items-start gap-2 hover:bg-slate-800/50 rounded px-1 -mx-1"
+                      <div
+                        onClick={() => hasDetails && setExpandedLogId(isExpanded ? null : rowId)}
+                        className={`w-full text-left flex items-start gap-2 rounded px-1 -mx-1 select-text ${hasDetails ? "cursor-pointer hover:bg-slate-800/50" : ""}`}
                       >
                         {hasDetails ? (
-                          <span className="shrink-0 text-slate-500">{isExpanded ? "▼" : "▶"}</span>
+                          <span className="shrink-0 text-slate-500 cursor-pointer mt-0.5">{isExpanded ? "▼" : "▶"}</span>
                         ) : (
                           <span className="shrink-0 w-3" />
                         )}
-                        <span className="flex-1 whitespace-pre-wrap break-words select-text">
+                        <span className="flex-1 whitespace-pre-wrap break-words cursor-text select-text">
                           {new Date(l.ts).toISOString()} [{type}] {l.symbol ? `[${l.symbol}] ` : ""}{l.message}
                         </span>
-                      </button>
+                      </div>
                       {hasDetails && isExpanded && (
-                        <pre className="ml-5 mt-1 p-2 rounded bg-slate-800/80 text-slate-400 text-[11px] overflow-x-auto whitespace-pre-wrap break-words border border-slate-700 select-text">
-                          {JSON.stringify(l.details, null, 2)}
-                        </pre>
+                        <div className="ml-5 mt-1 p-2 rounded bg-slate-800/80 border border-slate-700">
+                          <pre className="text-slate-400 text-[11px] overflow-x-auto whitespace-pre-wrap break-words select-text cursor-text">
+                            {JSON.stringify(l.details, null, 2)}
+                          </pre>
+                        </div>
                       )}
                     </div>
                   );

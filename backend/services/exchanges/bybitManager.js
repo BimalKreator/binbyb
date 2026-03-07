@@ -1355,23 +1355,25 @@ async function executeLiquiditySweep(credentials, symbol, side, totalQtyRemainin
   const stepSize = filters?.stepSize ?? null;
   let totalFilled = 0;
 
+  const defaultSlippagePct = 0.2;
   while (totalQtyRemaining > 0 && maxIterations > 0) {
     const topOfBook = getTopOfBook(sym);
     let targetPrice;
     let availableQty;
+    const slippagePct = Number.isFinite(opts.slippagePct) ? Math.max(0, Math.min(100, opts.slippagePct)) : defaultSlippagePct;
 
     if (topOfBook && Number.isFinite(topOfBook.topBidPrice) && Number.isFinite(topOfBook.topAskPrice)) {
       const isBuy = sideNorm === "Buy";
       targetPrice = isBuy ? topOfBook.topAskPrice : topOfBook.topBidPrice;
       availableQty = isBuy ? topOfBook.topAskQty : topOfBook.topBidQty;
     } else {
-      targetPrice = getOrderbookPrice(sym, sideNorm);
+      targetPrice = getOrderbookPrice(sym, sideNorm, slippagePct);
       if (targetPrice == null || !Number.isFinite(targetPrice)) break;
       availableQty = null;
     }
 
     const isBuy = sideNorm === "Buy";
-    let bufferedPrice = isBuy ? targetPrice * 1.002 : targetPrice * 0.998; // 0.2% buffer for IOC (strict cancellation)
+    let bufferedPrice = isBuy ? targetPrice * (1 + slippagePct / 100) : targetPrice * (1 - slippagePct / 100);
     if (filters?.tickSize) {
       bufferedPrice = parseFloat(formatPriceToTickSize(bufferedPrice, filters.tickSize)) || bufferedPrice;
     }

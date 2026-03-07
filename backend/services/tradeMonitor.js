@@ -33,7 +33,7 @@ const ORPHAN_GRACE_PERIOD_MS = 10000; // 10 seconds: wait after first detecting 
 const FUNDING_WINDOW_MS = 600000; // 10 minutes before next funding
 const ORPHAN_WAIT_MS = 10000; // 10 seconds before closing orphan (for timer-based orphan path)
 const ORPHAN_CLOSE_COOLDOWN_MS = 30000; // 30 seconds after a failed close before retry (no spam)
-const FAILED_CLOSE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes: strictly skip symbol after any close API error (avoid IP ban)
+const FAILED_CLOSE_COOLDOWN_MS = 10000; // 10 seconds (allows rapid TP retry)
 
 /** Orphan tracking: symbol -> { exchange: 'binance'|'bybit', firstSeen: number } */
 const orphanFirstSeen = {};
@@ -188,6 +188,10 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
   }
   const sym = toUpperSymbol(symbol);
   closingSymbols.add(sym);
+
+  const settings = await Setting.findOne().lean();
+  const slippagePct = Number.isFinite(Number(settings?.entrySlippagePct)) ? Number(settings.entrySlippagePct) : 0.5;
+
   try {
   const binanceQty = Math.abs(Number(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
   const bybitQty = Math.abs(Number(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
@@ -235,7 +239,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
             binanceQty,
             lev,
             exitSweepIterations,
-            { reduceOnly: true, positionSide: binancePositionSideForClose }
+            { reduceOnly: true, positionSide: binancePositionSideForClose, slippagePct }
           )
           .then((res) => {
             const filled = res?.totalFilled ?? 0;
@@ -246,7 +250,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
   const bybitPromise =
     bybitQty > 0
       ? bybitManager
-          .executeLiquiditySweep(credentials.bybit, sym, bybitCloseSide, bybitQty, lev, exitSweepIterations, { reduceOnly: true })
+          .executeLiquiditySweep(credentials.bybit, sym, bybitCloseSide, bybitQty, lev, exitSweepIterations, { reduceOnly: true, slippagePct })
           .then((res) => {
             const filled = res?.totalFilled ?? 0;
             if (filled > 0) orderCircuitBreaker.recordOrderPlaced();
@@ -260,7 +264,7 @@ async function closePair(credentials, symbol, binancePos, bybitPos, reason, exit
 
   if (binanceResult.status === "rejected" || bybitResult.status === "rejected") {
     failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
-    console.log(`[Phantom Protection] Failed to close ${sym}. Locked for 10 mins. Forcing REST Sync...`);
+    console.log(`[Phantom Protection] Failed to close ${sym}. Locked for 10s. Forcing REST Sync...`);
     binanceManager.hydratePositionsFromRest(credentials.binance).catch(() => {});
     bybitManager.hydratePositionsFromRest(credentials.bybit).catch(() => {});
   }
@@ -428,6 +432,9 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
   const lev = Math.max(1, Number(pos?.leverage ?? 1));
   const exitSweepIterations = 30;
 
+  const settings = await Setting.findOne().lean();
+  const slippagePct = Number.isFinite(Number(settings?.entrySlippagePct)) ? Number(settings.entrySlippagePct) : 0.5;
+
   try {
     let res;
     if (exchange === "binance") {
@@ -438,7 +445,7 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
         qty,
         lev,
         exitSweepIterations,
-        { reduceOnly: true, positionSide: binancePositionSide }
+        { reduceOnly: true, positionSide: binancePositionSide, slippagePct }
       );
     } else {
       res = await bybitManager.executeLiquiditySweep(
@@ -448,14 +455,14 @@ async function closeOrphanPosition(credentials, exchange, symbol, pos, exitReaso
         qty,
         lev,
         exitSweepIterations,
-        { reduceOnly: true }
+        { reduceOnly: true, slippagePct }
       );
     }
     if ((res?.totalFilled ?? 0) > 0) orderCircuitBreaker.recordOrderPlaced();
     if (res?.error) {
       const msg = String(res.error);
       if (msg.includes("ReduceOnly") || msg.includes("position is zero") || msg.includes("notional") || msg.includes("minimum order value")) {
-        console.log(`[Phantom Position Detected] ${sym} on ${exchange}. Locking for 10 mins + REST Sync...`);
+        console.log(`[Phantom Position Detected] ${sym} on ${exchange}. Locking for 10s + REST Sync...`);
         failedClosesUntil[sym] = Date.now() + FAILED_CLOSE_COOLDOWN_MS;
         if (exchange === "binance") {
           binanceManager.hydratePositionsFromRest(credentials?.binance).catch(() => {});
