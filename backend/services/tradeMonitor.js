@@ -627,6 +627,10 @@ async function runMonitor() {
   const rankedTokens = snapshot.rankedTokens || [];
 
   for (const symbol of pairedSymbols) {
+    // PREVENT RACE CONDITION: Skip monitoring completely if AutoTrader is currently building this position
+    if (global.activeEnteringSymbols && global.activeEnteringSymbols.has(symbol)) {
+      continue;
+    }
     if (now < (failedClosesUntil[symbol] || 0)) continue;
     if (closingSymbols.has(symbol)) continue;
     const binancePos = binanceBySymbol[symbol];
@@ -746,122 +750,124 @@ async function runMonitor() {
       }
     }
 
-    // Mismatch auto-fix: equalize quantities after 1 minute of persistent mismatch (reduce on high side only)
-    const mismatchFirstSeen = (global.mismatchFirstSeen = global.mismatchFirstSeen || {});
+    // ---------------------------------------------------------
+    // MISMATCH DETECTION & FIXING (STRICTLY GUARDED)
+    // ---------------------------------------------------------
+    // CRITICAL FIX: NEVER attempt to fix a mismatch if the pair is already in the process of closing (e.g., via TP/SL)
+    if (!closingSymbols.has(symbol)) {
+      const mismatchFirstSeen = (global.mismatchFirstSeen = global.mismatchFirstSeen || {});
 
-    const bQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
-    const byQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
-    const qtyDiff = Math.abs(bQty - byQty);
-    const markPrice =
-      Number(binancePos?.markPrice ?? bybitPos?.markPrice ?? 0) ||
-      binanceManager.getMarkPrice(symbol) ||
-      bybitManager.getMarkPrice(symbol) ||
-      0;
-    const notionalDiff = qtyDiff * markPrice;
-    const useFilter = settings?.mismatchMinNotionalFilter ?? true;
-    const isMismatchSignificant = useFilter ? notionalDiff > 6 : qtyDiff > 0.0001;
+      const bQty = Math.abs(parseFloat(binancePos?.positionAmt ?? binancePos?.size ?? 0) || 0);
+      const byQty = Math.abs(parseFloat(bybitPos?.positionAmt ?? bybitPos?.size ?? 0) || 0);
+      const qtyDiff = Math.abs(bQty - byQty);
 
-    if (qtyDiff > 0.0001 && !isMismatchSignificant) {
-      console.log(
-        `[TradeMonitor] Mismatch on ${symbol} skipped: Notional $${notionalDiff.toFixed(2)} is below $6 safety limit.`
-      );
-    }
+      const bMark = Number(binancePos?.markPrice ?? 0) || binanceManager.getMarkPrice(symbol) || 0;
+      const yMark = Number(bybitPos?.markPrice ?? 0) || bybitManager.getMarkPrice(symbol) || 0;
+      const markPrice = bMark || yMark || 0;
 
-    if (isMismatchSignificant) {
-      if (!mismatchFirstSeen[symbol]) {
-        mismatchFirstSeen[symbol] = now;
-        console.log(
-          `[TradeMonitor] Mismatch detected on ${symbol}: Binance ${bQty}, Bybit ${byQty}. Starting 60s timer.`
-        );
-      } else if (now - mismatchFirstSeen[symbol] > 60000) {
-        console.log(`[TradeMonitor] 60s elapsed for mismatch on ${symbol}. Attempting fix.`);
+      // Use dynamic threshold: 1% of the larger position or absolute minimum size (e.g., 5)
+      const mismatchThreshold = Math.max(5, Math.max(bQty, byQty) * 0.01);
 
-        const lowExchange = bQty < byQty ? "binance" : "bybit";
-        const highExchange = bQty > byQty ? "binance" : "bybit";
-        const lowPos = lowExchange === "binance" ? binancePos : bybitPos;
-        const highPos = highExchange === "binance" ? binancePos : bybitPos;
+      if (qtyDiff > mismatchThreshold && bMark > 0 && yMark > 0) {
+        const notionalDiff = qtyDiff * markPrice;
 
-        const lowLeverage = Math.max(1, Number(lowPos?.leverage ?? lowPos?.leverageId ?? 1));
-        let requiredMargin = (qtyDiff * markPrice) / lowLeverage;
-        requiredMargin *= 1.1;
-
-        let availableBalance = 0;
-        try {
-          if (lowExchange === "binance") {
-            const bal = binanceManager.getBalance(keys.binance);
-            availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? 0) || 0;
+        // Only fix if the difference is worth > $6 to avoid API spam on dust
+        if (notionalDiff >= 6.0) {
+          if (!mismatchFirstSeen[symbol]) {
+            console.log(`[TradeMonitor] Mismatch detected on ${symbol}: Binance ${bQty}, Bybit ${byQty}. Starting 60s timer.`);
+            mismatchFirstSeen[symbol] = now;
           } else {
-            const bal = bybitManager.getBalance();
-            availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? bal?.equity ?? 0) || 0;
-          }
-        } catch (e) {
-          console.warn("[TradeMonitor] Mismatch fix: balance fetch failed", symbol, e?.message ?? e);
-        }
+            const elapsed = now - mismatchFirstSeen[symbol];
+            if (elapsed > 60000) {
+              console.log(`[TradeMonitor] 60s elapsed for mismatch on ${symbol}. Attempting fix.`);
 
-        const doReduce = async (reason) => {
-          const posToReduce = { ...highPos, positionAmt: qtyDiff, size: qtyDiff };
-          await closeOrphanPosition(keys, highExchange, symbol, posToReduce);
-          console.log(`[TradeMonitor] Mismatch Fix: Reducing ${highExchange} by ${qtyDiff} (${reason})`);
-        };
+              const lowExchange = bQty < byQty ? "binance" : "bybit";
+              const highExchange = bQty > byQty ? "binance" : "bybit";
+              const lowPos = lowExchange === "binance" ? binancePos : bybitPos;
+              const highPos = highExchange === "binance" ? binancePos : bybitPos;
 
-        if (!orderCircuitBreaker.canPlaceOrder()) {
-          // skip this run
-        } else if (availableBalance > requiredMargin) {
-          const sym = String(symbol).toUpperCase();
-          const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
-          
-          // FIX: Reliably check direction using the cached 'side' property since Bybit sizes are absolute
-          const isLong = String(lowPos?.side || "").toUpperCase() === "BUY";
-          const addSide = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
-          
-          const addPrice =
-            lowExchange === "binance"
-              ? (binanceManager.getOrderbookPrice(sym, addSide, slippagePct) ?? markPrice)
-              : (bybitManager.getOrderbookPrice(sym, addSide, slippagePct) ?? markPrice);
+              const lowLeverage = Math.max(1, Number(lowPos?.leverage ?? lowPos?.leverageId ?? 1));
+              let requiredMargin = (qtyDiff * markPrice) / lowLeverage;
+              requiredMargin *= 1.1;
 
-          try {
-            if (lowExchange === "binance") {
-              await binanceManager.placeIOCLimitOrder(keys.binance, sym, addSide, qtyDiff, addPrice, {
-                positionSide: lowPos?.positionSide || (isLong ? "LONG" : "SHORT"),
-                leverage: lowLeverage,
-              });
-            } else {
-              // FIX: Must pass positionIdx to Bybit for proper Hedge Mode routing
-              await bybitManager.placeIOCLimitOrder(keys.bybit, sym, addSide, qtyDiff, addPrice, { 
-                positionIdx: lowPos?.positionIdx,
-                leverage: lowLeverage 
-              });
+              let availableBalance = 0;
+              try {
+                if (lowExchange === "binance") {
+                  const bal = binanceManager.getBalance(keys.binance);
+                  availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? 0) || 0;
+                } else {
+                  const bal = bybitManager.getBalance();
+                  availableBalance = typeof bal === "number" ? bal : Number(bal?.availableBalance ?? bal?.available ?? bal?.equity ?? 0) || 0;
+                }
+              } catch (e) {
+                console.warn("[TradeMonitor] Mismatch fix: balance fetch failed", symbol, e?.message ?? e);
+              }
+
+              const doReduce = async (reason) => {
+                const posToReduce = { ...highPos, positionAmt: qtyDiff, size: qtyDiff };
+                await closeOrphanPosition(keys, highExchange, symbol, posToReduce);
+                console.log(`[TradeMonitor] Mismatch Fix: Reducing ${highExchange} by ${qtyDiff} (${reason})`);
+              };
+
+              if (!orderCircuitBreaker.canPlaceOrder()) {
+                // skip this run
+              } else if (availableBalance > requiredMargin) {
+                const sym = String(symbol).toUpperCase();
+                const slippagePct = Number.isFinite(settings?.entrySlippagePct) ? Math.max(0, Math.min(100, settings.entrySlippagePct)) : 0.1;
+                const isLong = String(lowPos?.side || "").toUpperCase() === "BUY";
+                const addSide = lowExchange === "binance" ? (isLong ? "BUY" : "SELL") : (isLong ? "Buy" : "Sell");
+                const addPrice = lowExchange === "binance"
+                  ? (binanceManager.getOrderbookPrice(sym, addSide, slippagePct) ?? bMark)
+                  : (bybitManager.getOrderbookPrice(sym, addSide, slippagePct) ?? yMark);
+
+                try {
+                  if (lowExchange === "binance") {
+                    await binanceManager.placeIOCLimitOrder(keys.binance, sym, addSide, qtyDiff, addPrice, {
+                      positionSide: lowPos?.positionSide || (isLong ? "LONG" : "SHORT"),
+                      leverage: lowLeverage,
+                    });
+                  } else {
+                    await bybitManager.placeIOCLimitOrder(keys.bybit, sym, addSide, qtyDiff, addPrice, {
+                      positionIdx: lowPos?.positionIdx,
+                      leverage: lowLeverage,
+                    });
+                  }
+                  orderCircuitBreaker.recordOrderPlaced();
+                  console.log(`[TradeMonitor] Mismatch Fix: Increasing ${lowExchange} by ${qtyDiff} (Funds: $${availableBalance.toFixed(2)} > Req: $${requiredMargin.toFixed(2)})`);
+                } catch (e) {
+                  console.warn("[TradeMonitor] Mismatch fix (Add) failed, attempting Reduce fallback", symbol, e?.message ?? e);
+                  try {
+                    await doReduce("Add failed, fallback");
+                  } catch (e2) {
+                    console.error(`[TradeMonitor] Mismatch fix Reduce fallback failed for ${symbol}:`, e2?.message ?? e2);
+                  }
+                }
+                failedClosesUntil[symbol] = now + 30000;
+                delete mismatchFirstSeen[symbol];
+              } else {
+                try {
+                  await doReduce("Insufficient funds on other side");
+                } catch (e) {
+                  console.error(`[TradeMonitor] Failed to fix mismatch for ${symbol}:`, e?.message ?? e);
+                }
+                failedClosesUntil[symbol] = now + 30000;
+                delete mismatchFirstSeen[symbol];
+              }
             }
-            orderCircuitBreaker.recordOrderPlaced();
-            console.log(
-              `[TradeMonitor] Mismatch Fix: Increasing ${lowExchange} by ${qtyDiff} (Funds: $${availableBalance.toFixed(2)} > Req: $${requiredMargin.toFixed(2)})`
-            );
-          } catch (e) {
-            console.warn("[TradeMonitor] Mismatch fix (Add) failed, attempting Reduce fallback", symbol, e?.message ?? e);
-            try {
-              await doReduce("Add failed, fallback");
-            } catch (e2) {
-              console.error(`[TradeMonitor] Mismatch fix Reduce fallback failed for ${symbol}:`, e2?.message ?? e2);
-            }
           }
-          failedClosesUntil[symbol] = now + 30000;
-          delete mismatchFirstSeen[symbol];
         } else {
-          try {
-            await doReduce("Insufficient funds on other side");
-          } catch (e) {
-            console.error(`[TradeMonitor] Failed to fix mismatch for ${symbol}:`, e?.message ?? e);
-          }
-          failedClosesUntil[symbol] = now + 30000;
+          // Dust mismatch, ignore
           delete mismatchFirstSeen[symbol];
         }
-      }
-    } else {
-      if (mismatchFirstSeen[symbol]) {
-        console.log(`[TradeMonitor] Mismatch resolved naturally for ${symbol}.`);
-        delete mismatchFirstSeen[symbol];
+      } else {
+        // Mismatch resolved naturally or below threshold
+        if (mismatchFirstSeen[symbol]) {
+          console.log(`[TradeMonitor] Mismatch resolved naturally for ${symbol}.`);
+          delete mismatchFirstSeen[symbol];
+        }
       }
     }
+    // ---------------------------------------------------------
   }
 }
 

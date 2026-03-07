@@ -333,6 +333,9 @@ async function runAutoEntry() {
   }
 
   isExecutingTrade = true;
+  if (!global.activeEnteringSymbols) global.activeEnteringSymbols = new Set();
+  global.activeEnteringSymbols.add(top.symbol);
+  
   try {
     if (settings.tradingMode === "l2") {
       const targetNotional = Math.max(1, Number(settings.screenerTradeNotional) || 500);
@@ -343,6 +346,7 @@ async function runAutoEntry() {
       
       // Null data detection: if all VWAP prices are null, orderbook data not ready - skip silently
       if (binBuy == null && binSell == null && bybBuy == null && bybSell == null) {
+        if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
         isExecutingTrade = false;
         return; // Silent skip - no log spam
       }
@@ -366,6 +370,7 @@ async function runAutoEntry() {
           console.log(`[AutoTrader-Failsafe] Aborting ${top.symbol}: Live L2 VWAP check failed (${reason}). Will retry silently for 30s.`);
           l2FailCooldown[top.symbol] = now + L2_FAIL_COOLDOWN_MS;
         }
+        if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
         isExecutingTrade = false;
         return;
       }
@@ -373,6 +378,7 @@ async function runAutoEntry() {
     const finalSpread = calculateLiveEntrySpread(top.symbol, binanceSide);
     if (finalSpread === null || finalSpread < 0) {
         console.warn(`[AutoTrader-Failsafe] Aborting execution for ${top.symbol}! Final L2 Expected Spread dropped below 0 (${finalSpread}%).`);
+        if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
         isExecutingTrade = false;
         return;
     }
@@ -455,6 +461,21 @@ async function runAutoEntry() {
         const errMsg = `CRITICAL: An exchange rejected the order (BybitError: ${bybitError}, BinanceError: ${binanceError}). Aborting sweeps instantly to prevent unhedged exposure.`;
         console.error(`[AutoTrader] ${errMsg}`);
         dbLog("ERROR", errMsg, top.symbol, { bybitError, binanceError, bybitTotalFilled, binanceTotalFilled });
+        
+        // AUTO-BAN TO PREVENT API SPAM LOOP
+        try {
+          const mongoose = require('mongoose');
+          const collection = mongoose.connection.db.collection('bans');
+          await collection.updateOne(
+            { symbol: top.symbol },
+            { $set: { symbol: top.symbol, reason: 'Exchange Rejected Order (API Error/Settings)', createdAt: new Date() } },
+            { upsert: true }
+          );
+          console.log(`[AutoTrader-Failsafe] Automatically added ${top.symbol} to Ban List to prevent API spam.`);
+        } catch (banErr) {
+          console.error(`[AutoTrader-Failsafe] Failed to auto-ban ${top.symbol}:`, banErr);
+        }
+        
         break;
       }
 
@@ -520,6 +541,7 @@ async function runAutoEntry() {
     if (bybitTotalFilled <= 0) {
       console.log(`[AutoTrader] Sweep failed or 0 filled on Bybit for ${top.symbol}. Aborting.`);
       dbLog("ERROR", "Sweep failed or 0 filled on Bybit. Aborting.", top.symbol, { bybitTotalFilled, binanceTotalFilled });
+      if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
       isExecutingTrade = false;
       return;
     }
@@ -536,6 +558,7 @@ async function runAutoEntry() {
     entryFundingDirectionBySymbol[top.symbol] = { binanceHigher: Number(top.fundingBinance) > Number(top.fundingBybit) };
     console.log("[AutoTrader] Entry (liquidity sweep)", top.symbol, binanceSide, bybitSide, "bybitFilled", bybitTotalFilled, "binanceFilled", binanceTotalFilled);
   } finally {
+    if (global.activeEnteringSymbols) global.activeEnteringSymbols.delete(top.symbol);
     isExecutingTrade = false;
   }
 }
