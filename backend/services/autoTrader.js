@@ -298,9 +298,19 @@ async function runAutoEntry() {
   const markPrice = top.markPrice ?? 0;
   if (!markPrice || !Number.isFinite(markPrice)) return;
 
-  const levInt = Math.max(1, Math.min(125, Number(settings.leverage) || DEFAULT_LEVERAGE));
-  let totalQuantity = (allocatedMargin * levInt) / markPrice;
   const sym = String(top.symbol).toUpperCase();
+  
+  // Prevent retCode 110013: Cap user leverage to the max allowed by the exchange
+  const bMaxLev = await binanceManager.getMaxLeverage(sym) || 125;
+  const yMaxLev = await bybitManager.getMaxLeverage(sym) || 125;
+  const maxAllowed = Math.min(bMaxLev, yMaxLev);
+  
+  let targetLeverage = Number(settings.leverage) || DEFAULT_LEVERAGE;
+  const levInt = Math.floor(Math.min(Math.max(1, targetLeverage), maxAllowed));
+  
+  console.log(`[AutoTrader] Dynamic Leverage for ${sym}: User requested ${targetLeverage}x, capped to ${levInt}x (Limits: Bin ${bMaxLev}, Byb ${yMaxLev})`);
+  
+  let totalQuantity = (allocatedMargin * levInt) / markPrice;
   const [binanceFilters, bybitFilters] = await Promise.all([
     binanceManager.getSymbolFilters(sym),
     bybitManager.getSymbolFilters(sym),
@@ -381,9 +391,20 @@ async function runAutoEntry() {
     let criticalExchangeError = false;
 
     // Phase 1: Independent Concurrent Sweeping
+    // Absolute minimum safe notional for Binance/Bybit is $5. We use $6 to be safe.
+    const safeProbeNotional = 6.0;
+    const probeQty = Math.max(safeProbeNotional / targetPrice, stepSize || 0.001);
+    
     while ((bybitTotalFilled < totalQuantity || binanceTotalFilled < totalQuantity) && maxSweeps > 0) {
       let bybitNeeded = totalQuantity - bybitTotalFilled;
       let binanceNeeded = totalQuantity - binanceTotalFilled;
+
+      // PROBE CHUNK: First sweep (maxSweeps === 5) uses minimum $6 quantity only
+      if (maxSweeps === 5) {
+        bybitNeeded = Math.min(bybitNeeded, probeQty);
+        binanceNeeded = Math.min(binanceNeeded, probeQty);
+        console.log(`[AutoTrader] Probe Chunk: Testing ${top.symbol} with ~$${safeProbeNotional} worth (qty: ${probeQty.toFixed(6)})`);
+      }
 
       if (binanceNeeded > 0) {
         const estNotional = binanceNeeded * targetPrice;

@@ -47,6 +47,15 @@ function refreshPositionCache() {
   const bybitSymbols = new Set(bybList.map(p => toUpperSymbol(p.symbol)).filter(Boolean));
   const paired = [...binanceSymbols].filter((s) => bybitSymbols.has(s));
 
+  // Detect new trades and emit UI refresh event
+  const previousPaired = Object.keys(positionCache);
+  const newlyPaired = paired.filter(sym => !previousPaired.includes(sym));
+  
+  if (newlyPaired.length > 0 && io) {
+    console.log(`[LivePnL] New positions detected: ${newlyPaired.join(', ')}. Emitting UI refresh.`);
+    io.emit("positions_opened");
+  }
+
   // Ensure Bybit is subscribed to all active paired symbols, even if they aren't in the common screener list
   if (bybitManager && bybitManager.subscribeAdditionalSymbols) {
     const missingSymbols = paired.filter(sym => !bybitSubscribedSymbols.has(sym));

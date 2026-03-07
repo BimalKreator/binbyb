@@ -235,10 +235,21 @@ export default function Home() {
       wsLastTickRef.current = Date.now();
     });
 
+    socket.on("positions_opened", () => {
+      // Fetch REST API to get full position details and inject the new row into the UI automatically
+      fetchPositions();
+      fetchMetrics();
+    });
+
     socket.on("position_closed", (payload: { symbol: string }) => {
       if (payload?.symbol) {
         setPositions((prev) => prev.filter((row) => row.symbol !== payload.symbol));
         setExpandedSymbol((prev) => (prev === payload.symbol ? null : prev));
+        // Refresh to update Grand Totals and Capital
+        setTimeout(() => {
+          fetchPositions();
+          fetchMetrics();
+        }, 1000); 
       }
     });
 
