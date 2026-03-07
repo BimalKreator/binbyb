@@ -67,58 +67,44 @@ async function executeSequentialSmartArbitrage(params) {
   }
   binanceTotalFilled += binProbeFilled;
 
-  // 3. L1 DYNAMIC CHUNKING LOOP WITH STRICT LOCK-STEP SYNC
-  let remainingQty = targetQty - bybitTotalFilled;
+  // 3. L1 DYNAMIC CHUNKING LOOP WITH DUST-FOLDING LOCK-STEP
+  let remainingQty = targetQty - Math.max(bybitTotalFilled, binanceTotalFilled);
   let emptyLoops = 0;
 
   while (remainingQty >= stepSize && emptyLoops < 10) {
-    // LOCK-STEP CHECK: Ensure both exchanges are balanced BEFORE taking new L1 chunks
-    const mismatch = bybitTotalFilled - binanceTotalFilled;
-    const mismatchAbs = Math.abs(mismatch);
-
-    if (mismatchAbs >= stepSize) {
-      if (mismatch > 0) {
-        // Bybit is ahead. Binance missed a portion of the previous chunk. Catch up Binance first!
-        const catchUpFilled = await executeChunkWithRetries('binance', binanceSide, mismatch);
-        binanceTotalFilled += catchUpFilled;
-        if (catchUpFilled < stepSize) {
-          emptyLoops++;
-          await new Promise(r => setTimeout(r, 100));
-          continue; // Keep trying to catch up! Do NOT advance Bybit.
-        }
-      } else {
-        // Binance is ahead. Bybit needs to catch up.
-        const catchUpFilled = await executeChunkWithRetries('bybit', bybitSide, mismatchAbs);
-        bybitTotalFilled += catchUpFilled;
-        if (catchUpFilled < stepSize) {
-          emptyLoops++;
-          await new Promise(r => setTimeout(r, 100));
-          continue;
-        }
-      }
-      emptyLoops = 0;
-      continue; // Re-evaluate balance at the top of the loop
-    }
-
-    // Both exchanges are perfectly balanced. Safe to grab the next 50% L1 chunk.
+    // Get next base chunk size from Bybit's L1 book
     const bybBook = bybitManager.getTopOfBook(symbol);
     if (!bybBook) { emptyLoops++; await new Promise(r => setTimeout(r, 100)); continue; }
 
     const l1Qty = String(bybitSide).toUpperCase() === "BUY" ? (bybBook.topAskQty ?? 0) : (bybBook.topBidQty ?? 0);
-    let chunkQty = Math.max(Number(l1Qty) * 0.5, stepSize);
+    let baseChunkQty = Math.max(Number(l1Qty) * 0.5, stepSize);
 
-    if (chunkQty * markPrice < 5.5) chunkQty = Math.max(5.5 / markPrice, stepSize);
-    if (chunkQty > remainingQty) chunkQty = remainingQty;
+    // Force base chunk to be at least $6.0 to safely pass exchange minimum limits
+    if (baseChunkQty * markPrice < 6.0) baseChunkQty = Math.max(6.0 / markPrice, stepSize);
+    if (baseChunkQty > remainingQty) baseChunkQty = remainingQty;
 
-    const bybFilled = await executeChunkWithRetries('bybit', bybitSide, chunkQty);
+    // FOLDING LOGIC: If Bybit is behind Binance, add the deficit to Bybit's next chunk
+    let bybOrderQty = baseChunkQty;
+    if (binanceTotalFilled > bybitTotalFilled) {
+      bybOrderQty += (binanceTotalFilled - bybitTotalFilled);
+    }
+
+    // 1. Execute Bybit first
+    const bybFilled = await executeChunkWithRetries('bybit', bybitSide, bybOrderQty);
+
     if (bybFilled > 0) {
       bybitTotalFilled += bybFilled;
 
-      // Immediately send the exact same confirmed amount to Binance
-      const binFilled = await executeChunkWithRetries('binance', binanceSide, bybFilled);
-      binanceTotalFilled += binFilled;
+      // 2. FOLDING LOGIC: Binance must now match Bybit's NEW total.
+      // This automatically adds any previous Binance deficit to the new chunk!
+      const binanceNeededNow = bybitTotalFilled - binanceTotalFilled;
 
-      remainingQty -= bybFilled;
+      if (binanceNeededNow >= stepSize) {
+        const binFilled = await executeChunkWithRetries('binance', binanceSide, binanceNeededNow);
+        binanceTotalFilled += binFilled;
+      }
+
+      remainingQty = targetQty - Math.max(bybitTotalFilled, binanceTotalFilled);
       emptyLoops = 0;
     } else {
       emptyLoops++;
