@@ -624,21 +624,11 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
   ws.on("open", () => {
     publicReconnectAttempts = 0;
     console.log("[Binance] Public WebSocket connected. Subscribing to global streams...");
-
-    // 1. Subscribe to Global Streams (Covers all 447 symbols using only 2 streams!)
+    // STRICTLY limit to these 2 global streams to prevent Error 1006 limits
     const streamNames = [
       "!markPrice@arr@1s",
       "!bookTicker"
     ];
-
-    // 2. Add dynamic L2 subscriptions ONLY for active positions
-    if (global.pendingBinanceSubs && global.pendingBinanceSubs.length > 0) {
-       global.pendingBinanceSubs.forEach(sym => {
-          streamNames.push(`${String(sym).toLowerCase()}@depth20@100ms`);
-       });
-       global.pendingBinanceSubs = []; // Clear queue
-    }
-
     ws.send(JSON.stringify({
       method: "SUBSCRIBE",
       params: streamNames,
@@ -1918,30 +1908,8 @@ module.exports = {
   stop,
   fetchMarkPriceRest,
   subscribeAdditionalSymbols: (symbolsArray) => {
-    if (!symbolsArray || symbolsArray.length === 0) return;
-    if (!global.binanceL2Subs) global.binanceL2Subs = new Set();
-    
-    const newSymbols = symbolsArray.filter(sym => !global.binanceL2Subs.has(sym));
-    if (newSymbols.length === 0) return;
-
-    newSymbols.forEach(sym => global.binanceL2Subs.add(sym));
-
-    // CRITICAL FIX: If WS is not fully open yet, queue it for the ws.on('open') event
-    if (typeof publicWs === 'undefined' || !publicWs || publicWs.readyState !== 1) {
-      console.log(`[Binance] WS not ready, queuing ${newSymbols.join(", ")}`);
-      if (!global.pendingBinanceSubs) global.pendingBinanceSubs = [];
-      global.pendingBinanceSubs.push(...newSymbols);
-      return;
-    }
-
-    console.log(`[Binance] subscribeAdditionalSymbols: adding ${newSymbols.join(", ")} to L2 depth streams`);
-    const params = newSymbols.map(sym => `${String(sym).toLowerCase()}@depth20@100ms`);
-    
-    publicWs.send(JSON.stringify({
-      method: "SUBSCRIBE",
-      params: params,
-      id: Date.now()
-    }));
+    // Disabled to prevent Binance Error 1006 limit drops.
+    // Global !bookTicker provides all necessary L1 data for exits and PnL.
   },
   placeIOCLimitOrder,
   placeWSOrder,

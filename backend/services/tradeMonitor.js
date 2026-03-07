@@ -530,6 +530,7 @@ async function runMonitor() {
   const onlyBybit = [...bybitSymbols].filter((s) => !binanceSymbols.has(s));
 
   for (const symbol of onlyBinance) {
+    if (closingSymbols.has(symbol)) continue; // Do not treat as orphan while TP/SL close in progress
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "binance", firstSeen: now };
       console.log(`[TradeMonitor] Orphan detected for ${symbol}. Waiting 10s for data sync.`);
@@ -544,6 +545,7 @@ async function runMonitor() {
     }
   }
   for (const symbol of onlyBybit) {
+    if (closingSymbols.has(symbol)) continue; // Do not treat as orphan while TP/SL close in progress
     if (!orphanFirstSeen[symbol]) {
       orphanFirstSeen[symbol] = { exchange: "bybit", firstSeen: now };
       console.log(`[TradeMonitor] Orphan detected for ${symbol}. Waiting 10s for data sync.`);
@@ -627,12 +629,15 @@ async function runMonitor() {
   const rankedTokens = snapshot.rankedTokens || [];
 
   for (const symbol of pairedSymbols) {
+    // CRITICAL FIX: If the symbol is currently being closed (e.g., TP/SL Hit), do NOT trigger orphan detection or mismatch fixing. Skip entirely.
+    if (closingSymbols.has(symbol)) {
+      continue;
+    }
     // PREVENT RACE CONDITION: Skip monitoring completely if AutoTrader is currently building this position
     if (global.activeEnteringSymbols && global.activeEnteringSymbols.has(symbol)) {
       continue;
     }
     if (now < (failedClosesUntil[symbol] || 0)) continue;
-    if (closingSymbols.has(symbol)) continue;
     const binancePos = binanceBySymbol[symbol];
     const bybitPos = bybitBySymbol[symbol];
     if (!binancePos || !bybitPos) continue;
