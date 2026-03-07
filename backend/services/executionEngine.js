@@ -67,11 +67,40 @@ async function executeSequentialSmartArbitrage(params) {
   }
   binanceTotalFilled += binProbeFilled;
 
-  // 3. L1 DYNAMIC CHUNKING LOOP
+  // 3. L1 DYNAMIC CHUNKING LOOP WITH STRICT LOCK-STEP SYNC
   let remainingQty = targetQty - bybitTotalFilled;
   let emptyLoops = 0;
 
   while (remainingQty >= stepSize && emptyLoops < 10) {
+    // LOCK-STEP CHECK: Ensure both exchanges are balanced BEFORE taking new L1 chunks
+    const mismatch = bybitTotalFilled - binanceTotalFilled;
+    const mismatchAbs = Math.abs(mismatch);
+
+    if (mismatchAbs >= stepSize) {
+      if (mismatch > 0) {
+        // Bybit is ahead. Binance missed a portion of the previous chunk. Catch up Binance first!
+        const catchUpFilled = await executeChunkWithRetries('binance', binanceSide, mismatch);
+        binanceTotalFilled += catchUpFilled;
+        if (catchUpFilled < stepSize) {
+          emptyLoops++;
+          await new Promise(r => setTimeout(r, 100));
+          continue; // Keep trying to catch up! Do NOT advance Bybit.
+        }
+      } else {
+        // Binance is ahead. Bybit needs to catch up.
+        const catchUpFilled = await executeChunkWithRetries('bybit', bybitSide, mismatchAbs);
+        bybitTotalFilled += catchUpFilled;
+        if (catchUpFilled < stepSize) {
+          emptyLoops++;
+          await new Promise(r => setTimeout(r, 100));
+          continue;
+        }
+      }
+      emptyLoops = 0;
+      continue; // Re-evaluate balance at the top of the loop
+    }
+
+    // Both exchanges are perfectly balanced. Safe to grab the next 50% L1 chunk.
     const bybBook = bybitManager.getTopOfBook(symbol);
     if (!bybBook) { emptyLoops++; await new Promise(r => setTimeout(r, 100)); continue; }
 
@@ -84,7 +113,11 @@ async function executeSequentialSmartArbitrage(params) {
     const bybFilled = await executeChunkWithRetries('bybit', bybitSide, chunkQty);
     if (bybFilled > 0) {
       bybitTotalFilled += bybFilled;
-      binanceTotalFilled += await executeChunkWithRetries('binance', binanceSide, bybFilled);
+
+      // Immediately send the exact same confirmed amount to Binance
+      const binFilled = await executeChunkWithRetries('binance', binanceSide, bybFilled);
+      binanceTotalFilled += binFilled;
+
       remainingQty -= bybFilled;
       emptyLoops = 0;
     } else {
