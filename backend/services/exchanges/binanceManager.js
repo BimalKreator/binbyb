@@ -692,15 +692,22 @@ function openPublicStreams(symbols = DEFAULT_SYMBOLS) {
       }
 
       // 3. Dynamic L1 / L2 Depth Fallback Parser
+      // 3. Dynamic L2 Depth Fallback Parser
       if (sym && Array.isArray(payload.b) && Array.isArray(payload.a)) {
-        // It's an L2 Depth stream (bids/asks are arrays of arrays)
-        if (!orderbooks[sym]) orderbooks[sym] = { bids: new Map(), asks: new Map() };
         const bidsMap = new Map();
-        payload.b.forEach(x => { if (parseFloat(x[0]) > 0) bidsMap.set(parseFloat(x[0]), parseFloat(x[1])) });
+        payload.b.forEach(x => {
+          const p = parseFloat(x[0]);
+          const q = parseFloat(x[1]);
+          if (p > 0 && q > 0) bidsMap.set(p, q);
+        });
         const asksMap = new Map();
-        payload.a.forEach(x => { if (parseFloat(x[0]) > 0) asksMap.set(parseFloat(x[0]), parseFloat(x[1])) });
-        orderbooks[sym].bids = bidsMap;
-        orderbooks[sym].asks = asksMap;
+        payload.a.forEach(x => {
+          const p = parseFloat(x[0]);
+          const q = parseFloat(x[1]);
+          if (p > 0 && q > 0) asksMap.set(p, q);
+        });
+        // Completely replace to ensure fresh snapshot
+        orderbooks[sym] = { bids: bidsMap, asks: asksMap };
       } 
       else if (sym && typeof payload.b === "string" && typeof payload.a === "string") {
         // It's an L1 BookTicker (bids/asks are string values)
@@ -1685,15 +1692,17 @@ function getVwapPrice(symbol, side, targetNotional) {
 
   let vwapPrice = null;
 
-  if (book && Array.isArray(book.bids) && Array.isArray(book.asks) && targetNotional > 0) {
-    const bidsArr = book.bids
-      .map((x) => [parseFloat(x[0]), parseFloat(x[1])])
-      .filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0)
-      .sort((a, b) => b[0] - a[0]);
-    const asksArr = book.asks
-      .map((x) => [parseFloat(x[0]), parseFloat(x[1])])
-      .filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0)
-      .sort((a, b) => a[0] - b[0]);
+  const hasBids = book && (Array.isArray(book.bids) || (book.bids instanceof Map && book.bids.size > 0));
+  const hasAsks = book && (Array.isArray(book.asks) || (book.asks instanceof Map && book.asks.size > 0));
+  if (hasBids && hasAsks && targetNotional > 0) {
+    const toArr = (side) => {
+      const raw = side === "bids" ? book.bids : book.asks;
+      if (Array.isArray(raw)) return raw.map((x) => [parseFloat(x[0]), parseFloat(x[1])]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0);
+      if (raw instanceof Map) return Array.from(raw.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0);
+      return [];
+    };
+    const bidsArr = toArr("bids").sort((a, b) => b[0] - a[0]);
+    const asksArr = toArr("asks").sort((a, b) => a[0] - b[0]);
     const levels = isBuy ? asksArr : bidsArr;
 
     if (levels.length > 0) {
@@ -1721,15 +1730,17 @@ function getVwapPrice(symbol, side, targetNotional) {
     }
   }
 
-  // CRITICAL FIX: If VWAP fails (thin book or empty), fallback to L1 BookTicker
+  // L1 Fallback if VWAP is null or zero
   if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
     const l1 = bookTickerBySymbol[sym];
     if (l1) {
-      const fallbackPrice = isBuy ? l1.bestAsk : l1.bestBid;
-      if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
-        vwapPrice = fallbackPrice;
-      }
+      vwapPrice = isBuy ? l1.bestAsk : l1.bestBid;
     }
+  }
+
+  // Final fallback to mark price just to keep UI ticking if orderbook is completely dead
+  if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
+    vwapPrice = lastMarkPriceBySymbol[sym] || null;
   }
 
   return vwapPrice && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;

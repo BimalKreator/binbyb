@@ -1249,32 +1249,50 @@ function getTopOfBook(symbol) {
  */
 function getVwapPrice(symbol, side, targetNotional) {
   const sym = String(symbol).toUpperCase();
-  const ob = orderbooksBySymbol[sym];
-  if (!ob || !ob.bids || !ob.asks || !targetNotional || targetNotional <= 0) return null;
   const isBuy = String(side).toLowerCase() === "buy";
-  const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
-  const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
-  const levels = isBuy ? asksArr : bidsArr;
-  if (levels.length === 0) return null;
-  let accumulatedQty = 0;
-  let accumulatedNotional = 0;
-  for (let i = 0; i < levels.length; i++) {
-    const price = levels[i][0];
-    const qty = levels[i][1];
-    const levelNotional = price * qty;
-    if (accumulatedNotional + levelNotional >= targetNotional) {
-      const neededNotional = targetNotional - accumulatedNotional;
-      const neededQty = neededNotional / price;
-      accumulatedQty += neededQty;
-      accumulatedNotional = targetNotional;
-      break;
-    } else {
-      accumulatedQty += qty;
-      accumulatedNotional += levelNotional;
+  let vwapPrice = null;
+
+  const ob = orderbooksBySymbol[sym];
+  if (ob && ob.bids && ob.asks && targetNotional > 0) {
+    const bidsArr = Array.from(ob.bids.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => b[0] - a[0]);
+    const asksArr = Array.from(ob.asks.entries()).map(([p, q]) => [parseFloat(p), Number(q)]).filter(([p, q]) => Number.isFinite(p) && Number.isFinite(q) && p > 0 && q > 0).sort((a, b) => a[0] - b[0]);
+    const levels = isBuy ? asksArr : bidsArr;
+    if (levels.length > 0) {
+      let accumulatedQty = 0;
+      let accumulatedNotional = 0;
+      for (let i = 0; i < levels.length; i++) {
+        const price = levels[i][0];
+        const qty = levels[i][1];
+        const levelNotional = price * qty;
+        if (accumulatedNotional + levelNotional >= targetNotional) {
+          const neededNotional = targetNotional - accumulatedNotional;
+          const neededQty = neededNotional / price;
+          accumulatedQty += neededQty;
+          accumulatedNotional = targetNotional;
+          break;
+        } else {
+          accumulatedQty += qty;
+          accumulatedNotional += levelNotional;
+        }
+      }
+      if (accumulatedQty > 0) vwapPrice = accumulatedNotional / accumulatedQty;
     }
   }
-  if (accumulatedQty === 0) return null;
-  return accumulatedNotional / accumulatedQty;
+
+  // L1 Fallback if VWAP is null or zero
+  if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
+    const state = tickerStateBySymbol[sym];
+    if (state && parseFloat(state.bid1Price) > 0 && parseFloat(state.ask1Price) > 0) {
+      vwapPrice = isBuy ? parseFloat(state.ask1Price) : parseFloat(state.bid1Price);
+    }
+  }
+
+  // Final fallback to mark price just to keep UI ticking if orderbook is completely dead
+  if (!vwapPrice || !Number.isFinite(vwapPrice) || vwapPrice <= 0) {
+    vwapPrice = lastMarkPriceBySymbol[sym] || null;
+  }
+
+  return vwapPrice != null && Number.isFinite(vwapPrice) && vwapPrice > 0 ? vwapPrice : null;
 }
 
 const SWEEP_SLEEP_MS = 20;
