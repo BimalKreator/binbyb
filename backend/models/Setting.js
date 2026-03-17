@@ -19,7 +19,7 @@ const settingSchema = new mongoose.Schema(
     minL2Spread: { type: Number, default: 0.15 }, // min L2 orderbook spread % for entry (e.g. 0.15 = 0.15%)
     userMinSpread: { type: Number, default: 0, min: 0 }, // min spread in % (e.g. 0.1 = 0.1%)
     openingBalance: { type: Number, default: 0 }, // USDT balance at start (legacy; use dailyOpeningBalance for daily snapshot)
-    dailyOpeningBalance: { type: Number, default: 3450 }, // Snapshot of total capital at 00:00 IST each day
+    dailyOpeningBalance: { type: Number, default: 3300 }, // Snapshot of total capital at 00:00 IST each day
     lastSnapshotDate: { type: String, default: "" }, // YYYY-MM-DD in IST
     binanceDepositAddress: { type: String, default: "" },
     binanceNetwork: { type: String, default: "" }, // e.g. TRC20, BEP20

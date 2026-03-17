@@ -1,5 +1,5 @@
 /**
- * One-off script: set today's opening balance to 3450 in the database.
+ * One-off script: set today's opening balance to 3300 in the database.
  * Run from backend: node fix-db.js
  * Adjust MONGODB_URI below if your database is different.
  */
@@ -14,9 +14,9 @@ mongoose
   .then(async () => {
     const settings = await Setting.findOne();
     if (settings) {
-      settings.dailyOpeningBalance = 3450;
+      settings.dailyOpeningBalance = 3300;
       await settings.save();
-      console.log("Success: Today's opening balance fixed to 3450");
+      console.log("Success: Today's opening balance fixed to 3300");
     } else {
       console.log("No settings found in DB.");
     }
