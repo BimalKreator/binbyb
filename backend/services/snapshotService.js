@@ -54,10 +54,11 @@ async function checkAndTakeDailySnapshot() {
         bybitRaw = Number(byb?.balance ?? byb) || 0;
       }
     }
-    // Use same display formula as dashboard: actual + $1650 per exchange
-    const FUNDS_ADD_PER_EXCHANGE = 1650;
-    const binanceCapital = binanceRaw + FUNDS_ADD_PER_EXCHANGE;
-    const bybitCapital = bybitRaw + FUNDS_ADD_PER_EXCHANGE;
+    // Use same display formula as dashboard: actual + (marginAllowedPct * 30)
+    const binanceMarginAllowedPct = Number(settings.binanceMarginAllowedPct) || 50;
+    const bybitMarginAllowedPct = Number(settings.bybitMarginAllowedPct) || 50;
+    const binanceCapital = binanceRaw + (binanceMarginAllowedPct * 30);
+    const bybitCapital = bybitRaw + (bybitMarginAllowedPct * 30);
     const totalCapital = binanceCapital + bybitCapital;
 
     if (totalCapital <= 0) {

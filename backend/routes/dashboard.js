@@ -80,10 +80,11 @@ router.get("/metrics", async (req, res) => {
     }
     const actualBinanceMarginBalance = parseFloat(binanceBalances.totalMarginBalance || binanceBalances.totalWalletBalance || binanceBalances.availableBalance || 0) || 0;
     const actualBybitEquity = parseFloat(bybitBalances.totalEquity || bybitBalances.totalWalletBalance || bybitBalances.availableBalance || 0) || 0;
-    const FUNDS_ADD_PER_EXCHANGE = 1650; // Added to actual balance of each exchange for funds display
-    const binanceBalance = actualBinanceMarginBalance + FUNDS_ADD_PER_EXCHANGE;
-    const bybitBalance = actualBybitEquity + FUNDS_ADD_PER_EXCHANGE;
-    const totalCapital = binanceBalance + bybitBalance;
+    const binanceMarginAllowedPct = Number(settings?.binanceMarginAllowedPct) || 50;
+    const bybitMarginAllowedPct = Number(settings?.bybitMarginAllowedPct) || 50;
+    const binanceBalance = actualBinanceMarginBalance + (binanceMarginAllowedPct * 30);
+    const bybitBalance = actualBybitEquity + (bybitMarginAllowedPct * 30);
+    const totalCapital = (actualBinanceMarginBalance + (binanceMarginAllowedPct * 30)) + (actualBybitEquity + (bybitMarginAllowedPct * 30));
 
     const binanceAvailableBalance = parseFloat(binanceBalances.availableBalance || 0) || 0;
     const bybitAvailableBalance = parseFloat(bybitBalances.availableBalance || bybitBalances.availableToWithdraw || 0) || 0;
